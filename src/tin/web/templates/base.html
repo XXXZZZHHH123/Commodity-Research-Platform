@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}锡 · 研究工作台{% endblock %}</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<nav class="top">
+  <span class="brand">锡 SN</span>
+  <a href="/sn" class="{{ 'on' if nav == 'variety' }}">今天</a>
+  <a href="/sn/judgment" class="{{ 'on' if nav == 'judgment' }}">判断</a>
+  <a href="/sn/indicators" class="{{ 'on' if nav == 'indicators' }}">指标</a>
+  <a href="/sn/reports" class="{{ 'on' if nav == 'reports' }}">日报</a>
+  {% block navdate %}{% endblock %}
+</nav>
+<main>
+{% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+{% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+{% block main %}{% endblock %}
+</main>
+</body>
+</html>

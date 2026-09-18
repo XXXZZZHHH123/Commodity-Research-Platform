@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}指标 · 锡{% endblock %}
+{% block main %}
+<p><a href="/sn/entry">→ 人工录入</a></p>
+<h2>指标登记表（{{ rows | length }}，不含逐合约行情序列）</h2>
+<table><tr><th>series_id</th><th>名称</th><th>类别</th><th>口径</th><th>单位</th><th>来源</th><th>频率</th><th>方式</th></tr>
+{% for r in rows %}
+<tr><td class="small">{{ r.series_id }}</td>
+<td>{{ r.name }}{% if r.is_proxy %}<span class="tag">代理</span>{% endif %}{% if r.note %}<div class="small">{{ r.note }}</div>{% endif %}</td>
+<td>{{ r.category }}</td>
+<td class="small">{% for k, v in r.caliber.items() %}{{ v }}{{ ' · ' if not loop.last }}{% endfor %}</td>
+<td>{{ r.unit }}</td><td>{{ r.source }}{% if r.vendor_code %}<div class="small">{{ r.vendor_code }}</div>{% endif %}</td><td>{{ r.frequency }}</td>
+<td>{{ '自动' if r.fetch_mode == 'auto' else '人工' }}</td></tr>
+{% endfor %}</table>
+
+<h2>口径字典</h2>
+<table><tr><th>维度</th><th>枚举值</th><th>说明</th></tr>
+{% for d in dimensions %}<tr><td>{{ d.label }}</td><td>{% for e in d.enum %}{{ e.value }}{{ ' / ' if not loop.last }}{% endfor %}</td><td class="small">{{ d.note }}</td></tr>{% endfor %}
+</table>
+{% endblock %}

@@ -1,0 +1,39 @@
+{% macro card(c) -%}
+<div class="card {{ c.status }}">
+  <div class="label">{{ c.label }}{% if c.manual %}<span class="tag" title="{{ c.entered or '' }}">人工</span>{% endif %}{% if c.proxy %}<span class="tag">代理</span>{% endif %}</div>
+  {% if c.status == 'ok' %}
+    <div class="value">{{ c.value | num(c.unit, c.source == '派生') }}<span class="unit">{{ c.unit }}</span></div>
+    {% if c.sub %}<div class="sub">{{ c.sub }}</div>{% endif %}
+    <div class="meta">{{ c.as_of }} · {{ c.source }}{% if c.caliber %} · {{ c.caliber }}{% endif %}</div>
+    {% if c.note %}<div class="meta">{{ c.note }}</div>{% endif %}
+  {% elif c.status == 'blocked' %}
+    <div class="value">口径不一致，故不计算</div>
+    <div class="meta">{{ c.note }}</div>
+  {% else %}
+    <div class="value">暂无数据</div>
+    <div class="meta">{% if c.expected_by %}预期更新：{{ c.expected_by }}　{% endif %}{{ c.note or '' }}</div>
+    {% if c.sub %}<div class="sub">{{ c.sub }}</div>{% endif %}
+  {% endif %}
+  {% set dt = c.detail %}
+  {% if dt.inputs is defined %}
+  <details><summary>输入与时点</summary><div class="body">
+    <div>{{ dt.formula }}</div><div>容差：{{ dt.tolerance }}</div>
+    {% for i in dt.inputs %}
+      <div class="in">· {{ i.role }}：{{ i.value | num('元/吨') }}　{{ i.series_id }}{% if i.contract %} {{ i.contract }}{% endif %}{% if i.price_type %} {{ i.price_type }}{% endif %}　{{ i.as_of[:16] | replace('T', ' ') }}　{{ i.source }}</div>
+    {% else %}<div>尚无可用输入</div>{% endfor %}
+  </div></details>
+  {% elif dt.series_id is defined %}
+  <details><summary>来源与口径</summary><div class="body">
+    <div class="in">{{ dt.series_id }}{% if dt.revision %}（第 {{ dt.revision }} 次修订）{% endif %}</div>
+    <div>口径：{% for k, v in dt.caliber.items() %}{{ v }}{{ '，' if not loop.last }}{% endfor %}</div>
+    {% if dt.note %}<div>来源说明：{{ dt.note }}</div>{% endif %}
+    {% if dt.source_url %}<div><a href="{{ dt.source_url }}" target="_blank" rel="noopener">原始数据</a></div>{% endif %}
+    {% if dt.derived is defined and dt.derived.detail.inputs %}
+      <div style="margin-top:6px">日变动：{{ dt.derived.detail.formula }}（{{ dt.derived.detail.tolerance }}）</div>
+      {% for i in dt.derived.detail.inputs %}<div class="in">· {{ i.role }}：{{ i.value | num('吨') }} 吨　{{ i.as_of[:10] }}</div>{% endfor %}
+      {% if dt.derived.status != 'ok' %}<div>{{ dt.derived.note }}</div>{% endif %}
+    {% endif %}
+  </div></details>
+  {% endif %}
+</div>
+{%- endmacro %}
