@@ -1,0 +1,13 @@
+# 运行时数据：数据库与每日快照不入库
+data/
+exports/
+logs/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
