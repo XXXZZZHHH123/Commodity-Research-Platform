@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}判断 · 锡{% endblock %}
+{% block main %}
+{% if j is none %}
+  <div class="panel"><h3>尚未登记判断</h3><p class="small">可粘贴或上传现有研究逻辑文本，系统按段落标题预填字段。</p></div>
+{% else %}
+{% set b = block %}
+{% if b.expired_days %}<div class="banner expired">写定于 {{ b.written_at }}，已超过复核周期 {{ b.expired_days }} 天。</div>{% endif %}
+<div class="panel">
+  <h3>v{{ j.version }} · <span class="badge {{ 'draft' if j.status == '草稿' else 'active' }}">{{ j.status }}</span>　{{ j.author }} · 写定 {{ j.written_at }} · 复核周期 {{ j.review_period_days }} 天</h3>
+  {% if b.blockers %}<ul class="blockers">{% for x in b.blockers %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
+  <p class="small">一期此页只读；分段编辑、生效提交与版本 diff 在判断层里程碑（M2）上线。</p>
+</div>
+
+<div class="grid2">
+  <div class="panel"><h3>主逻辑 · 多方</h3><div>{{ j.contradiction.bull.claim }}</div>
+    {% for e in j.contradiction.bull.evidence %}<div class="small">· {{ e.desc }}{% if e.series_id %}（{{ names.get(e.series_id, e.series_id) }}）{% endif %}{% if e.note %} — {{ e.note }}{% endif %}</div>{% endfor %}</div>
+  <div class="panel"><h3>主逻辑 · 空方</h3><div>{{ j.contradiction.bear.claim }}</div>
+    {% for e in j.contradiction.bear.evidence %}<div class="small">· {{ e.desc }}{% if e.series_id %}（{{ names.get(e.series_id, e.series_id) }}）{% elif e.source %}（{{ e.source }}）{% endif %}</div>{% endfor %}</div>
+</div>
+{% if j.contradiction.window %}<p class="small">验证窗口：{{ j.contradiction.window['from'] }} 至 {{ j.contradiction.window.to }}　{{ j.contradiction.window.note }}</p>{% endif %}
+
+<h2>阈值组</h2>
+<table><tr><th>名称</th><th>指标</th><th>条件</th><th>类型</th><th>时段</th><th>动作提示（平台不执行）</th></tr>
+{% for t in j.thresholds %}
+<tr><td>{{ t.name }}</td><td>{{ names.get(t.series_id, t.series_id) }}</td>
+<td class="n">{% if t.operator == 'between' %}{{ t.value[0] | num }} – {{ t.value[1] | num }}{% else %}{{ t.operator }} {{ t.value | num }}{% endif %}</td>
+<td>{{ t.type }}</td><td>{{ t.horizon }}</td><td>{{ t.action_hint or '' }}{% if t.note %}<div class="small">{{ t.note }}</div>{% endif %}</td></tr>
+{% endfor %}</table>
+<p class="small">冲突优先级：{% if j.priority_rule %}{{ j.priority_rule.order | join(' > ') }}{% else %}<b style="color:var(--warn)">未填写</b>——两条阈值可能同时触发且指向相反动作（风控降敞口 vs 介入位做多），必须先定先听哪条。{% endif %}</p>
+
+<h2>证伪条件</h2>
+<table><tr><th>描述</th><th>绑定指标</th><th>判定</th><th>连续期数</th><th>单位口径</th><th>攻击</th></tr>
+{% for f in j.falsifiers %}
+<tr><td>{{ f.desc }}{% if f.note %}<div class="small">{{ f.note }}</div>{% endif %}</td><td>{{ names.get(f.series_id, f.series_id) }}</td>
+<td><code>{{ f.expression }}</code></td><td class="n">{{ f.consecutive_periods }}</td><td>{{ f.unit_confirmed }}</td><td>{{ '多方' if f.side == 'bull' else '空方' }}</td></tr>
+{% endfor %}</table>
+
+{% if j.unstructured %}
+<h2>尚未结构化（原文保留，不参与自动监测）</h2>
+<table><tr><th>来源段落</th><th>原文</th><th>为何无法自动化</th></tr>
+{% for u in j.unstructured %}<tr><td>{{ u.section }}</td><td>{{ u.text }}</td><td class="small">{{ u.reason }}</td></tr>{% endfor %}</table>
+{% endif %}
+
+<h2>其余字段</h2>
+<div class="grid2">
+  <div class="panel"><h3>短线边际</h3>{% for m in j.marginal_focus %}<div>· {{ m.desc }} <span class="small">{{ names.get(m.series_id, '') }}</span></div>{% endfor %}</div>
+  <div class="panel"><h3>指标白名单（{{ j.whitelist | length }}）</h3>{% for w in j.whitelist %}<div>· {{ names.get(w, w) }}</div>{% endfor %}</div>
+  <div class="panel"><h3>成本线</h3>{% for c in (j.cost_line or {}).get('items', []) %}<div>· {{ c.desc }}</div>{% endfor %}
+    {% if j.cost_line and j.cost_line.note %}<div class="small" style="margin-top:6px">{{ j.cost_line.note }}</div>{% endif %}</div>
+  <div class="panel"><h3>边际定价权{% if j.pricing_power.category %} · {{ j.pricing_power.category }}{% endif %}</h3>
+    <div><b>短期</b>　{{ j.pricing_power.short | join('；') }}</div>
+    {% if j.pricing_power.key %}<div><b>关键</b>　{{ j.pricing_power.key }}</div>{% endif %}
+    <div><b>中长期</b>　{{ j.pricing_power.long | join(' > ') }}</div></div>
+  <div class="panel"><h3>时间维度</h3><div><b>短期</b>　{{ (j.time_dimension or {}).short }}</div><div><b>中长期</b>　{{ (j.time_dimension or {}).long }}</div></div>
+  <div class="panel"><h3>编排范式 · 基调</h3><div>{{ j.paradigm }} · {{ j.tone }}</div><div class="small">{{ j.tone_note }}</div></div>
+</div>
+<div class="panel"><h3>调研信息差</h3><pre>{{ j.survey_notes }}</pre></div>
+{% endif %}
+
+<h2>导入新版本研究逻辑</h2>
+{% if report %}
+<div class="panel"><h3>最近一次导入 → v{{ report.version }}</h3>
+  {% for m in report.mapped %}<div class="small">✓ {{ m }}</div>{% endfor %}
+  {% for c in report.carried %}<div class="small" style="color:var(--warn)">↻ {{ c }}</div>{% endfor %}
+  {% for u in report.unmatched %}<div class="small">· {{ u }}</div>{% endfor %}
+</div>
+{% endif %}
+<form class="stack" method="post" action="/sn/judgment/import" enctype="multipart/form-data">
+  <label>上传文件（.txt / .md，按「## 标题」分段）<input type="file" name="file" accept=".txt,.md,text/plain"></label>
+  <label>或直接粘贴<textarea name="text" rows="6"></textarea></label>
+  <label>作者<input name="author" required></label>
+  <button type="submit">导入为新草稿</button>
+  <p class="small">文字类字段按新文本更新；阈值、证伪条件、冲突优先级与多空证据沿用上一版，请对照新文本核对。旧版本保留，不会被覆盖。</p>
+</form>
+
+{% if versions %}
+<h2>版本记录</h2>
+<table><tr><th>版本</th><th>状态</th><th>作者</th><th>写定</th><th>复核日</th><th>保存时间</th></tr>
+{% for v in versions %}<tr><td>v{{ v.version }}</td><td>{{ v.status }}</td><td>{{ v.author }}</td><td>{{ v.written_at }}</td><td>{{ v.review_due }}</td><td class="small">{{ v.created_at | local }}</td></tr>{% endfor %}
+</table>
+{% endif %}
+{% endblock %}

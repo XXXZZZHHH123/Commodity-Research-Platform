@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}日报 · 锡{% endblock %}
+{% block main %}
+<h2>每日快照归档</h2>
+<p class="small">每个交易日取数与计算完成后生成。一期先提供 JSON；HTML 日报与 CSV 导出在展示与导出里程碑（M4）上线。</p>
+{% if files %}
+<table><tr><th>日期</th><th>下载</th><th>在线查看</th></tr>
+{% for f in files %}<tr><td>{{ f }}</td><td><a href="/sn/reports/{{ f }}.json">JSON</a></td><td><a href="/sn?date={{ f }}">当日看板</a></td></tr>{% endfor %}
+</table>
+{% else %}<div class="panel small">尚无归档。运行 <code>python -m tin.jobs daily</code> 生成。</div>{% endif %}
+{% endblock %}

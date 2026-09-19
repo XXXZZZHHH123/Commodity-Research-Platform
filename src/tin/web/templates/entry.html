@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}人工录入 · 锡{% endblock %}
+{% block main %}
+<h2>人工录入</h2>
+<p class="small">订阅与授权数据（SMM、Mysteel、LME 等）一期不抓取，只能在此录入。每条录入都记录录入人与时间，页面以「人工」标记区分。</p>
+<form class="stack" method="post" action="/sn/entry">
+  <label>指标
+    <select name="series_id" required>
+      {% for i in indicators %}
+      <option value="{{ i.series_id }}" {{ 'selected' if i.series_id == selected }}>{{ i.name }}（{{ i.unit }}，{{ i.frequency }}）— {{ i.series_id }}</option>
+      {% endfor %}
+    </select></label>
+  <label>数值<input name="value" type="number" step="any" required></label>
+  <label>数据时点 as_of（北京时间；这个数代表哪一刻，不是录入时刻）
+    <input name="as_of" type="datetime-local" value="{{ now }}" required></label>
+  <label>来源说明<input name="note" placeholder="如：SMM 官网 1# 锡锭均价" required></label>
+  <label>录入人<input name="entered_by" required></label>
+  <button type="submit">录入</button>
+</form>
+{% endblock %}

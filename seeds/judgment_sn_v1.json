@@ -1,0 +1,92 @@
+{
+  "variety": "SN",
+  "author": "锡研究员",
+  "written_at": "2026-08-16",
+  "review_period_days": 30,
+
+  "contradiction": {
+    "text": "「供应紧」与「需求弱」并存, 但目前供应更弱:\n矿端(缅甸未放量+TC低位)叙事仍在但边际钝化, 现货已转松(隐形库存回升、升水回落);\n需求端结构分化大于总量, 9-10月(开工率+库存方向)是关键验证期。\n当前驱动不在产业边际——下有40万补库支撑、上缺新驱动, 锡已金融化为SPX的Beta。",
+    "bull": {
+      "claim": "供应紧：矿端（缅甸未放量 + TC 低位）叙事仍在，但边际钝化",
+      "evidence": [
+        {"desc": "缅甸未放量", "series_id": "CUSTOMS.2609.import.MM"},
+        {"desc": "云南 TC 17,500 低位（矿紧确认）", "series_id": "MYSTEEL.SN.TC.YN40", "value": 17500,
+         "note": "原文未注明该数值的数据时点"}
+      ]
+    },
+    "bear": {
+      "claim": "需求弱：需求端结构分化大于总量，现货已转松",
+      "evidence": [
+        {"desc": "现货已转松（隐形库存回升、升水回落）", "source": "调研",
+         "note": "隐形库存无公开数据，只能来自调研"},
+        {"desc": "单位耗锡下滑 3 处印证：芯片集成堆叠+微型化 / 三板合一 / 负片工艺锡球回收", "source": "2026-08 华南调研"},
+        {"desc": "9–10 月开工率 + 库存方向是关键验证", "series_id": "SMM.SN.solder.oprate"}
+      ]
+    },
+    "window": {"from": "2026-09", "to": "2026-10", "note": "开工率 + 库存方向是关键验证期"}
+  },
+
+  "marginal_focus": [
+    {"desc": "缅甸月进口（回万吨 = 证伪）", "series_id": "CUSTOMS.2609.import.MM"},
+    {"desc": "社库 / 隐形库存斜率", "series_id": "MYSTEEL.SN.stock.social"},
+    {"desc": "40 万补库线", "series_id": "SHFE.SN.main.settle"},
+    {"desc": "焊料开工率", "series_id": "SMM.SN.solder.oprate"}
+  ],
+
+  "cost_line": {
+    "type": null,
+    "items": [
+      {"desc": "矿端：云南 TC 17,500 低位（矿紧确认）；缅甸 / 佤邦复产是矿紧证伪线", "series_id": "MYSTEEL.SN.TC.YN40", "value": 17500},
+      {"desc": "冶炼：40 度 TC 17,500 / 60 度 13,500，冶炼转亏（江西再生锡停炉）"},
+      {"desc": "下游成本传导：加工环节仅传导 50–60%（调研确认）"}
+    ],
+    "note": "原文以加工费（TC）描述矿端与冶炼利润，未给出现金成本数值；成本线类型（现金 / 完全）待研究员确认"
+  },
+
+  "pricing_power": {
+    "category": "有LME外盘",
+    "short": ["宏观（SOX / SPX）", "矿端事件（佤邦 / 缅甸 / 印尼出口）"],
+    "key": "锡已金融化为 SPX 的 Beta（Beta≈1.0）——短线跟 SPX / VIX，不跟产业边际",
+    "long": ["SOX（半导体 AI 叙事）", "云锡交仓节奏", "佤邦出口", "Back 结构（结果确认）"],
+    "sources": ["MACRO.SOX", "MACRO.SPX", "MACRO.VIX"]
+  },
+
+  "time_dimension": {
+    "short": "SPX / VIX（VIX>19 或 SPX 破 20 日线 → 降敞口）+ 现货转松信号",
+    "long": "SOX / 半导体 AI 需求（2027–28 HBM4 / 3D 封装才显著验证）"
+  },
+
+  "survey_notes": "调研信息差（2026-08 华南，最丰富）\n- 价格锚：下游明确\"40万以下才有较强补货意愿\"——当前价越线，现货驱动向上打不开\n- 单位耗锡下滑3处印证：芯片集成堆叠+微型化 / 三板合一(12→10吨/月，约10克/台) / 负片工艺锡球回收\n- 量价背离：营收+20%但出货持平(靠提价) / 订单+5%但利润下滑\n- 板块分化：IGBT/光伏订单翻倍，但光伏组件端承压\n- ⚠️ 证伪：缅甸月进口回万吨 / 社库连续两周累库 / 40万附近成交放量",
+
+  "whitelist": ["MYSTEEL.SN.stock.social", "MYSTEEL.SN.TC.YN40", "ICDX.SN.volume", "SMM.SN.solder.oprate", "LME.SN.stock"],
+
+  "paradigm": "总线合成",
+  "tone": "区间震荡",
+  "tone_note": "高位宽幅震荡，区间思路，回调做多优于追涨。降敞口 ≠ 转空。",
+
+  "thresholds": [
+    {"id": "th_risk_vix", "name": "短线风控线", "series_id": "MACRO.VIX", "operator": ">", "value": 19,
+     "type": "风控线", "horizon": "短期", "action_hint": "降敞口（≠ 转空）"},
+    {"id": "th_entry_40w", "name": "介入位（补货线 + 成本区）", "series_id": "SHFE.SN.main.settle",
+     "operator": "between", "value": [400000, 410000], "type": "介入位", "horizon": "短期",
+     "action_hint": "回调做多", "note": "原文“40–41 万”未说明是现货价还是期货价，暂绑主力合约结算价，待确认"}
+  ],
+  "priority_rule": null,
+
+  "falsifiers": [
+    {"id": "fl_myanmar", "desc": "缅甸月进口回万吨", "series_id": "CUSTOMS.2609.import.MM",
+     "expression": "value >= 10000", "unit_confirmed": "实物吨", "consecutive_periods": 1, "side": "bull",
+     "note": "原文未注明重量口径；按口径字典约定以实物吨判定，待确认"},
+    {"id": "fl_social_stock_2w", "desc": "社库连续两周累库", "series_id": "MYSTEEL.SN.stock.social",
+     "expression": "change > 0", "unit_confirmed": "吨", "consecutive_periods": 2, "side": "bull"}
+  ],
+
+  "unstructured": [
+    {"section": "时间维度", "text": "SPX 破 20 日线 → 降敞口",
+     "reason": "需要 SPX 20 日均线序列；一期未登记该派生指标，无法自动比对"},
+    {"section": "基调", "text": "风控红线 ② SOX（中长线 AI 叙事）",
+     "reason": "原文未给出 SOX 的具体触发水平"},
+    {"section": "调研信息差", "text": "证伪：40 万附近成交放量",
+     "reason": "“附近”与“放量”均未量化（价格区间多宽？成交量超过多少手？），绑不上可自动判定的表达式"}
+  ]
+}

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% from "_card.html" import card %}
+{% block title %}锡 · {{ d }}{% endblock %}
+{% block navdate %}<span class="date">看板日 {{ d }}（最近交易日）</span>{% endblock %}
+{% block main %}
+
+{% set j = judgment %}
+{% if j is none %}
+  <div class="panel"><h3>尚未登记锡的研究判断</h3>
+    <p class="small">事实区照常显示。登记判断后，阈值与证伪条件将每日自动比对。</p>
+    <a href="/sn/judgment">去登记判断 →</a></div>
+{% else %}
+  {% if j.expired_days %}
+    <div class="banner expired">该判断写定于 {{ j.written_at }}，已超过复核周期 {{ j.expired_days }} 天（复核日 {{ j.review_due }}）。监测不停止，但所有输出都带此标记。</div>
+  {% endif %}
+  <section class="status">
+    <div>
+      <div class="tone">{{ j.tone or '未定基调' }}</div>
+      <div class="small">v{{ j.version }} · {{ j.author }} · 写定 {{ j.written_at }}</div>
+      <span class="badge {{ 'draft' if j.status == '草稿' else 'active' }}">{{ j.status }}</span>
+    </div>
+    <div>
+      <div class="claims">
+        <div><b>多方</b>{{ j.contradiction.bull.claim or '—' }}</div>
+        <div><b>空方</b>{{ j.contradiction.bear.claim or '—' }}</div>
+      </div>
+      {% if j.tone_note %}<div class="small" style="margin-top:6px">{{ j.tone_note }}</div>{% endif %}
+      {% if j.status == '草稿' and j.blockers %}
+        <ul class="blockers">{% for b in j.blockers %}<li>尚未生效：{{ b }}</li>{% endfor %}</ul>
+      {% endif %}
+      {% if j.unstructured %}<div class="small" style="margin-top:6px">{{ j.unstructured | length }} 条原文尚未结构化，暂不参与自动监测 · <a href="/sn/judgment">查看</a></div>{% endif %}
+    </div>
+  </section>
+
+  <h2>触发中的信号</h2>
+  <div class="panel small">阈值 {{ j.thresholds | length }} 条、证伪条件 {{ j.falsifiers | length }} 条已登记。每日自动比对将在监测层上线后于此显示触发项。</div>
+{% endif %}
+
+<h2>核心数字</h2>
+<div class="cards">
+  {% for c in cards %}{{ card(c) }}{% endfor %}
+</div>
+
+<h2>数据缺口（{{ gaps | length }}）</h2>
+{% if gaps %}
+<table>
+  <tr><th>指标</th><th>方式</th><th class="n">预期至少更新到</th><th class="n">最近数据</th><th>原因</th></tr>
+  {% for g in gaps %}
+  <tr><td>{{ g.name }}<div class="small">{{ g.series_id }}</div></td>
+      <td>{{ '自动' if g.fetch_mode == 'auto' else '人工' }}</td>
+      <td class="n">{{ g.expected_by }}</td><td class="n">{{ g.last_as_of or '—' }}</td>
+      <td>{{ g.reason }}{% if g.fetch_mode == 'manual' %} · <a href="/sn/entry?series_id={{ g.series_id }}">录入</a>{% endif %}</td></tr>
+  {% endfor %}
+</table>
+{% else %}<div class="panel small">所有登记指标均在预期更新时间内。</div>{% endif %}
+
+<p class="small" style="margin-top:24px">agent 读取：<a href="/api/sn/snapshot?date={{ d }}">/api/sn/snapshot?date={{ d }}</a></p>
+{% endblock %}
