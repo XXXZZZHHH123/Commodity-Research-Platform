@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% from "_trend.html" import trend %}
+{% block title %}宏观数据 · 锡研究工作台{% endblock %}
+{% block navdate %}<span class="date">数据截点 {{ d }}</span>{% endblock %}
+{% block main %}
+<header class="page-head">
+  <div><div class="eyebrow">MACRO LENS</div><h1>宏观与跨资产</h1><p>与锡的金融定价、风险偏好和需求周期直接相关的公开序列。</p></div>
+  <div class="head-stat"><b>{{ sources.counts['已接入'] }}</b><span>类来源已接入</span></div>
+</header>
+
+{% for group in groups %}
+<section class="section-block">
+  <div class="section-title"><div><span class="section-index">0{{ loop.index }}</span><h2>{{ group.name }}</h2></div><span>{{ group.cards | length }} 条序列</span></div>
+  <div class="trend-grid">
+    {% for c in group.cards %}{{ trend(c) }}{% endfor %}
+  </div>
+</section>
+{% endfor %}
+
+<section class="section-block">
+  <div class="section-title"><div><span class="section-index">06</span><h2>数据源接入台账</h2></div><span>来自 DATA_SOURCES_AND_PROCESSING</span></div>
+  <div class="source-stats">
+    {% for status, count in sources.counts.items() %}<div><b>{{ count }}</b><span>{{ status }}</span></div>{% endfor %}
+  </div>
+  <div class="table-wrap"><table class="source-table">
+    <thead><tr><th>来源</th><th>层级</th><th>覆盖</th><th>访问条件</th><th>状态</th></tr></thead>
+    <tbody>{% for row in sources.rows %}<tr>
+      <td><b>{{ row.name }}</b></td><td>{{ row.level }}</td><td>{{ row.scope }}</td><td>{{ row.access }}</td>
+      <td><span class="status-pill s-{{ row.status }}">{{ row.status }}</span></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endblock %}

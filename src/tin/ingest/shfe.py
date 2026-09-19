@@ -28,6 +28,7 @@ class Batch:
     indicators: list[IndicatorSpec] = field(default_factory=list)
     observations: list[ObservationIn] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
     trading_day: tuple[date, int] | None = None  # (交易日, 年内期号)
 
 

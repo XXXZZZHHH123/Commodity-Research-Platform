@@ -16,6 +16,7 @@ pip install -r requirements.txt && pip install -e .
 ```bash
 python -m tin.jobs init                     # 建库 + 导入指标登记表与锡判断 v1
 python -m tin.jobs daily                    # 取数 → 计算派生值 → 导出当日 JSON 快照
+python -m tin.jobs fetch --date 2026-09-18 --only fred_macro  # 单独更新宏观序列
 python -m tin.jobs backfill --days 14       # 回补近 14 天上期所数据与 VIX
 python -m tin.jobs enter SMM.SN.spot.1 406000 --as-of "2026-09-18 11:30" --by 张三 --note "SMM 1#锡均价"
 uvicorn tin.web.app:app --host 0.0.0.0 --port 8765
@@ -37,9 +38,13 @@ pytest
 | 注册仓单（日） / 交易所库存（周） | 上期所仓单日报 / 库存周报 | 自动 |
 | 人民币中间价 | 外汇交易中心 | 自动（接口只给当日） |
 | VIX | CBOE 官方 CSV | 自动 |
+| 美债、实际利率、美元、SPX、SOX、信用、流动性、商品与美国周期 | FRED CSV | 自动 |
 | SMM 现货、社库、TC、开工率、LME、ICDX、SOX、SPX、海关 | 订阅 / 授权 / 月度 | **人工录入**（页面「指标 → 人工录入」） |
 
 订阅与授权数据一期不写任何抓取代码（00 §7.1）。
+
+宏观页 `/sn/macro` 展示趋势、最新值、变化与来源台账。`DATA_SOURCES_AND_PROCESSING.md`
+中需要密钥或专有插件的数据源会明确标记为「需凭证」，不会以占位数据冒充已接入。
 
 ## 目录
 

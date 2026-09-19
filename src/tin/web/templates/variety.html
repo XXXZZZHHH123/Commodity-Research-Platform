@@ -1,58 +1,85 @@
 {% extends "base.html" %}
 {% from "_card.html" import card %}
-{% block title %}锡 · {{ d }}{% endblock %}
-{% block navdate %}<span class="date">看板日 {{ d }}（最近交易日）</span>{% endblock %}
+{% from "_trend.html" import trend %}
+{% block title %}锡 SN · 研究总览{% endblock %}
+{% block navdate %}<span class="date">交易日 {{ d }}</span>{% endblock %}
 {% block main %}
+<header class="page-head overview-head">
+  <div><div class="eyebrow">COMMODITY RESEARCH / SN</div><h1>锡研究总览</h1><p>行情、研究判断与宏观驱动使用同一数据截点。</p></div>
+  <div class="head-metrics">
+    <div><b>{{ cards | selectattr('status', 'equalto', 'ok') | list | length }}/{{ cards | length }}</b><span>核心数据就绪</span></div>
+    <div><b>{{ gaps | length }}</b><span>数据缺口</span></div>
+  </div>
+</header>
 
 {% set j = judgment %}
 {% if j is none %}
-  <div class="panel"><h3>尚未登记锡的研究判断</h3>
-    <p class="small">事实区照常显示。登记判断后，阈值与证伪条件将每日自动比对。</p>
-    <a href="/sn/judgment">去登记判断 →</a></div>
+<section class="judgment-strip empty-state">
+  <div><div class="eyebrow">CURRENT VIEW</div><h2>尚未登记锡的研究判断</h2></div>
+  <a class="text-action" href="/sn/judgment">登记判断</a>
+</section>
 {% else %}
-  {% if j.expired_days %}
-    <div class="banner expired">该判断写定于 {{ j.written_at }}，已超过复核周期 {{ j.expired_days }} 天（复核日 {{ j.review_due }}）。监测不停止，但所有输出都带此标记。</div>
-  {% endif %}
-  <section class="status">
-    <div>
+  {% if j.expired_days %}<div class="banner expired"><b>判断需要复核</b><span>写定于 {{ j.written_at }}，已超过复核周期 {{ j.expired_days }} 天；数据监测继续运行。</span></div>{% endif %}
+  <section class="judgment-strip">
+    <div class="judgment-tone">
+      <div class="eyebrow">CURRENT VIEW · V{{ j.version }}</div>
       <div class="tone">{{ j.tone or '未定基调' }}</div>
-      <div class="small">v{{ j.version }} · {{ j.author }} · 写定 {{ j.written_at }}</div>
-      <span class="badge {{ 'draft' if j.status == '草稿' else 'active' }}">{{ j.status }}</span>
+      <div class="meta-line">{{ j.author }} · {{ j.written_at }} <span class="badge {{ 'draft' if j.status == '草稿' else 'active' }}">{{ j.status }}</span></div>
     </div>
-    <div>
-      <div class="claims">
-        <div><b>多方</b>{{ j.contradiction.bull.claim or '—' }}</div>
-        <div><b>空方</b>{{ j.contradiction.bear.claim or '—' }}</div>
-      </div>
-      {% if j.tone_note %}<div class="small" style="margin-top:6px">{{ j.tone_note }}</div>{% endif %}
-      {% if j.status == '草稿' and j.blockers %}
-        <ul class="blockers">{% for b in j.blockers %}<li>尚未生效：{{ b }}</li>{% endfor %}</ul>
-      {% endif %}
-      {% if j.unstructured %}<div class="small" style="margin-top:6px">{{ j.unstructured | length }} 条原文尚未结构化，暂不参与自动监测 · <a href="/sn/judgment">查看</a></div>{% endif %}
+    <div class="claims">
+      <div><span>多方依据</span><p>{{ j.contradiction.bull.claim or '—' }}</p></div>
+      <div><span>空方依据</span><p>{{ j.contradiction.bear.claim or '—' }}</p></div>
     </div>
+    <a class="text-action" href="/sn/judgment">完整判断</a>
   </section>
-
-  <h2>触发中的信号</h2>
-  <div class="panel small">阈值 {{ j.thresholds | length }} 条、证伪条件 {{ j.falsifiers | length }} 条已登记。每日自动比对将在监测层上线后于此显示触发项。</div>
+  {% if j.status == '草稿' and j.blockers %}<div class="inline-warning"><b>尚未生效</b>{{ j.blockers | join('；') }}</div>{% endif %}
 {% endif %}
 
-<h2>核心数字</h2>
-<div class="cards">
-  {% for c in cards %}{{ card(c) }}{% endfor %}
-</div>
+<section class="section-block first">
+  <div class="section-title"><div><span class="section-index">01</span><h2>核心市场</h2></div><span>价格、基差与库存</span></div>
+  <div class="cards">{% for c in cards %}{{ card(c) }}{% endfor %}</div>
+</section>
 
-<h2>数据缺口（{{ gaps | length }}）</h2>
-{% if gaps %}
-<table>
-  <tr><th>指标</th><th>方式</th><th class="n">预期至少更新到</th><th class="n">最近数据</th><th>原因</th></tr>
-  {% for g in gaps %}
-  <tr><td>{{ g.name }}<div class="small">{{ g.series_id }}</div></td>
-      <td>{{ '自动' if g.fetch_mode == 'auto' else '人工' }}</td>
-      <td class="n">{{ g.expected_by }}</td><td class="n">{{ g.last_as_of or '—' }}</td>
-      <td>{{ g.reason }}{% if g.fetch_mode == 'manual' %} · <a href="/sn/entry?series_id={{ g.series_id }}">录入</a>{% endif %}</td></tr>
-  {% endfor %}
-</table>
-{% else %}<div class="panel small">所有登记指标均在预期更新时间内。</div>{% endif %}
+<section class="section-block">
+  <div class="section-title"><div><span class="section-index">02</span><h2>沪锡期限结构</h2></div>
+    <span>{% if curve.shape %}活跃合约呈 {{ curve.shape }}{% else %}活跃合约不足，暂不判定结构{% endif %}</span></div>
+  {% if curve.rows %}
+  <div class="curve-layout">
+    <div class="curve-chart">
+      <div class="chart-scale"><span>{{ curve.max | num('元/吨') }}</span><span>{{ curve.min | num('元/吨') }}</span></div>
+      <svg viewBox="0 0 100 44" preserveAspectRatio="none" role="img" aria-label="沪锡各合约结算价期限结构">
+        <line x1="0" y1="43" x2="100" y2="43" class="chart-grid" />
+        <line x1="0" y1="22" x2="100" y2="22" class="chart-grid" />
+        <polyline points="{{ curve.points }}" class="curve-line" />
+      </svg>
+      <div class="curve-labels">{% for r in curve.rows %}<span>{{ r.contract[2:] }}</span>{% endfor %}</div>
+    </div>
+    <div class="table-wrap compact-table"><table>
+      <thead><tr><th>合约</th><th class="n">结算</th><th class="n">收盘</th><th class="n">成交</th><th class="n">持仓</th></tr></thead>
+      <tbody>{% for r in curve.rows %}<tr class="{{ 'main-row' if r.main }}">
+        <td><b>{{ r.contract }}</b>{% if r.main %}<span class="tag">主力</span>{% endif %}{% if not r.active %}<span class="tag muted">低流动性</span>{% endif %}</td>
+        <td class="n">{{ r.settle | num('元/吨') }}</td><td class="n">{{ r.close | num('元/吨') }}</td>
+        <td class="n">{{ r.volume | num('手') }}</td><td class="n">{{ r.oi | num('手') }}</td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+  </div>
+  {% else %}<div class="empty-state">该交易日没有可用的合约行情。</div>{% endif %}
+</section>
 
-<p class="small" style="margin-top:24px">agent 读取：<a href="/api/sn/snapshot?date={{ d }}">/api/sn/snapshot?date={{ d }}</a></p>
+<section class="section-block">
+  <div class="section-title"><div><span class="section-index">03</span><h2>宏观镜头</h2></div><a href="/sn/macro?date={{ d }}">查看全部序列</a></div>
+  <div class="trend-grid featured">{% for c in macro %}{{ trend(c, true) }}{% endfor %}</div>
+</section>
+
+<section class="section-block">
+  <div class="section-title"><div><span class="section-index">04</span><h2>数据完整性</h2></div><span>{{ gaps | length }} 个待更新项</span></div>
+  {% if gaps %}<div class="table-wrap"><table>
+    <thead><tr><th>指标</th><th>采集方式</th><th>应更新至</th><th>最近数据</th><th>状态</th></tr></thead>
+    <tbody>{% for g in gaps %}<tr><td><b>{{ g.name }}</b><div class="cell-note">{{ g.series_id }}</div></td>
+      <td>{{ '自动' if g.fetch_mode == 'auto' else '人工' }}</td><td>{{ g.expected_by }}</td><td>{{ g.last_as_of or '—' }}</td>
+      <td>{{ g.reason }}{% if g.fetch_mode == 'manual' %} <a href="/sn/entry?series_id={{ g.series_id }}">录入</a>{% endif %}</td></tr>{% endfor %}</tbody>
+  </table></div>{% else %}<div class="empty-state">所有登记指标均在预期更新时间内。</div>{% endif %}
+</section>
+
+<footer class="data-footer">机器可读快照 <a href="/api/sn/snapshot?date={{ d }}">/api/sn/snapshot?date={{ d }}</a></footer>
 {% endblock %}

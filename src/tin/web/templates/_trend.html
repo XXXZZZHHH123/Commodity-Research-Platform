@@ -1,0 +1,23 @@
+{% macro trend(c, compact=false) -%}
+<article class="trend {{ 'compact' if compact }} {{ c.status }}">
+  <div class="trend-head">
+    <div><div class="trend-name">{{ c.name }}</div><div class="trend-source">{{ c.provider }} · {{ c.source_level }}</div></div>
+    {% if c.status == 'ok' %}<div class="trend-date">{{ c.as_of }}</div>{% endif %}
+  </div>
+  {% if c.status == 'ok' %}
+  <div class="trend-main">
+    <div><span class="trend-value">{{ c.value }}</span><span class="trend-unit">{{ c.unit }}</span>
+      {% if c.change %}<div class="trend-change">较前值 {{ c.change }}</div>{% endif %}
+    </div>
+    <svg class="spark" viewBox="0 0 100 36" preserveAspectRatio="none" role="img" aria-label="{{ c.name }}最近 {{ c.count }} 个观测走势">
+      <line x1="0" y1="35" x2="100" y2="35" class="spark-base" />
+      <polyline points="{{ c.points }}" class="spark-line" />
+    </svg>
+  </div>
+  {% if not compact %}<div class="trend-range"><span>{{ c.min }}</span><span>{{ c.count }} 个观测</span><span>{{ c.max }}</span></div>{% endif %}
+  {% else %}
+  <div class="trend-empty">尚未取数</div>
+  <div class="trend-source">运行宏观数据采集后显示</div>
+  {% endif %}
+</article>
+{%- endmacro %}

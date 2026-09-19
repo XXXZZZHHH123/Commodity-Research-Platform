@@ -13,7 +13,17 @@ from tin.caliber.dictionary import DIMENSIONS
 from tin.compute.engine import compute_day, latest_trade_date
 from tin.config import SHANGHAI, settings
 from tin.db import SessionLocal
-from tin.export.board import PER_CONTRACT, core_cards, gaps, judgment_block, snapshot
+from tin.export.board import (
+    PER_CONTRACT,
+    contract_curve,
+    core_cards,
+    gaps,
+    judgment_block,
+    macro_featured,
+    macro_groups,
+    snapshot,
+    source_catalog,
+)
 from tin.ingest.record import RecordError, record
 from tin.judgments.importer import import_text
 from tin.judgments.service import JudgmentError, current, save_version, to_payload
@@ -72,7 +82,17 @@ def variety_page(request: Request, date: str | None = None, msg: str | None = No
         today = datetime.now(SHANGHAI).date()
         return templates.TemplateResponse(request, "variety.html", {
             "d": d, "cards": core_cards(s, V, d), "judgment": judgment_block(s, V, today),
-            "gaps": gaps(s, V, d), "msg": msg, "nav": "variety",
+            "gaps": gaps(s, V, d), "curve": contract_curve(s, V, d),
+            "macro": macro_featured(s, d), "msg": msg, "nav": "variety",
+        })
+
+
+@app.get("/sn/macro")
+def macro_page(request: Request, date: str | None = None):
+    with SessionLocal() as s:
+        d = _board_date(s, date)
+        return templates.TemplateResponse(request, "macro.html", {
+            "d": d, "groups": macro_groups(s, d), "sources": source_catalog(), "nav": "macro",
         })
 
 
