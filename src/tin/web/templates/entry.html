@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}人工录入 · 锡{% endblock %}
 {% block main %}
-<h2>人工录入</h2>
-<p class="small">订阅与授权数据（SMM、Mysteel、LME 等）一期不抓取，只能在此录入。每条录入都记录录入人与时间，页面以「人工」标记区分。</p>
+<header class="page-head"><div><div class="eyebrow">MANUAL INPUT</div><h1>人工录入</h1><p>订阅与授权数据保留来源、录入人和数据时点。</p></div></header>
+<p class="form-note">SMM、Mysteel、LME 等授权数据不自动抓取，页面统一以「人工」标记区分。</p>
 <form class="stack" method="post" action="/sn/entry">
   <label>指标
     <select name="series_id" required>

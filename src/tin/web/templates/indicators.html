@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block title %}指标 · 锡{% endblock %}
 {% block main %}
-<p><a href="/sn/entry">→ 人工录入</a></p>
-<h2>指标登记表（{{ rows | length }}，不含逐合约行情序列）</h2>
-<table><tr><th>series_id</th><th>名称</th><th>类别</th><th>口径</th><th>单位</th><th>来源</th><th>频率</th><th>方式</th></tr>
+<header class="page-head"><div><div class="eyebrow">DATA DICTIONARY</div><h1>指标与口径</h1><p>{{ rows | length }} 条登记指标，不含逐合约行情序列。</p></div><a class="text-action" href="/sn/entry">人工录入</a></header>
+<section class="section-block first"><div class="section-title"><div><span class="section-index">01</span><h2>指标登记表</h2></div><span>事实层唯一标识</span></div>
+<div class="table-wrap"><table><tr><th>series_id</th><th>名称</th><th>类别</th><th>口径</th><th>单位</th><th>来源</th><th>频率</th><th>方式</th></tr>
 {% for r in rows %}
 <tr><td class="small">{{ r.series_id }}</td>
 <td>{{ r.name }}{% if r.is_proxy %}<span class="tag">代理</span>{% endif %}{% if r.note %}<div class="small">{{ r.note }}</div>{% endif %}</td>
@@ -12,9 +12,10 @@
 <td>{{ r.unit }}</td><td>{{ r.source }}{% if r.vendor_code %}<div class="small">{{ r.vendor_code }}</div>{% endif %}</td><td>{{ r.frequency }}</td>
 <td>{{ '自动' if r.fetch_mode == 'auto' else '人工' }}</td></tr>
 {% endfor %}</table>
+</div></section>
 
-<h2>口径字典</h2>
-<table><tr><th>维度</th><th>枚举值</th><th>说明</th></tr>
+<section class="section-block"><div class="section-title"><div><span class="section-index">02</span><h2>口径字典</h2></div><span>计算前置约束</span></div>
+<div class="table-wrap"><table><tr><th>维度</th><th>枚举值</th><th>说明</th></tr>
 {% for d in dimensions %}<tr><td>{{ d.label }}</td><td>{% for e in d.enum %}{{ e.value }}{{ ' / ' if not loop.last }}{% endfor %}</td><td class="small">{{ d.note }}</td></tr>{% endfor %}
-</table>
+</table></div></section>
 {% endblock %}

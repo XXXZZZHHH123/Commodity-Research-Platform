@@ -7,13 +7,14 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tin.compute.engine import day_end, latest_derived, latest_obs
+from tin.compute.engine import contracts_on, day_end, latest_derived, latest_obs
 from tin.compute.formulas import REGISTRY
-from tin.config import SHANGHAI
+from tin.config import NEW_YORK, SHANGHAI, settings
+from tin.ingest.fred import FEATURED_SERIES, FRED_SERIES, SOURCE_CATALOG, MacroSeries
 from tin.judgments.service import current as current_judgment
 from tin.judgments.service import to_payload
 from tin.judgments.validate import activation_blockers
-from tin.models import FetchRun, Indicator
+from tin.models import FetchRun, Indicator, Observation
 
 PER_CONTRACT = re.compile(r"^SHFE\.[A-Z]+\.\d{4}\.")
 OVERSEAS = {"CBOE", "LME", "代理指标"}
@@ -121,10 +122,132 @@ def core_cards(session: Session, variety: str, d: date) -> list[Card]:
     ]
 
 
+def _series_history(session: Session, series_id: str, d: date, limit: int = 180) -> list[Observation]:
+    """截至看板日的历史值；同一时点只保留最新修订。"""
+    rows = session.scalars(
+        select(Observation)
+        .where(Observation.series_id == series_id, Observation.as_of < day_end(d))
+        .order_by(Observation.as_of.desc(), Observation.revision.desc())
+        .limit(limit * 3)
+    ).all()
+    unique: dict[datetime, Observation] = {}
+    for row in rows:
+        unique.setdefault(row.as_of, row)
+    return sorted(unique.values(), key=lambda x: x.as_of)[-limit:]
+
+
+def _chart_points(values: list[float], width: int = 100, height: int = 36) -> str:
+    if not values:
+        return ""
+    low, high = min(values), max(values)
+    span = high - low
+    if len(values) == 1:
+        return f"0,{height / 2:g} {width},{height / 2:g}"
+    points = []
+    for i, value in enumerate(values):
+        x = i * width / (len(values) - 1)
+        y = height / 2 if span == 0 else 3 + (high - value) * (height - 6) / span
+        points.append(f"{x:.2f},{y:.2f}")
+    return " ".join(points)
+
+
+def _display_value(value: float, spec: MacroSeries) -> str:
+    shown = value / spec.scale
+    return f"{shown:,.{spec.decimals}f}"
+
+
+def _source_date(row: Observation, spec: MacroSeries) -> date:
+    zone = NEW_YORK if spec.market_close else timezone.utc
+    return row.as_of.astimezone(zone).date()
+
+
+def macro_cards(session: Session, d: date, series_ids: tuple[str, ...] | None = None) -> list[dict]:
+    wanted = set(series_ids) if series_ids else None
+    out = []
+    for spec in FRED_SERIES:
+        if wanted is not None and spec.series_id not in wanted:
+            continue
+        rows = _series_history(session, spec.series_id, d)
+        values = [r.value / spec.scale for r in rows]
+        item = {
+            "series_id": spec.series_id, "name": spec.name, "group": spec.group,
+            "unit": spec.display_unit or spec.unit, "provider": spec.provider,
+            "source_level": spec.source_level, "publisher": spec.publisher,
+            "frequency": spec.frequency, "status": "missing", "points": "",
+        }
+        if rows:
+            latest = rows[-1]
+            item.update({
+                "status": "ok", "value": _display_value(latest.value, spec),
+                "as_of": _source_date(latest, spec).isoformat(),
+                "points": _chart_points(values), "count": len(rows),
+                "min": f"{min(values):,.{spec.decimals}f}",
+                "max": f"{max(values):,.{spec.decimals}f}",
+                "source_url": latest.source_url,
+            })
+            if len(rows) >= 2:
+                delta = values[-1] - values[-2]
+                if spec.unit == "%":
+                    item["change"] = f"{delta * 100:+.0f} bp"
+                else:
+                    item["change"] = f"{delta:+,.{spec.decimals}f}"
+        out.append(item)
+    return out
+
+
+def macro_groups(session: Session, d: date) -> list[dict]:
+    cards = macro_cards(session, d)
+    return [{"name": group, "cards": [c for c in cards if c["group"] == group]}
+            for group in dict.fromkeys(s.group for s in FRED_SERIES)]
+
+
+def macro_featured(session: Session, d: date) -> list[dict]:
+    return macro_cards(session, d, FEATURED_SERIES)
+
+
+def source_catalog() -> dict:
+    rows = [asdict(s) for s in SOURCE_CATALOG]
+    counts = {status: sum(r["status"] == status for r in rows)
+              for status in ("已接入", "待接入", "需凭证", "人工导入", "候选")}
+    return {"rows": rows, "counts": counts}
+
+
+def contract_curve(session: Session, variety: str, d: date) -> dict:
+    main = latest_obs(session, f"SHFE.{variety}.main.settle", day_end(d))
+    main_contract = (main.caliber_snapshot or {}).get("contract") if main else None
+    rows = []
+    for month in contracts_on(session, variety, d):
+        values = {field: latest_obs(session, f"SHFE.{variety}.{month}.{field}", day_end(d))
+                  for field in ("close", "settle", "volume", "oi")}
+        settle = values["settle"]
+        if settle is None or settle.as_of.astimezone(SHANGHAI).date() != d:
+            continue
+        contract = f"{variety}{month}"
+        rows.append({
+            "contract": contract, "month": month, "settle": settle.value,
+            "close": values["close"].value if values["close"] else None,
+            "volume": values["volume"].value if values["volume"] else None,
+            "oi": values["oi"].value if values["oi"] else None,
+            "main": contract == main_contract,
+            "active": bool(values["volume"] and values["volume"].value >= settings.liquidity_min_volume),
+        })
+    prices = [r["settle"] for r in rows]
+    active = [r for r in rows if r["active"]]
+    shape = None
+    if len(active) >= 2:
+        shape = "Contango" if active[-1]["settle"] > active[0]["settle"] else "Backwardation"
+    return {
+        "rows": rows, "points": _chart_points(prices, 100, 44), "shape": shape,
+        "min": min(prices) if prices else None, "max": max(prices) if prices else None,
+    }
+
+
 def _fetcher_of(series_id: str) -> str | None:
     for suffix, name in ((".main.", "shfe_quotes"), (".warrant", "shfe_warrant"), (".stock.weekly", "shfe_weekly_stock")):
         if series_id.startswith("SHFE.") and suffix in series_id:
             return name
+    if series_id.startswith("FRED."):
+        return "fred_macro"
     return {"FX.USDCNY.mid": "cfets_fx", "MACRO.VIX": "cboe_vix"}.get(series_id)
 
 
@@ -138,6 +261,8 @@ def _auto_gap_reason(session: Session, series_id: str, d: date) -> str:
         return f"自动取数失败（重试 {run.attempts} 次）：{run.error}"
     if run.status == "未发布":
         return f"数据源尚未发布：{run.error}"
+    if run.status == "部分失败":
+        return f"宏观批次部分失败：{run.error}"
     return "自动取数未取到"
 
 
