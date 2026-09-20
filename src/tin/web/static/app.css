@@ -151,6 +151,7 @@ html { scroll-behavior: smooth; }
   .macro-filter-inner { padding: 0.125rem; }
   .macro-filter-link { padding: 0.25rem 0.65rem; }
   .macro-group-heading { min-height: 2rem; }
+  .macro-anchor { scroll-margin-top: 4rem; }
 }
 
 /* 打印日报归档时去掉导航与交互件 */
