@@ -1,9 +1,12 @@
-from datetime import date, datetime
+import csv
+import io
+import json
+from datetime import date, datetime, time
 from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
@@ -15,6 +18,8 @@ from tin.config import SHANGHAI, settings
 from tin.db import SessionLocal
 from tin.export.board import (
     PER_CONTRACT,
+    archive_days,
+    audit_entries,
     contract_curve,
     core_cards,
     gaps,
@@ -23,11 +28,13 @@ from tin.export.board import (
     macro_groups,
     snapshot,
     source_catalog,
+    threshold_radar,
+    ticker,
 )
 from tin.ingest.record import RecordError, record
 from tin.judgments.importer import import_text
 from tin.judgments.service import JudgmentError, current, save_version, to_payload
-from tin.models import AuditLog, Indicator, Judgment
+from tin.models import AuditLog, Indicator, Judgment, TradingDay
 from tin.schemas.caliber import Caliber
 from tin.schemas.observation import ObservationIn
 
@@ -37,6 +44,9 @@ app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 templates = Jinja2Templates(directory=HERE / "templates")
 
 V = settings.variety
+# 人工录入指标的常规发布时刻，作为快速录入抽屉的 as_of 预填值
+DEFAULT_ENTRY_TIME = {"SMM.SN.spot.1": time(11, 30), "MYSTEEL.SN.stock.social": time(15, 0),
+                      "MYSTEEL.SN.TC.YN40": time(11, 0), "LME.SN.stock": time(19, 0)}
 
 
 def _num(value, unit: str = "", signed: bool = False) -> str:
@@ -44,6 +54,8 @@ def _num(value, unit: str = "", signed: bool = False) -> str:
         return "—"
     if unit == "元":
         digits = 4
+    elif unit == "%":
+        digits = 2
     elif unit in ("元/吨", "吨", "手", "实物吨") or float(value).is_integer():
         digits = 0
     else:
@@ -70,86 +82,74 @@ def _board_date(s, q: str | None) -> date:
     return d
 
 
+def _neighbour_dates(s, d: date) -> tuple[str | None, str | None]:
+    prev = s.scalar(select(TradingDay.trade_date).where(TradingDay.trade_date < d.isoformat())
+                    .order_by(TradingDay.trade_date.desc()).limit(1))
+    nxt = s.scalar(select(TradingDay.trade_date).where(TradingDay.trade_date > d.isoformat())
+                   .order_by(TradingDay.trade_date).limit(1))
+    return prev, nxt
+
+
+def _manual_indicators(s) -> list[dict]:
+    rows = s.scalars(select(Indicator).where(Indicator.fetch_mode == "manual", Indicator.status == "可用")
+                     .order_by(Indicator.category, Indicator.series_id)).all()
+    today = datetime.now(SHANGHAI).date()
+    return [{"series_id": i.series_id, "name": i.name, "unit": i.unit, "frequency": i.frequency,
+             "default_as_of": datetime.combine(today, DEFAULT_ENTRY_TIME.get(i.series_id, time(15, 0)))
+             .strftime("%Y-%m-%dT%H:%M")} for i in rows]
+
+
+def _shell(s, nav: str, d: date | None = None, **extra) -> dict:
+    """所有页面共用的外壳数据：行情条、日期切换、快速录入抽屉。"""
+    ctx = {"nav": nav, "d": d.isoformat() if d else None, "manual_indicators": _manual_indicators(s)}
+    if d is not None:
+        ctx["ticker"] = ticker(s, V, d)
+        ctx["prev_date"], ctx["next_date"] = _neighbour_dates(s, d)
+    return {**ctx, **extra}
+
+
 @app.get("/")
 def root():
     return RedirectResponse(f"/{V.lower()}")
 
 
 @app.get("/sn")
-def variety_page(request: Request, date: str | None = None, msg: str | None = None):
+def variety_page(request: Request, date: str | None = None, err: str | None = None):
     with SessionLocal() as s:
         d = _board_date(s, date)
         today = datetime.now(SHANGHAI).date()
-        return templates.TemplateResponse(request, "variety.html", {
-            "d": d, "cards": core_cards(s, V, d), "judgment": judgment_block(s, V, today),
-            "gaps": gaps(s, V, d), "curve": contract_curve(s, V, d),
-            "macro": macro_featured(s, d), "msg": msg, "nav": "variety",
-        })
+        return templates.TemplateResponse(request, "variety.html", _shell(
+            s, "variety", d, cards=core_cards(s, V, d), judgment=judgment_block(s, V, today),
+            radar=threshold_radar(s, V, d), gaps=gaps(s, V, d), curve=contract_curve(s, V, d),
+            macro=macro_featured(s, d), liquidity_min=settings.liquidity_min_volume, err=err))
 
 
 @app.get("/sn/macro")
 def macro_page(request: Request, date: str | None = None):
     with SessionLocal() as s:
         d = _board_date(s, date)
-        return templates.TemplateResponse(request, "macro.html", {
-            "d": d, "groups": macro_groups(s, d), "sources": source_catalog(), "nav": "macro",
-        })
-
-
-@app.get("/sn/entry")
-def entry_form(request: Request, series_id: str | None = None, msg: str | None = None, err: str | None = None):
-    with SessionLocal() as s:
-        manual = s.scalars(select(Indicator).where(Indicator.fetch_mode == "manual", Indicator.status == "可用")
-                           .order_by(Indicator.category, Indicator.series_id)).all()
-        return templates.TemplateResponse(request, "entry.html", {
-            "indicators": manual, "selected": series_id, "msg": msg, "err": err, "nav": "indicators",
-            "now": datetime.now(SHANGHAI).strftime("%Y-%m-%dT%H:%M"),
-        })
-
-
-@app.post("/sn/entry")
-def entry_submit(series_id: str = Form(...), value: float = Form(...), as_of: str = Form(...),
-                 entered_by: str = Form(...), note: str = Form(...)):
-    with SessionLocal() as s:
-        ind = s.get(Indicator, series_id)
-        if ind is None or ind.fetch_mode != "manual":
-            raise HTTPException(400, "只能为人工录入指标录入数值")
-        when = datetime.fromisoformat(as_of).replace(tzinfo=SHANGHAI)
-        try:
-            row = record(s, ObservationIn(series_id=series_id, value=value, as_of=when,
-                                          caliber=Caliber.model_validate(ind.caliber), source="人工",
-                                          entered_by=entered_by.strip(), note=note.strip()))
-        except (RecordError, ValidationError) as e:
-            return _redirect("/sn/entry", series_id=series_id, err=e)
-        s.add(AuditLog(at=datetime.now(SHANGHAI), actor=entered_by.strip(), action="人工录入",
-                       target_type="observation", target_id=series_id,
-                       detail={"value": value, "as_of": when.isoformat(), "note": note}))
-        s.commit()
-        d = latest_trade_date(s)
-        if d is not None:
-            compute_day(s, d)
-        text = f"已录入 {ind.name} = {value:g}" if row else "与已有值相同，未重复写入"
-        return _redirect("/sn/entry", series_id=series_id, msg=text)
+        return templates.TemplateResponse(request, "macro.html", _shell(
+            s, "macro", d, groups=macro_groups(s, d), sources=source_catalog()))
 
 
 @app.get("/sn/judgment")
-def judgment_page(request: Request, msg: str | None = None, err: str | None = None):
+def judgment_page(request: Request, err: str | None = None):
     with SessionLocal() as s:
+        d = latest_trade_date(s)
         today = datetime.now(SHANGHAI).date()
         versions = s.scalars(select(Judgment).where(Judgment.variety == V).order_by(Judgment.version.desc())).all()
-        j = current(s, V)
-        names = {i.series_id: i.name for i in s.scalars(select(Indicator))}
         last_import = s.scalars(select(AuditLog).where(AuditLog.action == "判断导入")
                                 .order_by(AuditLog.id.desc()).limit(1)).first()
-        return templates.TemplateResponse(request, "judgment.html", {
-            "j": j, "block": judgment_block(s, V, today), "versions": versions, "names": names,
-            "msg": msg, "err": err, "report": last_import.detail if last_import else None, "nav": "judgment",
-        })
+        return templates.TemplateResponse(request, "judgment.html", _shell(
+            s, "judgment", d, j=current(s, V), block=judgment_block(s, V, today), versions=versions,
+            names={i.series_id: i.name for i in s.scalars(select(Indicator))},
+            radar=threshold_radar(s, V, d) if d else [],
+            report=last_import.detail if last_import else None, err=err))
 
 
 @app.post("/sn/judgment/import")
 async def judgment_import(file: UploadFile | None = None, text: str = Form(""), author: str = Form(...)):
-    """预留的上传接口：研究逻辑新版本（txt / md）→ 新草稿版本。"""
+    """上传接口：研究逻辑新版本（txt / md）→ 新草稿版本。"""
     raw = (await file.read()).decode("utf-8") if file is not None and file.filename else text
     if not raw.strip():
         return _redirect("/sn/judgment", err="没有收到文本")
@@ -170,22 +170,64 @@ async def judgment_import(file: UploadFile | None = None, text: str = Form(""), 
         return _redirect("/sn/judgment", msg=f"已导入为草稿 v{row.version}")
 
 
+@app.get("/sn/entry")
+def entry_form(request: Request, series_id: str | None = None, err: str | None = None):
+    with SessionLocal() as s:
+        return templates.TemplateResponse(request, "entry.html", _shell(
+            s, "entry", latest_trade_date(s), indicators=_manual_indicators(s), selected=series_id, err=err,
+            audit=audit_entries(s), now=datetime.now(SHANGHAI).strftime("%Y-%m-%dT%H:%M")))
+
+
+@app.post("/sn/entry")
+def entry_submit(series_id: str = Form(...), value: float = Form(...), as_of: str = Form(...),
+                 entered_by: str = Form(...), note: str = Form(...), return_to: str = Form("/sn/entry")):
+    with SessionLocal() as s:
+        ind = s.get(Indicator, series_id)
+        if ind is None or ind.fetch_mode != "manual":
+            raise HTTPException(400, "只能为人工录入指标录入数值")
+        when = datetime.fromisoformat(as_of).replace(tzinfo=SHANGHAI)
+        try:
+            row = record(s, ObservationIn(series_id=series_id, value=value, as_of=when,
+                                          caliber=Caliber.model_validate(ind.caliber), source="人工",
+                                          entered_by=entered_by.strip(), note=note.strip()))
+        except (RecordError, ValidationError) as e:
+            return _redirect(return_to.split("?")[0], err=e)
+        s.add(AuditLog(at=datetime.now(SHANGHAI), actor=entered_by.strip(), action="人工录入",
+                       target_type="observation", target_id=series_id,
+                       detail={"value": value, "as_of": when.isoformat(), "note": note}))
+        s.commit()
+        d = latest_trade_date(s)
+        if d is not None:
+            compute_day(s, d)
+        text = f"已录入 {ind.name} = {value:g}，派生指标已重算" if row else "与已有值相同，未重复写入"
+        base, _, query = return_to.partition("?")
+        params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
+        return _redirect(base, msg=text, **params)
+
+
 @app.get("/sn/indicators")
 def indicators_page(request: Request):
     with SessionLocal() as s:
         rows = [i for i in s.scalars(select(Indicator).order_by(Indicator.fetch_mode, Indicator.category,
-                                                                  Indicator.series_id))
+                                                                Indicator.series_id))
                 if not PER_CONTRACT.match(i.series_id)]
-        return templates.TemplateResponse(request, "indicators.html", {
-            "rows": rows, "dimensions": DIMENSIONS, "nav": "indicators"})
+        return templates.TemplateResponse(request, "indicators.html", _shell(
+            s, "indicators", latest_trade_date(s), rows=rows, dimensions=DIMENSIONS))
 
 
 @app.get("/sn/reports")
-def reports_page(request: Request):
-    folder = settings.exports_dir / V
-    files = sorted(folder.glob("*.json"), reverse=True) if folder.exists() else []
-    return templates.TemplateResponse(request, "reports.html", {
-        "files": [f.stem for f in files], "nav": "reports"})
+def reports_page(request: Request, date: str | None = None):
+    with SessionLocal() as s:
+        files = archive_days(s, V)
+        selected = next((f for f in files if f["date"] == date), files[0] if files else {"date": None})
+        preview = ""
+        if selected.get("date"):
+            path = settings.exports_dir / V / f"{selected['date']}.json"
+            if path.exists():
+                snap = json.loads(path.read_text(encoding="utf-8"))
+                preview = json.dumps(snap, ensure_ascii=False, indent=2)
+        return templates.TemplateResponse(request, "reports.html", _shell(
+            s, "reports", latest_trade_date(s), files=files, selected=selected, preview=preview))
 
 
 @app.get("/sn/reports/{day}.json")
@@ -198,6 +240,22 @@ def report_file(day: str):
     if not path.exists():
         raise HTTPException(404, "该日没有归档快照")
     return FileResponse(path, media_type="application/json", filename=f"{V}_{day}.json")
+
+
+@app.get("/sn/contracts.csv")
+def contracts_csv(date: str | None = None):
+    with SessionLocal() as s:
+        d = _board_date(s, date)
+        rows = contract_curve(s, V, d)["rows"]
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["交易日", "合约", "结算价", "收盘价", "成交量(手)", "持仓量(手)", "主力", "流动性"])
+    for r in rows:
+        writer.writerow([d.isoformat(), r["contract"], r["settle"], r["close"], r["volume"], r["oi"],
+                         "是" if r["main"] else "", "活跃" if r["active"] else "低流动性"])
+    buf.seek(0)
+    return StreamingResponse(iter([buf.getvalue().encode("utf-8-sig")]), media_type="text/csv",
+                             headers={"Content-Disposition": f'attachment; filename="{V}_contracts_{d}.csv"'})
 
 
 @app.get("/api/sn/snapshot")

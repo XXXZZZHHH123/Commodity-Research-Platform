@@ -1,20 +1,78 @@
 {% extends "base.html" %}
-{% block title %}人工录入 · 锡{% endblock %}
+{% block title %}人工录入通道 · 锡 SN{% endblock %}
 {% block main %}
-<header class="page-head"><div><div class="eyebrow">MANUAL INPUT</div><h1>人工录入</h1><p>订阅与授权数据保留来源、录入人和数据时点。</p></div></header>
-<p class="form-note">SMM、Mysteel、LME 等授权数据不自动抓取，页面统一以「人工」标记区分。</p>
-<form class="stack" method="post" action="/sn/entry">
-  <label>指标
-    <select name="series_id" required>
-      {% for i in indicators %}
-      <option value="{{ i.series_id }}" {{ 'selected' if i.series_id == selected }}>{{ i.name }}（{{ i.unit }}，{{ i.frequency }}）— {{ i.series_id }}</option>
-      {% endfor %}
-    </select></label>
-  <label>数值<input name="value" type="number" step="any" required></label>
-  <label>数据时点 as_of（北京时间；这个数代表哪一刻，不是录入时刻）
-    <input name="as_of" type="datetime-local" value="{{ now }}" required></label>
-  <label>来源说明<input name="note" placeholder="如：SMM 官网 1# 锡锭均价" required></label>
-  <label>录入人<input name="entered_by" required></label>
-  <button type="submit">录入</button>
-</form>
+
+<div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[var(--line-strong)]">
+  <div>
+    <div class="text-[10px] font-bold tracking-widest text-[var(--primary)] uppercase mb-1">MANUAL DATA INGESTION &amp; AUDIT</div>
+    <h1 class="text-2xl font-black tracking-tight">人工录入通道与操作留痕</h1>
+    <p class="text-xs text-[var(--text-muted)] mt-1">SMM / Mysteel / LME 等订阅与授权数据只能在此录入 ｜ 历史不可改写 ｜ 提交后自动重算派生值</p>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+  <div class="lg:col-span-5 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-5 shadow-sm">
+    <h3 class="text-sm font-bold pb-2 border-b border-[var(--line)]">录入观测值</h3>
+    <form method="post" action="/sn/entry" class="space-y-3.5 text-xs mt-4">
+      <input type="hidden" name="return_to" value="/sn/entry">
+      <div>
+        <label class="block font-semibold mb-1">选择指标</label>
+        <select name="series_id" class="w-full px-3 py-2 rounded-md">
+          {% for i in indicators %}
+          <option value="{{ i.series_id }}" {{ 'selected' if i.series_id == selected }}>{{ i.name }}（{{ i.unit }}，{{ i.frequency }}频）— {{ i.series_id }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="block font-semibold mb-1">观测数值</label>
+        <input type="number" step="any" name="value" required placeholder="例如 406000" class="w-full px-3 py-2 rounded-md tabular font-bold text-sm">
+      </div>
+      <div>
+        <label class="block font-semibold mb-1">数据代表时点 as_of<span class="font-normal text-[var(--text-muted)]">（不是录入时间）</span></label>
+        <input type="datetime-local" name="as_of" value="{{ now }}" required class="w-full px-3 py-2 rounded-md tabular">
+      </div>
+      <div>
+        <label class="block font-semibold mb-1">数据源出处与凭证</label>
+        <input type="text" name="note" required placeholder="如：SMM 官网 11:30 定盘价" class="w-full px-3 py-2 rounded-md">
+      </div>
+      <div>
+        <label class="block font-semibold mb-1">录入人</label>
+        <input type="text" name="entered_by" required class="w-full px-3 py-2 rounded-md">
+      </div>
+      <button type="submit" class="w-full py-2.5 rounded-md bg-[var(--primary)] text-white font-bold hover:bg-[var(--primary-hover)] shadow-sm">提交并触发重新计算</button>
+      <p class="text-[11px] text-[var(--text-muted)]">录入后 source 标记为「人工」，页面上带人工标签并显示录入人与时间。</p>
+    </form>
+  </div>
+
+  <div class="lg:col-span-7 rounded-lg border border-[var(--line)] bg-[var(--surface)] overflow-hidden shadow-sm">
+    <div class="p-3.5 bg-[var(--surface-soft)] border-b border-[var(--line)] flex justify-between items-center text-xs">
+      <span class="font-bold">人工录入与审计台账</span>
+      <span class="text-[var(--text-muted)]">最近 {{ audit | length }} 条 · 只增不改</span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-left text-xs">
+        <thead class="bg-[var(--surface-soft)] text-[11px] font-semibold text-[var(--text-muted)] border-b border-[var(--line)]">
+          <tr><th class="py-2.5 px-3">时点 as_of</th><th class="py-2.5 px-3">指标</th>
+            <th class="py-2.5 px-3 text-right">数值</th><th class="py-2.5 px-3">录入人</th><th class="py-2.5 px-3">凭证来源</th></tr>
+        </thead>
+        <tbody class="divide-y divide-[var(--line)]">
+          {% for a in audit %}
+          <tr class="hover:bg-[var(--surface-soft)]">
+            <td class="py-2.5 px-3 tabular text-[var(--text-muted)] whitespace-nowrap">{{ a.as_of }}</td>
+            <td class="py-2.5 px-3 font-bold">{{ a.name }}<div class="text-[10px] font-normal tabular text-[var(--text-muted)]">{{ a.series_id }}</div></td>
+            <td class="py-2.5 px-3 text-right tabular font-bold whitespace-nowrap">{{ a.value }} {{ a.unit }}</td>
+            <td class="py-2.5 px-3">{{ a.actor }}<div class="text-[10px] text-[var(--text-muted)]">{{ a.at }}</div></td>
+            <td class="py-2.5 px-3 text-[var(--text-muted)]">{{ a.note }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="py-6 px-3 text-center text-[var(--text-muted)]">还没有人工录入记录</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="p-3 bg-[var(--surface-soft)] border-t border-[var(--line)] text-[11px] text-[var(--text-muted)]">
+      同一指标同一时点重复录入不同数值时，系统保留历史并递增修订号，不覆盖原值。
+    </div>
+  </div>
+</div>
 {% endblock %}

@@ -1,11 +1,61 @@
 {% extends "base.html" %}
-{% block title %}日报 · 锡{% endblock %}
+{% block title %}每日快照与归档 · 锡 SN{% endblock %}
 {% block main %}
-<header class="page-head"><div><div class="eyebrow">DAILY ARCHIVE</div><h1>每日快照</h1><p>按交易日冻结数据、口径、研究判断与缺口状态。</p></div></header>
-<p class="form-note">当前提供标准 JSON 数据包；HTML 日报与 CSV 导出将在后续展示里程碑接入。</p>
-{% if files %}
-<div class="table-wrap"><table><tr><th>日期</th><th>下载</th><th>在线查看</th></tr>
-{% for f in files %}<tr><td>{{ f }}</td><td><a href="/sn/reports/{{ f }}.json">JSON</a></td><td><a href="/sn?date={{ f }}">当日看板</a></td></tr>{% endfor %}
-</table></div>
-{% else %}<div class="panel small">尚无归档。运行 <code>python -m tin.jobs daily</code> 生成。</div>{% endif %}
+
+<div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[var(--line-strong)]">
+  <div>
+    <div class="text-[10px] font-bold tracking-widest text-[var(--primary)] uppercase mb-1">ARCHIVE &amp; SNAPSHOT REPLAY</div>
+    <h1 class="text-2xl font-black tracking-tight">每日快照与复盘归档</h1>
+    <p class="text-xs text-[var(--text-muted)] mt-1">按交易日冻结数据、口径、研判与缺口状态 ｜ 供 agent 读取与事后复盘</p>
+  </div>
+  <div class="text-right shrink-0">
+    <div class="text-xl font-bold tabular">{{ files | length }}</div>
+    <div class="text-[11px] text-[var(--text-muted)]">份归档</div>
+  </div>
+</div>
+
+{% if not files %}
+<div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-6 text-sm text-[var(--text-muted)]">
+  尚无归档。运行 <code class="px-1.5 py-0.5 rounded bg-[var(--surface-soft)] tabular">python -m tin.jobs daily</code> 生成当日快照。
+</div>
+{% else %}
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+  <div class="lg:col-span-4 rounded-lg border border-[var(--line)] bg-[var(--surface)] overflow-hidden shadow-sm">
+    <div class="p-3 bg-[var(--surface-soft)] border-b border-[var(--line)] flex justify-between items-center text-xs">
+      <span class="font-bold">归档交易日</span><span class="text-[var(--text-muted)]">共 {{ files | length }} 份</span>
+    </div>
+    <div class="divide-y divide-[var(--line)] max-h-[520px] overflow-y-auto">
+      {% for f in files %}
+      <a href="/sn/reports?date={{ f.date }}" class="block p-3 cursor-pointer
+         {{ 'bg-[var(--primary-soft)]/50 border-l-4 border-[var(--primary)]' if f.date == selected.date else 'hover:bg-[var(--surface-soft)] border-l-4 border-transparent' }}">
+        <div class="flex justify-between items-center gap-2 text-xs">
+          <span class="font-bold tabular">{{ f.date }}（周{{ f.weekday }}）</span>
+          {% if f.date == selected.date %}<span class="px-1.5 py-0.5 text-[10px] font-bold rounded bg-[var(--primary)] text-white">当前查看</span>
+          {% else %}<span class="text-[10px] text-[var(--text-muted)]">已冻结</span>{% endif %}
+        </div>
+        <div class="flex justify-between gap-2 text-[11px] text-[var(--text-muted)] mt-1">
+          <span class="truncate">{{ f.tone or '未登记判断' }} ｜ 主力 {{ f.main or '—' }}</span>
+          <span class="shrink-0 {{ 'text-[var(--amber)] font-semibold' if f.gaps else 'text-[var(--primary)]' }}">{{ f.gaps }} 缺口</span>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="lg:col-span-8 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-5 shadow-sm space-y-4">
+    <div class="flex justify-between items-center gap-3 pb-3 border-b border-[var(--line)] flex-wrap">
+      <div>
+        <h3 class="text-base font-bold">{{ selected.date }} 锡研究快照</h3>
+        <p class="text-xs text-[var(--text-muted)] mt-0.5">生成时间：{{ selected.generated_at or '—' }}</p>
+      </div>
+      <div class="flex gap-2 text-xs">
+        <a href="/sn?date={{ selected.date }}" class="px-2.5 py-1 font-semibold rounded bg-[var(--primary)] text-white hover:bg-[var(--primary-hover)]">前往当日看板</a>
+        <a href="/sn/reports/{{ selected.date }}.json" class="px-2.5 py-1 font-semibold rounded border border-[var(--line)] hover:bg-[var(--surface-soft)]">下载 JSON</a>
+      </div>
+    </div>
+    <pre class="p-3 rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] tabular text-[11px] overflow-x-auto leading-relaxed max-h-[420px] overflow-y-auto">{{ preview }}</pre>
+    <p class="text-[11px] text-[var(--text-muted)]">快照是当日冻结的事实与研判，事后不重算；派生值被阻断时 value 为 null 并附原因。</p>
+  </div>
+</div>
+{% endif %}
 {% endblock %}

@@ -3,25 +3,136 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}锡 · 研究工作台{% endblock %}</title>
+<title>{% block title %}锡 SN · 研究工作台{% endblock %}</title>
+<script src="/static/tailwind.min.js"></script>
 <link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js"></script>
 </head>
-<body>
-<nav class="top">
-  <a href="/sn" class="brand"><span class="brand-mark">SN</span><span>锡研究工作台</span></a>
-  <div class="nav-links">
-  <a href="/sn" class="{{ 'on' if nav == 'variety' }}">总览</a>
-  <a href="/sn/macro" class="{{ 'on' if nav == 'macro' }}">宏观</a>
-  <a href="/sn/judgment" class="{{ 'on' if nav == 'judgment' }}">判断</a>
-  <a href="/sn/indicators" class="{{ 'on' if nav == 'indicators' }}">指标</a>
-  <a href="/sn/reports" class="{{ 'on' if nav == 'reports' }}">日报</a>
+<body class="min-h-screen transition-colors duration-200">
+
+{% if ticker %}
+<div class="ticker-strip hidden md:flex items-center justify-between px-6 py-1 bg-[var(--surface-soft)] border-b border-[var(--line)] text-[11px] text-[var(--text-muted)]">
+  <div class="flex items-center gap-5 overflow-x-auto">
+    <div class="flex items-center gap-1.5 shrink-0">
+      <span class="w-2 h-2 rounded-full bg-[var(--primary)]"></span>
+      <span class="font-semibold text-[var(--text)]">SHFE 沪锡</span>
+      <span>收盘 15:00</span>
+    </div>
+    {% for t in ticker %}
+    <div class="shrink-0">{{ t.label }}
+      <span class="tabular font-bold text-[var(--text)]">{{ t.value }}</span>
+      {%- if t.change is not none %}
+      <span class="tabular font-bold {{ 'text-[var(--up)]' if t.change > 0 else 'text-[var(--down)]' if t.change < 0 else '' }}">
+        {{ t.change | num(t.unit, true) }}{% if t.change_pct is not none %} ({{ t.change_pct | num('%', true) }}%){% endif %}</span>
+      {%- endif %}
+    </div>
+    {% endfor %}
   </div>
-  {% block navdate %}{% endblock %}
+  <div class="flex items-center gap-3 text-[10px] shrink-0 pl-4">
+    <span>数据口径与时点随数字同行</span>
+    <span class="px-1.5 rounded bg-[var(--primary-soft)] text-[var(--primary)] font-semibold">研究工作台</span>
+  </div>
+</div>
+{% endif %}
+
+<nav class="top sticky top-0 z-30 flex items-center justify-between gap-4 px-6 h-14 bg-[var(--surface)]/95 backdrop-blur-md border-b border-[var(--line)]">
+  <div class="flex items-center gap-5 min-w-0">
+    <a href="/sn" class="flex items-center gap-2.5 font-bold tracking-tight text-[var(--text)] shrink-0">
+      <span class="grid place-items-center w-7 h-7 rounded-md bg-[var(--text)] text-[var(--surface)] text-xs font-black tracking-wider">SN</span>
+      <span class="text-sm font-semibold hidden sm:inline">锡研究工作台</span>
+    </a>
+    <div class="flex items-center gap-1 text-xs overflow-x-auto">
+      {% for key, num, label, href in [
+        ('variety', '01', '总览', '/sn'), ('macro', '02', '宏观', '/sn/macro'),
+        ('judgment', '03', '判断', '/sn/judgment'), ('indicators', '04', '指标', '/sn/indicators'),
+        ('reports', '05', '日报', '/sn/reports'), ('entry', '06', '录入通道', '/sn/entry')] %}
+      <a href="{{ href }}{% if key in ('variety', 'macro') and d %}?date={{ d }}{% endif %}"
+         class="nav-btn shrink-0 px-3 py-1.5 rounded-md font-medium {{ 'active text-[var(--primary)]' if nav == key else 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-soft)]' }}">
+        <span class="tabular">{{ num }}</span> {{ label }}</a>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="flex items-center gap-3 shrink-0">
+    {% if d %}
+    <div class="hidden sm:inline-flex items-center rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] p-0.5 text-xs text-[var(--text-muted)]">
+      {% if prev_date %}<a href="?date={{ prev_date }}" class="px-2 py-1 hover:text-[var(--text)]" title="前一交易日">&larr;</a>
+      {% else %}<span class="px-2 py-1 opacity-40">&larr;</span>{% endif %}
+      <span class="px-2.5 py-1 font-semibold text-[var(--text)] tabular flex items-center gap-1.5">
+        <span class="w-1.5 h-1.5 rounded-full bg-[var(--primary)]"></span>{{ d }}</span>
+      {% if next_date %}<a href="?date={{ next_date }}" class="px-2 py-1 hover:text-[var(--text)]" title="后一交易日">&rarr;</a>
+      {% else %}<span class="px-2 py-1 opacity-40" title="已是最近交易日">&rarr;</span>{% endif %}
+    </div>
+    {% endif %}
+    <button onclick="toggleDrawer(true)" class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[var(--primary)] hover:bg-[var(--primary-hover)] rounded-md shadow-sm transition-colors">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+      <span class="hidden sm:inline">快速录入</span>
+    </button>
+    <button onclick="toggleTheme()" class="p-1.5 rounded-md text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-soft)]" title="切换暗色/浅色">
+      <svg class="icon-dark w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+      <svg class="icon-light w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+    </button>
+  </div>
 </nav>
-<main>
-{% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
-{% if err %}<div class="flash err">{{ err }}</div>{% endif %}
-{% block main %}{% endblock %}
+
+<main class="max-w-7xl mx-auto px-6 py-6 space-y-6">
+  {% if err %}<div class="px-4 py-3 rounded-lg bg-[var(--alert-soft)] text-[var(--alert)] text-sm">{{ err }}</div>{% endif %}
+  {% block main %}{% endblock %}
 </main>
+
+<div id="quick-drawer-backdrop" onclick="toggleDrawer(false)" class="hidden fixed inset-0 z-40 bg-black/30 transition-opacity"></div>
+<aside id="quick-drawer" class="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-[var(--surface)] border-l border-[var(--line)] shadow-2xl p-6 flex flex-col justify-between translate-x-full transition-transform duration-300 ease-in-out">
+  <form id="drawer-form" method="post" action="/sn/entry" class="flex flex-col h-full">
+    <div class="flex items-center justify-between pb-4 border-b border-[var(--line)]">
+      <div>
+        <h3 class="text-base font-bold text-[var(--text)]">原地快速录入</h3>
+        <p class="text-xs text-[var(--text-muted)] mt-0.5">不用离开当前页面；提交后自动重算派生指标</p>
+      </div>
+      <button type="button" onclick="toggleDrawer(false)" class="p-1 rounded-md text-[var(--text-muted)] hover:bg-[var(--surface-soft)] text-lg">&times;</button>
+    </div>
+
+    <div class="mt-5 space-y-4 text-xs overflow-y-auto">
+      <input type="hidden" name="return_to" value="{{ request.url.path }}{% if d %}?date={{ d }}{% endif %}">
+      <div>
+        <label class="block font-semibold mb-1">录入指标</label>
+        <select id="drawer-series" name="series_id" onchange="syncDrawerUnit()" class="w-full px-3 py-2 rounded-md">
+          {% for i in manual_indicators %}
+          <option value="{{ i.series_id }}" data-unit="{{ i.unit }}" data-as-of="{{ i.default_as_of }}">{{ i.name }} — {{ i.series_id }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="block font-semibold mb-1">录入数值</label>
+        <div class="relative">
+          <input type="number" step="any" id="drawer-value" name="value" required
+                 class="w-full px-3 py-2 rounded-md tabular font-bold text-sm" placeholder="例如 17500">
+          <span id="drawer-unit" class="absolute right-3 top-2 text-[var(--text-muted)]"></span>
+        </div>
+      </div>
+      <div>
+        <label class="block font-semibold mb-1">数据时点 as_of<span class="font-normal text-[var(--text-muted)]">（这个数代表哪一刻，不是录入时刻）</span></label>
+        <input type="datetime-local" id="drawer-as-of" name="as_of" required class="w-full px-3 py-2 rounded-md tabular">
+      </div>
+      <div>
+        <label class="block font-semibold mb-1">来源说明 / 凭据</label>
+        <input type="text" name="note" required class="w-full px-3 py-2 rounded-md" placeholder="例如：Mysteel 周报 11:00 报价">
+      </div>
+      <div>
+        <label class="block font-semibold mb-1">录入人</label>
+        <input type="text" name="entered_by" required class="w-full px-3 py-2 rounded-md">
+      </div>
+    </div>
+
+    <div class="mt-auto pt-4 border-t border-[var(--line)] flex items-center justify-end gap-3">
+      <button type="button" onclick="toggleDrawer(false)" class="px-4 py-2 rounded-md border border-[var(--line)] font-medium text-[var(--text-muted)] hover:bg-[var(--surface-soft)]">取消</button>
+      <button type="submit" class="px-5 py-2 rounded-md bg-[var(--primary)] text-white font-semibold hover:bg-[var(--primary-hover)] shadow-sm">提交并立即重算</button>
+    </div>
+  </form>
+</aside>
+
+<div id="toast" class="hidden fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg bg-[var(--primary)] text-white text-xs font-semibold shadow-xl flex items-center gap-2">
+  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+  <span id="toast-msg"></span>
+</div>
 </body>
 </html>
