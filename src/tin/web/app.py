@@ -75,7 +75,19 @@ def _redirect(path: str, **params) -> RedirectResponse:
 
 def _board_date(s, q: str | None) -> date:
     if q:
-        return date.fromisoformat(q)
+        try:
+            requested = date.fromisoformat(q)
+        except ValueError:
+            raise HTTPException(400, "日期格式应为 YYYY-MM-DD") from None
+        matched = s.scalar(
+            select(TradingDay.trade_date)
+            .where(TradingDay.trade_date <= requested.isoformat())
+            .order_by(TradingDay.trade_date.desc())
+            .limit(1)
+        )
+        if matched is None:
+            raise HTTPException(404, "所选日期之前没有可用交易日")
+        return date.fromisoformat(matched)
     d = latest_trade_date(s)
     if d is None:
         raise HTTPException(503, "尚无行情数据：请先运行 python -m tin.jobs daily")
@@ -105,6 +117,10 @@ def _shell(s, nav: str, d: date | None = None, **extra) -> dict:
     if d is not None:
         ctx["ticker"] = ticker(s, V, d)
         ctx["prev_date"], ctx["next_date"] = _neighbour_dates(s, d)
+        ctx["min_date"] = s.scalar(select(TradingDay.trade_date)
+                                   .order_by(TradingDay.trade_date).limit(1))
+        ctx["max_date"] = s.scalar(select(TradingDay.trade_date)
+                                   .order_by(TradingDay.trade_date.desc()).limit(1))
     return {**ctx, **extra}
 
 

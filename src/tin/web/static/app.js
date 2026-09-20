@@ -91,12 +91,46 @@ function resetContract() {
   if (label && main) label.innerText = main.dataset.caption;
 }
 
+function setMacroFilterActive(targetId) {
+  document.querySelectorAll("[data-macro-filter]").forEach((link) => {
+    link.classList.toggle("active", link.dataset.target === targetId);
+  });
+}
+
+function initMacroFilters() {
+  const filters = Array.from(document.querySelectorAll("[data-macro-filter]"));
+  const sections = Array.from(document.querySelectorAll("section.macro-anchor[id]"));
+  if (!filters.length || !sections.length) return;
+
+  filters.forEach((link) => {
+    link.addEventListener("click", () => setMacroFilterActive(link.dataset.target));
+  });
+
+  let scheduled = false;
+  const update = () => {
+    scheduled = false;
+    const activationLine = 140;
+    let current = "macro-top";
+    sections.forEach((section) => {
+      if (section.getBoundingClientRect().top <= activationLine) current = section.id;
+    });
+    setMacroFilterActive(current);
+  };
+  window.addEventListener("scroll", () => {
+    if (scheduled) return;
+    scheduled = true;
+    window.requestAnimationFrame(update);
+  }, { passive: true });
+  update();
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   const params = new URLSearchParams(window.location.search);
   if (params.get("msg")) showToast(params.get("msg"));
   const asOf = document.getElementById("drawer-as-of");
   if (asOf) asOf.addEventListener("input", () => { asOf.dataset.touched = "1"; });
   syncDrawerUnit();
+  initMacroFilters();
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") toggleDrawer(false);
   });
