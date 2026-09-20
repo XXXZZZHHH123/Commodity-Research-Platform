@@ -1,0 +1,1201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>锡 SN · 研究工作台 (全页面对标专业级原型)</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    :root {
+      --bg: #f4f6f5;
+      --surface: #ffffff;
+      --surface-soft: #f8faf9;
+      --line: #e1e7e4;
+      --line-strong: #c8d3ce;
+      --text: #131c17;
+      --text-muted: #5e6f66;
+      --primary: #0e6054;
+      --primary-soft: #eaf4f1;
+      --primary-hover: #094a40;
+      --blue: #236192;
+      --blue-soft: #ebf3f9;
+      --amber: #b45309;
+      --amber-soft: #fef3c7;
+      --alert: #b91c1c;
+      --alert-soft: #fee2e2;
+      --up: #dc2626;
+      --down: #16a34a;
+      --shadow-sm: 0 1px 2px rgba(19, 28, 23, 0.04);
+      --shadow-md: 0 4px 16px rgba(19, 28, 23, 0.06);
+    }
+    .dark {
+      --bg: #0c110e;
+      --surface: #141b17;
+      --surface-soft: #1a241f;
+      --line: #24312a;
+      --line-strong: #36483f;
+      --text: #edf4f0;
+      --text-muted: #889a90;
+      --primary: #45bfae;
+      --primary-soft: #11342d;
+      --primary-hover: #60cfbf;
+      --blue: #5d9fe3;
+      --blue-soft: #14273b;
+      --amber: #f59e0b;
+      --amber-soft: #38270b;
+      --alert: #f87171;
+      --alert-soft: #381818;
+      --up: #f87171;
+      --down: #4ade80;
+      --shadow-sm: none;
+      --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.5);
+    }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "PingFang SC", "Segoe UI", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      font-feature-settings: "tnum" 1, "cv02" 1, "cv03" 1;
+    }
+    .tabular {
+      font-family: "JetBrains Mono", "SF Mono", "Roboto Mono", Menlo, Consolas, monospace;
+      font-variant-numeric: tabular-nums;
+    }
+    .page-view {
+      display: none;
+    }
+    .page-view.active {
+      display: block;
+    }
+    .nav-btn.active {
+      background-color: var(--primary-soft);
+      color: var(--primary);
+      font-weight: 650;
+    }
+    .contract-row:hover, .contract-row.active {
+      background-color: var(--primary-soft);
+    }
+  </style>
+</head>
+<body class="min-h-screen transition-colors duration-200">
+
+  <!-- TOP PROFESSIONAL TICKER STRIP (Wind/Bloomberg Benchmark) -->
+  <div class="hidden md:flex items-center justify-between px-6 py-1 bg-[var(--surface-soft)] border-b border-[var(--line)] text-[11px] text-[var(--text-muted)]">
+    <div class="flex items-center space-x-5">
+      <div class="flex items-center gap-1.5">
+        <span class="w-2 h-2 rounded-full bg-[var(--down)]"></span>
+        <span class="font-semibold text-[var(--text)]">SHFE 沪锡</span>
+        <span class="text-[var(--text-muted)]">收盘 15:00</span>
+      </div>
+      <div>主力 SN2610 <span class="tabular font-bold text-[var(--up)]">405,360 (+0.5%)</span></div>
+      <div>SMM 1# 现货 <span class="tabular font-bold text-[var(--up)]">406,000 (+1,500)</span></div>
+      <div>基差 <span class="tabular font-bold text-[var(--primary)]">+640 (升水)</span></div>
+      <div>上期所仓单 <span class="tabular font-bold text-[var(--text)]">4,979 吨 (−84)</span></div>
+      <div>VIX <span class="tabular font-bold text-[var(--down)]">15.56 (−0.62)</span></div>
+    </div>
+    <div class="flex items-center space-x-3 text-[10px]">
+      <span class="text-[var(--text-muted)]">对标标准: Wind / Bloomberg / Reuters / SMM</span>
+      <span class="px-1.5 py-0.2 rounded bg-[var(--primary-soft)] text-[var(--primary)] font-semibold">投研专业版</span>
+    </div>
+  </div>
+
+  <!-- TOP NAVIGATION BAR (Low-friction tab switcher for all 6 pages) -->
+  <nav class="sticky top-0 z-30 flex items-center justify-between px-6 h-14 bg-[var(--surface)]/95 backdrop-blur-md border-b border-[var(--line)]">
+    <div class="flex items-center space-x-5">
+      <a href="javascript:switchPage('variety')" class="flex items-center gap-2.5 font-bold tracking-tight text-[var(--text)]">
+        <span class="grid place-items-center w-7 h-7 rounded-md bg-[var(--text)] text-[var(--surface)] text-xs font-black tracking-wider">SN</span>
+        <span class="text-sm font-semibold">锡研究工作台</span>
+      </a>
+      <!-- Live Page Tabs -->
+      <div class="flex items-center space-x-1 text-xs">
+        <button id="tab-variety" onclick="switchPage('variety')" class="nav-btn active px-3 py-1.5 rounded-md font-medium text-[var(--primary)]">01 总览</button>
+        <button id="tab-macro" onclick="switchPage('macro')" class="nav-btn px-3 py-1.5 rounded-md font-medium text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-soft)]">02 宏观</button>
+        <button id="tab-judgment" onclick="switchPage('judgment')" class="nav-btn px-3 py-1.5 rounded-md font-medium text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-soft)]">03 判断</button>
+        <button id="tab-indicators" onclick="switchPage('indicators')" class="nav-btn px-3 py-1.5 rounded-md font-medium text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-soft)]">04 指标</button>
+        <button id="tab-reports" onclick="switchPage('reports')" class="nav-btn px-3 py-1.5 rounded-md font-medium text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-soft)]">05 日报</button>
+        <button id="tab-entry" onclick="switchPage('entry')" class="nav-btn px-3 py-1.5 rounded-md font-medium text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-soft)]">06 录入通道</button>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-3">
+      <!-- Date Switcher -->
+      <div class="inline-flex items-center rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] p-0.5 text-xs text-[var(--text-muted)]">
+        <button class="px-2 py-1 hover:text-[var(--text)]" title="前一交易日">&larr;</button>
+        <div class="px-2.5 py-1 font-semibold text-[var(--text)] tabular flex items-center gap-1.5 cursor-pointer hover:bg-[var(--surface)] rounded">
+          <span class="w-1.5 h-1.5 rounded-full bg-[var(--primary)]"></span>
+          <span>2026-09-18</span>
+        </div>
+        <button class="px-2 py-1 hover:text-[var(--text)] opacity-40 cursor-not-allowed" disabled>&rarr;</button>
+      </div>
+
+      <!-- Quick Ingest Drawer Trigger -->
+      <button onclick="toggleDrawer(true)" class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[var(--primary)] hover:bg-[var(--primary-hover)] rounded-md shadow-sm transition-colors">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        <span>快速录入</span>
+      </button>
+
+      <!-- Theme Switcher -->
+      <button onclick="toggleTheme()" class="p-1.5 rounded-md text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-soft)]" title="切换暗色/浅色">
+        <svg class="w-4 h-4 hidden dark:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+        <svg class="w-4 h-4 block dark:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ========================================================================= -->
+  <!-- PAGE 1: VARIETY OVERVIEW (总览页) -->
+  <!-- ========================================================================= -->
+  <main id="view-variety" class="page-view active max-w-7xl mx-auto px-6 py-6 space-y-6">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[var(--line-strong)]">
+      <div>
+        <div class="text-[10px] font-bold tracking-widest text-[var(--primary)] uppercase mb-1">COMMODITY RESEARCH · SN</div>
+        <h1 class="text-2xl font-black tracking-tight text-[var(--text)] flex items-center gap-3">
+          锡研究总览
+          <span class="text-xs font-normal px-2 py-0.5 rounded bg-[var(--surface-soft)] text-[var(--text-muted)] border border-[var(--line)]">收盘截点 15:00</span>
+        </h1>
+        <p class="text-xs text-[var(--text-muted)] mt-1">行情、研判与宏观驱动同一截点 · 严禁口径混算 · 派生指标全溯源</p>
+      </div>
+      <div class="flex items-center gap-6 text-right">
+        <div>
+          <div class="text-xl font-bold tabular text-[var(--text)]">5<span class="text-xs font-normal text-[var(--text-muted)]"> / 6</span></div>
+          <div class="text-[11px] text-[var(--text-muted)]">核心数据就绪</div>
+        </div>
+        <div class="h-8 w-[1px] bg-[var(--line)]"></div>
+        <div>
+          <div class="text-xl font-bold tabular text-[var(--amber)]">1</div>
+          <div class="text-[11px] text-[var(--text-muted)]">待录入缺口</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 00 判断状态条 (Integrated Thesis & Distance Radar) -->
+    <section class="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4 sm:p-5 shadow-sm">
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-center">
+        <div class="lg:col-span-3 pr-0 lg:pr-4 lg:border-r border-[var(--line)]">
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="text-[10px] font-bold tracking-wider text-[var(--primary)] uppercase">RESEARCH VIEW · V1</span>
+            <span class="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-[var(--amber-soft)] text-[var(--amber)] border border-[var(--amber)]/20">草稿待生效</span>
+          </div>
+          <div class="text-2xl font-black tracking-tight text-[var(--primary)] mb-1">区间震荡</div>
+          <div class="text-[11px] text-[var(--text-muted)] flex items-center gap-2">
+            <span>锡研究员</span><span>·</span><span>08-16 写定</span><span>·</span>
+            <span class="text-[var(--amber)] font-medium">超期 3 天</span>
+          </div>
+        </div>
+
+        <div class="lg:col-span-6 grid grid-cols-1 md:grid-cols-2 gap-3.5">
+          <div class="pl-3 border-l-2 border-[var(--primary)]/70 bg-[var(--surface-soft)]/50 p-2 rounded-r-lg">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] font-bold text-[var(--primary)]">多方依据 (供应紧)</span>
+              <span class="text-[10px] text-[var(--text-muted)]">边际钝化</span>
+            </div>
+            <p class="text-xs text-[var(--text)] mt-1 line-clamp-2 leading-relaxed">
+              缅甸未放量 + TC 17,500 低位（矿紧确认），但高价抑制接货，驱动不顺畅。
+            </p>
+          </div>
+          <div class="pl-3 border-l-2 border-[var(--alert)]/70 bg-[var(--surface-soft)]/50 p-2 rounded-r-lg">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] font-bold text-[var(--alert)]">空方依据 (需求弱)</span>
+              <span class="text-[10px] text-[var(--text-muted)]">现货转松</span>
+            </div>
+            <p class="text-xs text-[var(--text)] mt-1 line-clamp-2 leading-relaxed">
+              现货升水回落、隐形库存回升；单位耗锡微型化印证；9-10月开工率是关键。
+            </p>
+          </div>
+        </div>
+
+        <!-- Risk & Falsifier Distance Radar -->
+        <div class="lg:col-span-3 border-t lg:border-t-0 pt-3 lg:pt-0 border-[var(--line)] space-y-2">
+          <div class="flex items-center justify-between text-[11px]">
+            <span class="text-[var(--text-muted)]">短线风控 (VIX ≤ 19)</span>
+            <span class="font-mono font-bold tabular text-[var(--down)]">15.56 (安全)</span>
+          </div>
+          <div class="w-full bg-[var(--surface-soft)] h-1.5 rounded-full overflow-hidden border border-[var(--line)]">
+            <div class="bg-[var(--primary)] h-full rounded-full" style="width: 81%;"></div>
+          </div>
+          <div class="flex justify-between text-[10px] text-[var(--text-muted)]">
+            <span>安全边际 3.44 点</span>
+            <a href="javascript:switchPage('judgment')" class="text-[var(--primary)] font-semibold hover:underline">查看完整研判 &rarr;</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 01 核心市场 (6 张卡片，定高 156px) -->
+    <section class="space-y-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">01</span>
+          <h2 class="text-sm font-bold text-[var(--text)]">核心市场</h2>
+          <span class="text-xs text-[var(--text-muted)]">价格、基差、跨期、仓单与汇率</span>
+        </div>
+        <span class="text-[11px] text-[var(--text-muted)]">数据时点与容差严格比对</span>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+        <!-- Card 1 -->
+        <div class="relative rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4 shadow-sm hover:border-[var(--line-strong)] flex flex-col justify-between h-[156px]">
+          <div>
+            <div class="flex items-center justify-between text-xs">
+              <span class="font-medium text-[var(--text-muted)]">主力合约结算价 (SN2610)</span>
+              <span class="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-[var(--surface-soft)] text-[var(--text-muted)] border border-[var(--line)]">SHFE</span>
+            </div>
+            <div class="mt-2.5 flex items-baseline gap-2">
+              <span class="text-3xl font-extrabold tabular tracking-tight text-[var(--text)]">405,360</span>
+              <span class="text-xs font-medium text-[var(--text-muted)]">元/吨</span>
+              <span class="ml-auto text-xs font-semibold tabular text-[var(--up)]">+2,130 (+0.5%)</span>
+            </div>
+          </div>
+          <div class="pt-2 border-t border-[var(--line)]/60 flex items-center justify-between text-[11px] text-[var(--text-muted)]">
+            <span>09-18 15:00 · 结算价</span>
+            <button onclick="togglePopover('pop1')" class="text-[var(--primary)] hover:bg-[var(--primary-soft)] px-1.5 py-0.5 rounded font-medium text-xs">口径 ⓘ</button>
+          </div>
+          <div id="pop1" class="hidden absolute left-0 right-0 top-full mt-1.5 z-20 p-3 rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] shadow-xl text-xs space-y-1">
+            <div class="flex justify-between font-bold border-b border-[var(--line)] pb-1">
+              <span>SHFE.SN.main.settle</span>
+              <button onclick="togglePopover('pop1')" class="text-[var(--text-muted)]">&times;</button>
+            </div>
+            <div class="text-[var(--text-muted)]">口径：SN2610 结算价 · 日频</div>
+            <div class="text-[var(--text-muted)]">来源：上期所日行情接口</div>
+          </div>
+        </div>
+
+        <!-- Card 2 -->
+        <div class="relative rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4 shadow-sm hover:border-[var(--line-strong)] flex flex-col justify-between h-[156px]">
+          <div>
+            <div class="flex items-center justify-between text-xs">
+              <span class="font-medium text-[var(--text-muted)]">现货价 (SMM 1# 均价)</span>
+              <span class="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-[var(--primary-soft)] text-[var(--primary)] border border-[var(--primary)]/20" title="张三 录入于 11:35">人工</span>
+            </div>
+            <div class="mt-2.5 flex items-baseline gap-2">
+              <span class="text-3xl font-extrabold tabular tracking-tight text-[var(--text)]">406,000</span>
+              <span class="text-xs font-medium text-[var(--text-muted)]">元/吨</span>
+              <span class="ml-auto text-xs font-semibold tabular text-[var(--up)]">+1,500</span>
+            </div>
+          </div>
+          <div class="pt-2 border-t border-[var(--line)]/60 flex items-center justify-between text-[11px] text-[var(--text-muted)]">
+            <span>09-18 11:30 · SMM 报价</span>
+            <button onclick="togglePopover('pop2')" class="text-[var(--primary)] hover:bg-[var(--primary-soft)] px-1.5 py-0.5 rounded font-medium text-xs">录入人 ⓘ</button>
+          </div>
+          <div id="pop2" class="hidden absolute left-0 right-0 top-full mt-1.5 z-20 p-3 rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] shadow-xl text-xs space-y-1">
+            <div class="flex justify-between font-bold border-b border-[var(--line)] pb-1">
+              <span>SMM.SN.spot.1 (人工录入)</span>
+              <button onclick="togglePopover('pop2')" class="text-[var(--text-muted)]">&times;</button>
+            </div>
+            <div class="text-[var(--text-muted)]">录入人：张三 ｜ 录入时间：09-18 11:35</div>
+            <div class="text-[var(--text-muted)]">代表时点：2026-09-18 11:30</div>
+          </div>
+        </div>
+
+        <!-- Card 3 -->
+        <div class="relative rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4 shadow-sm hover:border-[var(--line-strong)] flex flex-col justify-between h-[156px]">
+          <div>
+            <div class="flex items-center justify-between text-xs">
+              <span class="font-medium text-[var(--text-muted)]">基差 (现货 − 主力期货)</span>
+              <span class="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-[var(--blue-soft)] text-[var(--blue)] border border-[var(--blue)]/20">派生</span>
+            </div>
+            <div class="mt-2.5 flex items-baseline gap-2">
+              <span class="text-3xl font-extrabold tabular tracking-tight text-[var(--text)]">+640</span>
+              <span class="text-xs font-medium text-[var(--text-muted)]">元/吨</span>
+              <span class="ml-auto text-xs px-2 py-0.5 font-medium rounded bg-[var(--surface-soft)] text-[var(--text-muted)]">升水 0.16%</span>
+            </div>
+          </div>
+          <div class="pt-2 border-t border-[var(--line)]/60 flex items-center justify-between text-[11px] text-[var(--text-muted)]">
+            <span>输入时差 3.5h · 容差 ≤4h</span>
+            <button onclick="togglePopover('pop3')" class="text-[var(--primary)] hover:bg-[var(--primary-soft)] px-1.5 py-0.5 rounded font-medium text-xs">输入穿透 ⓘ</button>
+          </div>
+          <div id="pop3" class="hidden absolute left-0 right-0 top-full mt-1.5 z-20 p-3 rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] shadow-xl text-xs space-y-1">
+            <div class="flex justify-between font-bold border-b border-[var(--line)] pb-1">
+              <span>派生穿透：BASIS</span>
+              <button onclick="togglePopover('pop3')" class="text-[var(--text-muted)]">&times;</button>
+            </div>
+            <div class="text-[var(--text-muted)]">现货 406,000 (11:30) − 期货 405,360 (15:00)</div>
+            <div class="text-[var(--primary)]">✓ 时点容差校验通过 (3.5h ≤ 4h)</div>
+          </div>
+        </div>
+
+        <!-- Card 4 -->
+        <div class="relative rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4 shadow-sm hover:border-[var(--line-strong)] flex flex-col justify-between h-[156px]">
+          <div>
+            <div class="flex items-center justify-between text-xs">
+              <span class="font-medium text-[var(--text-muted)]">近月 − 次月价差 (M1−M2)</span>
+              <span class="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-[var(--blue-soft)] text-[var(--blue)] border border-[var(--blue)]/20">派生</span>
+            </div>
+            <div class="mt-2.5 flex items-baseline gap-2">
+              <span class="text-3xl font-extrabold tabular tracking-tight text-[var(--text)]">−120</span>
+              <span class="text-xs font-medium text-[var(--text-muted)]">元/吨</span>
+              <span class="ml-auto text-xs px-2 py-0.5 font-medium rounded bg-[var(--surface-soft)] text-[var(--text-muted)]">Contango</span>
+            </div>
+          </div>
+          <div class="pt-2 border-t border-[var(--line)]/60 flex items-center justify-between text-[11px] text-[var(--text-muted)]">
+            <span>SN2610 与 SN2611 结算价</span>
+            <button onclick="togglePopover('pop4')" class="text-[var(--primary)] hover:bg-[var(--primary-soft)] px-1.5 py-0.5 rounded font-medium text-xs">持有成本 ⓘ</button>
+          </div>
+          <div id="pop4" class="hidden absolute left-0 right-0 top-full mt-1.5 z-20 p-3 rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] shadow-xl text-xs space-y-1">
+            <div class="flex justify-between font-bold border-b border-[var(--line)] pb-1">
+              <span>SPREAD_M1M2</span>
+              <button onclick="togglePopover('pop4')" class="text-[var(--text-muted)]">&times;</button>
+            </div>
+            <div class="text-[var(--text-muted)]">折合年化收益率：约 −0.35% (未计资金与仓储成本)</div>
+          </div>
+        </div>
+
+        <!-- Card 5 -->
+        <div class="relative rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4 shadow-sm hover:border-[var(--line-strong)] flex flex-col justify-between h-[156px]">
+          <div>
+            <div class="flex items-center justify-between text-xs">
+              <span class="font-medium text-[var(--text-muted)]">上期所注册仓单</span>
+              <span class="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-[var(--surface-soft)] text-[var(--text-muted)] border border-[var(--line)]">SHFE</span>
+            </div>
+            <div class="mt-2.5 flex items-baseline gap-2">
+              <span class="text-3xl font-extrabold tabular tracking-tight text-[var(--text)]">4,979</span>
+              <span class="text-xs font-medium text-[var(--text-muted)]">吨</span>
+              <span class="ml-auto text-xs font-semibold tabular text-[var(--down)]">−84 吨 (出库)</span>
+            </div>
+          </div>
+          <div class="pt-2 border-t border-[var(--line)]/60 flex items-center justify-between text-[11px] text-[var(--text-muted)]">
+            <span>09-18 15:30 · 仓单日报</span>
+            <span class="text-[var(--text-muted)]">周库存 7,059 吨</span>
+          </div>
+        </div>
+
+        <!-- Card 6 -->
+        <div class="relative rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4 shadow-sm hover:border-[var(--line-strong)] flex flex-col justify-between h-[156px]">
+          <div>
+            <div class="flex items-center justify-between text-xs">
+              <span class="font-medium text-[var(--text-muted)]">美元兑人民币中间价</span>
+              <span class="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-[var(--surface-soft)] text-[var(--text-muted)] border border-[var(--line)]">CFETS</span>
+            </div>
+            <div class="mt-2.5 flex items-baseline gap-2">
+              <span class="text-3xl font-extrabold tabular tracking-tight text-[var(--text)]">7.0982</span>
+              <span class="text-xs font-medium text-[var(--text-muted)]"></span>
+              <span class="ml-auto text-xs font-semibold tabular text-[var(--down)]">−0.0125 (升值)</span>
+            </div>
+          </div>
+          <div class="pt-2 border-t border-[var(--line)]/60 flex items-center justify-between text-[11px] text-[var(--text-muted)]">
+            <span>09-18 09:15 · 外汇中心</span>
+            <span class="text-[var(--text-muted)]">进口成本基准</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 02 期限结构与全合约表 (图表联动) -->
+    <section class="space-y-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">02</span>
+          <h2 class="text-sm font-bold text-[var(--text)]">沪锡期限结构</h2>
+          <span class="text-xs px-2 py-0.5 rounded bg-[var(--primary-soft)] text-[var(--primary)] font-medium">近端 Contango</span>
+        </div>
+        <div class="text-xs text-[var(--text-muted)]">悬浮表格或点位实现双向高亮比对</div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+        <div class="lg:col-span-5 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4 shadow-sm flex flex-col justify-between">
+          <div class="flex justify-between text-xs text-[var(--text-muted)] font-medium mb-1">
+            <span>结算价结构 (元/吨)</span>
+            <span id="chart-hover-indicator" class="text-[var(--primary)] font-bold tabular">SN2610 (主力): 405,360</span>
+          </div>
+          <div class="relative w-full h-44 my-auto">
+            <svg class="w-full h-full overflow-visible" viewBox="0 0 400 140">
+              <line x1="0" y1="20" x2="400" y2="20" stroke="var(--line)" stroke-width="0.75" stroke-dasharray="3,3"/>
+              <line x1="0" y1="70" x2="400" y2="70" stroke="var(--line)" stroke-width="0.75" stroke-dasharray="3,3"/>
+              <line x1="0" y1="120" x2="400" y2="120" stroke="var(--line)" stroke-width="0.75" stroke-dasharray="3,3"/>
+              <text x="4" y="18" fill="var(--text-muted)" font-size="9" font-family="monospace">407,500</text>
+              <text x="4" y="68" fill="var(--text-muted)" font-size="9" font-family="monospace">406,000</text>
+              <polyline points="30,75 100,70 170,68 240,64 310,60 380,55" fill="none" stroke="var(--primary)" stroke-width="2.5"/>
+              <g id="curve-points">
+                <circle cx="30" cy="75" r="4" fill="var(--surface)" stroke="var(--primary)" stroke-width="2"/>
+                <circle cx="100" cy="70" r="5.5" fill="var(--primary)" stroke="var(--surface)" stroke-width="2" class="ring-4 ring-[var(--primary)]/20"/>
+                <circle cx="170" cy="68" r="4" fill="var(--surface)" stroke="var(--primary)" stroke-width="2"/>
+                <circle cx="240" cy="64" r="3.5" fill="var(--surface)" stroke="var(--text-muted)" stroke-width="1.5"/>
+                <circle cx="310" cy="60" r="3.5" fill="var(--surface)" stroke="var(--text-muted)" stroke-width="1.5"/>
+                <circle cx="380" cy="55" r="3.5" fill="var(--surface)" stroke="var(--text-muted)" stroke-width="1.5"/>
+              </g>
+            </svg>
+          </div>
+          <div class="flex justify-between px-4 text-[10px] tabular font-medium text-[var(--text-muted)] border-t border-[var(--line)] pt-2">
+            <span>2609</span><span class="font-bold text-[var(--primary)]">2610 (主)</span><span>2611</span><span>2612</span><span>2701</span><span>2702</span>
+          </div>
+        </div>
+
+        <div class="lg:col-span-7 rounded-lg border border-[var(--line)] bg-[var(--surface)] overflow-hidden shadow-sm flex flex-col justify-between">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-[var(--surface-soft)] text-[11px] font-semibold text-[var(--text-muted)] border-b border-[var(--line)]">
+              <tr>
+                <th class="py-2.5 px-3">合约</th>
+                <th class="py-2.5 px-3 text-right">结算价</th>
+                <th class="py-2.5 px-3 text-right">收盘价</th>
+                <th class="py-2.5 px-3 text-right">成交量 (手)</th>
+                <th class="py-2.5 px-3 text-right">持仓量 (手)</th>
+                <th class="py-2.5 px-3 text-center">状态</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[var(--line)]">
+              <tr class="contract-row cursor-pointer transition-colors" onmouseenter="highlightContract(0)" onmouseleave="resetContract()">
+                <td class="py-2 px-3 font-semibold text-[var(--text)]">SN2609</td>
+                <td class="py-2 px-3 text-right tabular">405,100</td>
+                <td class="py-2 px-3 text-right tabular">405,200</td>
+                <td class="py-2 px-3 text-right tabular text-[var(--text-muted)]">1,240</td>
+                <td class="py-2 px-3 text-right tabular text-[var(--text-muted)]">2,110</td>
+                <td class="py-2 px-3 text-center"><span class="px-1.5 py-0.5 text-[10px] rounded bg-[var(--surface-soft)] text-[var(--text-muted)]">次主力</span></td>
+              </tr>
+              <tr class="contract-row bg-[var(--primary-soft)]/40 font-semibold cursor-pointer transition-colors" onmouseenter="highlightContract(1)" onmouseleave="resetContract()">
+                <td class="py-2 px-3 flex items-center gap-1.5 text-[var(--text)]">
+                  <span>SN2610</span>
+                  <span class="px-1.5 py-0.2 text-[9px] font-bold rounded bg-[var(--primary)] text-white">主力</span>
+                </td>
+                <td class="py-2 px-3 text-right tabular font-bold text-[var(--primary)]">405,360</td>
+                <td class="py-2 px-3 text-right tabular">407,490</td>
+                <td class="py-2 px-3 text-right tabular">42,860</td>
+                <td class="py-2 px-3 text-right tabular">31,540</td>
+                <td class="py-2 px-3 text-center"><span class="w-1.5 h-1.5 rounded-full bg-[var(--primary)] inline-block"></span></td>
+              </tr>
+              <tr class="contract-row cursor-pointer transition-colors" onmouseenter="highlightContract(2)" onmouseleave="resetContract()">
+                <td class="py-2 px-3 font-semibold text-[var(--text)]">SN2611</td>
+                <td class="py-2 px-3 text-right tabular">405,480</td>
+                <td class="py-2 px-3 text-right tabular">405,500</td>
+                <td class="py-2 px-3 text-right tabular text-[var(--text-muted)]">8,410</td>
+                <td class="py-2 px-3 text-right tabular text-[var(--text-muted)]">7,920</td>
+                <td class="py-2 px-3 text-center"><span class="px-1.5 py-0.5 text-[10px] rounded bg-[var(--surface-soft)] text-[var(--text-muted)]">次月</span></td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="px-3 py-2 bg-[var(--surface-soft)] border-t border-[var(--line)] text-[11px] text-[var(--text-muted)] flex justify-between">
+            <span>成交低于 500 手为低流动性合约，价差计算自动采用结算价。</span>
+            <a href="javascript:void(0)" class="text-[var(--primary)] hover:underline">导出 CSV</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 03 宏观镜头 (4 mini sparkline cards) -->
+    <section class="space-y-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">03</span>
+          <h2 class="text-sm font-bold text-[var(--text)]">宏观镜头</h2>
+          <span class="text-xs text-[var(--text-muted)]">流动性、风险偏好与全球半导体代理</span>
+        </div>
+        <button onclick="switchPage('macro')" class="text-xs font-semibold text-[var(--primary)] hover:underline">宏观专页全部序列 &rarr;</button>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+        <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-3.5 shadow-sm">
+          <div class="flex justify-between items-start">
+            <span class="text-xs font-bold">VIX 波动率</span>
+            <span class="px-1.5 py-0.5 text-[9px] rounded bg-[var(--surface-soft)] text-[var(--text-muted)]">风控 ≤19</span>
+          </div>
+          <div class="my-2.5 flex items-baseline justify-between">
+            <div>
+              <span class="text-2xl font-black tabular text-[var(--text)]">15.56</span>
+              <div class="text-[10px] font-medium text-[var(--down)]">较前值 −0.62</div>
+            </div>
+            <svg class="w-20 h-7 overflow-visible" viewBox="0 0 90 28">
+              <polyline points="0,24 18,20 36,25 54,12 72,16 90,8" fill="none" stroke="var(--primary)" stroke-width="2"/>
+            </svg>
+          </div>
+          <div class="text-[10px] text-[var(--text-muted)] tabular border-t border-[var(--line)] pt-1">CBOE ｜ 09-17 截点</div>
+        </div>
+
+        <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-3.5 shadow-sm">
+          <div class="flex justify-between items-start">
+            <span class="text-xs font-bold">美债 10 年名义收益率</span>
+            <span class="text-[10px] text-[var(--text-muted)]">%</span>
+          </div>
+          <div class="my-2.5 flex items-baseline justify-between">
+            <div>
+              <span class="text-2xl font-black tabular text-[var(--text)]">3.72</span>
+              <div class="text-[10px] font-medium text-[var(--up)]">+4 bp</div>
+            </div>
+            <svg class="w-20 h-7 overflow-visible" viewBox="0 0 90 28">
+              <polyline points="0,10 18,14 36,18 54,20 72,16 90,12" fill="none" stroke="var(--blue)" stroke-width="2"/>
+            </svg>
+          </div>
+          <div class="text-[10px] text-[var(--text-muted)] tabular border-t border-[var(--line)] pt-1">FRED ｜ 09-17 截点</div>
+        </div>
+
+        <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-3.5 shadow-sm">
+          <div class="flex justify-between items-start">
+            <span class="text-xs font-bold">费城半导体指数 (SOX)</span>
+            <span class="px-1 text-[9px] rounded bg-[var(--amber-soft)] text-[var(--amber)]">代理</span>
+          </div>
+          <div class="my-2.5 flex items-baseline justify-between">
+            <div>
+              <span class="text-2xl font-black tabular text-[var(--text)]">4,910</span>
+              <div class="text-[10px] font-medium text-[var(--up)]">+1.4%</div>
+            </div>
+            <svg class="w-20 h-7 overflow-visible" viewBox="0 0 90 28">
+              <polyline points="0,22 18,18 36,15 54,10 72,12 90,5" fill="none" stroke="var(--primary)" stroke-width="2"/>
+            </svg>
+          </div>
+          <div class="text-[10px] text-[var(--text-muted)] tabular border-t border-[var(--line)] pt-1">需求领先指标 ｜ 人工导入</div>
+        </div>
+
+        <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-3.5 shadow-sm">
+          <div class="flex justify-between items-start">
+            <span class="text-xs font-bold">美联储降息 50bp 概率</span>
+            <span class="text-[10px] text-[var(--text-muted)]">%</span>
+          </div>
+          <div class="my-2.5 flex items-baseline justify-between">
+            <div>
+              <span class="text-2xl font-black tabular text-[var(--text)]">65.0</span>
+              <div class="text-[10px] font-medium text-[var(--primary)]">偏多确认</div>
+            </div>
+            <svg class="w-20 h-7 overflow-visible" viewBox="0 0 90 28">
+              <polyline points="0,26 18,25 36,20 54,14 72,8 90,6" fill="none" stroke="var(--primary)" stroke-width="2"/>
+            </svg>
+          </div>
+          <div class="text-[10px] text-[var(--text-muted)] tabular border-t border-[var(--line)] pt-1">CME FedWatch ｜ 事件驱动</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 04 数据完整性 (原地快速录入) -->
+    <section class="space-y-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">04</span>
+          <h2 class="text-sm font-bold text-[var(--text)]">数据完整性与缺口台账</h2>
+          <span class="text-xs text-[var(--amber)] font-medium">1 项待录入</span>
+        </div>
+      </div>
+      <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] overflow-hidden shadow-sm">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-[var(--surface-soft)] text-[11px] font-semibold text-[var(--text-muted)] border-b border-[var(--line)]">
+            <tr>
+              <th class="py-2 px-3">指标名称与 series_id</th>
+              <th class="py-2 px-3">方式</th>
+              <th class="py-2 px-3">预期更新</th>
+              <th class="py-2 px-3">最近数据点</th>
+              <th class="py-2 px-3">缺口原因</th>
+              <th class="py-2 px-3 text-right">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="hover:bg-[var(--surface-soft)]">
+              <td class="py-2.5 px-3">
+                <div class="font-bold">云南 40% 锡精矿加工费 (TC)</div>
+                <div class="text-[10px] font-mono text-[var(--text-muted)]">MYSTEEL.SN.TC.YN40</div>
+              </td>
+              <td class="py-2.5 px-3"><span class="px-1.5 py-0.5 text-[10px] rounded bg-[var(--primary-soft)] text-[var(--primary)] font-medium">人工</span></td>
+              <td class="py-2.5 px-3 tabular">2026-09-18</td>
+              <td class="py-2.5 px-3 tabular text-[var(--text-muted)]">09-11 (17,500 元/吨)</td>
+              <td class="py-2.5 px-3 text-[var(--amber)] font-medium">周度例行更新未录入</td>
+              <td class="py-2.5 px-3 text-right">
+                <button onclick="openDrawerWith('MYSTEEL.SN.TC.YN40', '云南 40% 锡精矿加工费 (TC)', '元/吨')" class="px-2.5 py-1 text-xs font-semibold rounded bg-[var(--primary)] text-white hover:bg-[var(--primary-hover)]">原地快录</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- ========================================================================= -->
+  <!-- PAGE 2: MACRO & CROSS-ASSET -->
+  <!-- ========================================================================= -->
+  <main id="view-macro" class="page-view max-w-7xl mx-auto px-6 py-6 space-y-6">
+    <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[var(--line-strong)]">
+      <div>
+        <div class="text-[10px] font-bold tracking-widest text-[var(--primary)] uppercase mb-1">MACRO LENS & CROSS-ASSET</div>
+        <h1 class="text-2xl font-black tracking-tight text-[var(--text)]">宏观与跨资产镜头</h1>
+        <p class="text-xs text-[var(--text-muted)] mt-1">金融条件、实际利率、全球半导体景气与宏观流动性监控序列</p>
+      </div>
+      <div class="flex items-center gap-1.5 text-xs">
+        <button class="px-2.5 py-1 rounded bg-[var(--primary)] text-white font-medium">全部 (12)</button>
+        <button class="px-2.5 py-1 rounded bg-[var(--surface-soft)] text-[var(--text-muted)] hover:text-[var(--text)]">利率与流动性 (4)</button>
+        <button class="px-2.5 py-1 rounded bg-[var(--surface-soft)] text-[var(--text-muted)] hover:text-[var(--text)]">汇率与通胀 (3)</button>
+        <button class="px-2.5 py-1 rounded bg-[var(--surface-soft)] text-[var(--text-muted)] hover:text-[var(--text)]">半导体与产业 (3)</button>
+      </div>
+    </div>
+
+    <section class="space-y-3">
+      <div class="flex items-center justify-between">
+        <h2 class="text-sm font-bold text-[var(--text)] flex items-center gap-2">
+          <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">01</span>
+          美元实际利率与流动性
+        </h2>
+        <span class="text-xs text-[var(--text-muted)]">FRED 官方 CSV 自动同步</span>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+        <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4 shadow-sm space-y-3">
+          <div class="flex justify-between text-xs">
+            <div>
+              <div class="font-bold">美债 10 年名义收益率 (DGS10)</div>
+              <div class="text-[10px] text-[var(--text-muted)]">FRED · 日频</div>
+            </div>
+            <span class="px-1.5 py-0.5 text-[10px] rounded bg-[var(--primary-soft)] text-[var(--primary)] font-semibold">自动</span>
+          </div>
+          <div class="flex items-baseline justify-between">
+            <span class="text-3xl font-black tabular">3.72<span class="text-xs font-normal text-[var(--text-muted)] ml-1">%</span></span>
+            <span class="text-xs font-semibold tabular text-[var(--up)]">+4 bp</span>
+          </div>
+          <svg class="w-full h-10 overflow-visible" viewBox="0 0 100 24">
+            <polyline points="0,18 20,15 40,19 60,10 80,12 100,6" fill="none" stroke="var(--blue)" stroke-width="2"/>
+          </svg>
+          <div class="flex justify-between text-[10px] tabular text-[var(--text-muted)] border-t border-[var(--line)] pt-1.5">
+            <span>30日区间 3.65% – 3.92%</span>
+            <span>09-17 截点</span>
+          </div>
+        </div>
+
+        <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4 shadow-sm space-y-3">
+          <div class="flex justify-between text-xs">
+            <div>
+              <div class="font-bold">10年期通胀预期 (T10YIE)</div>
+              <div class="text-[10px] text-[var(--text-muted)]">FRED · 日频</div>
+            </div>
+            <span class="px-1.5 py-0.5 text-[10px] rounded bg-[var(--primary-soft)] text-[var(--primary)] font-semibold">自动</span>
+          </div>
+          <div class="flex items-baseline justify-between">
+            <span class="text-3xl font-black tabular">2.14<span class="text-xs font-normal text-[var(--text-muted)] ml-1">%</span></span>
+            <span class="text-xs font-semibold tabular text-[var(--down)]">−2 bp</span>
+          </div>
+          <svg class="w-full h-10 overflow-visible" viewBox="0 0 100 24">
+            <polyline points="0,10 20,12 40,14 60,18 80,15 100,16" fill="none" stroke="var(--primary)" stroke-width="2"/>
+          </svg>
+          <div class="flex justify-between text-[10px] tabular text-[var(--text-muted)] border-t border-[var(--line)] pt-1.5">
+            <span>30日区间 2.08% – 2.22%</span>
+            <span>09-17 截点</span>
+          </div>
+        </div>
+
+        <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4 shadow-sm space-y-3">
+          <div class="flex justify-between text-xs">
+            <div>
+              <div class="font-bold">10年期 TIPS 实际利率 (DFII10)</div>
+              <div class="text-[10px] text-[var(--text-muted)]">FRED · 日频</div>
+            </div>
+            <span class="px-1.5 py-0.5 text-[10px] rounded bg-[var(--primary-soft)] text-[var(--primary)] font-semibold">自动</span>
+          </div>
+          <div class="flex items-baseline justify-between">
+            <span class="text-3xl font-black tabular">1.58<span class="text-xs font-normal text-[var(--text-muted)] ml-1">%</span></span>
+            <span class="text-xs font-semibold tabular text-[var(--up)]">+6 bp</span>
+          </div>
+          <svg class="w-full h-10 overflow-visible" viewBox="0 0 100 24">
+            <polyline points="0,16 20,18 40,14 60,10 80,12 100,7" fill="none" stroke="var(--blue)" stroke-width="2"/>
+          </svg>
+          <div class="flex justify-between text-[10px] tabular text-[var(--text-muted)] border-t border-[var(--line)] pt-1.5">
+            <span>持有金属的机会成本</span>
+            <span>09-17 截点</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="space-y-3">
+      <div class="flex items-center justify-between">
+        <h2 class="text-sm font-bold text-[var(--text)] flex items-center gap-2">
+          <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">02</span>
+          宏观公开源台账 (DATA_SOURCES_AND_PROCESSING)
+        </h2>
+        <span class="text-xs text-[var(--text-muted)]">明确标记需凭证源，严禁虚假填充</span>
+      </div>
+      <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] overflow-hidden shadow-sm">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-[var(--surface-soft)] text-[11px] font-semibold text-[var(--text-muted)] border-b border-[var(--line)]">
+            <tr>
+              <th class="py-2.5 px-3">数据源标识</th>
+              <th class="py-2.5 px-3">层级</th>
+              <th class="py-2.5 px-3">覆盖序列</th>
+              <th class="py-2.5 px-3">访问协议</th>
+              <th class="py-2.5 px-3 text-center">状态</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[var(--line)]">
+            <tr>
+              <td class="py-2 px-3 font-bold">FRED (圣路易斯联储)</td>
+              <td class="py-2 px-3">L1 官方公开</td>
+              <td class="py-2 px-3 text-[var(--text-muted)]">美债、实际利率、美元指数、流动性指标</td>
+              <td class="py-2 px-3 font-mono text-[11px]">CSV / 每日自动化</td>
+              <td class="py-2 px-3 text-center"><span class="px-2 py-0.5 text-[10px] font-semibold rounded bg-[var(--primary-soft)] text-[var(--primary)]">已接入</span></td>
+            </tr>
+            <tr>
+              <td class="py-2 px-3 font-bold">CBOE (芝加哥期权交易所)</td>
+              <td class="py-2 px-3">L1 官方公开</td>
+              <td class="py-2 px-3 text-[var(--text-muted)]">VIX 恐慌指数 (收盘价)</td>
+              <td class="py-2 px-3 font-mono text-[11px]">官网公开 CSV 每日拉取</td>
+              <td class="py-2 px-3 text-center"><span class="px-2 py-0.5 text-[10px] font-semibold rounded bg-[var(--primary-soft)] text-[var(--primary)]">已接入</span></td>
+            </tr>
+            <tr>
+              <td class="py-2 px-3 font-bold">SMM / Mysteel 商业终端</td>
+              <td class="py-2 px-3">L3 商业授权</td>
+              <td class="py-2 px-3 text-[var(--text-muted)]">1# 现货、TC加工费、开工率、社会库存</td>
+              <td class="py-2 px-3 font-mono text-[11px]">专有加密插件 / 人工录入通道</td>
+              <td class="py-2 px-3 text-center"><span class="px-2 py-0.5 text-[10px] font-semibold rounded bg-[var(--amber-soft)] text-[var(--amber)]">人工录入</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- ========================================================================= -->
+  <!-- PAGE 3: JUDGMENT & LIVE MONITORING -->
+  <!-- ========================================================================= -->
+  <main id="view-judgment" class="page-view max-w-7xl mx-auto px-6 py-6 space-y-6">
+    <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[var(--line-strong)]">
+      <div>
+        <div class="text-[10px] font-bold tracking-widest text-[var(--primary)] uppercase mb-1">RESEARCH THESIS & SIGNALS</div>
+        <h1 class="text-2xl font-black tracking-tight text-[var(--text)] flex items-center gap-3">
+          研究判断与风控线
+          <span class="text-xs font-semibold px-2 py-0.5 rounded bg-[var(--amber-soft)] text-[var(--amber)] border border-[var(--amber)]/20">v1 · 草稿</span>
+        </h1>
+        <p class="text-xs text-[var(--text-muted)] mt-1">九字段结构化研判 ｜ 每日自动比对阈值与证伪条件 ｜ 复核周期预警</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button class="px-3 py-1.5 text-xs font-semibold rounded border border-[var(--line)] bg-[var(--surface)] hover:bg-[var(--surface-soft)]">版本比对 (Diff)</button>
+        <button class="px-3 py-1.5 text-xs font-semibold rounded bg-[var(--primary)] text-white hover:bg-[var(--primary-hover)]">导入新版 Prompt</button>
+      </div>
+    </div>
+
+    <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4 shadow-sm grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
+      <div>
+        <span class="text-[var(--text-muted)]">基调 & 范式</span>
+        <div class="text-base font-bold text-[var(--primary)] mt-0.5">区间震荡 · 总线合成</div>
+      </div>
+      <div>
+        <span class="text-[var(--text-muted)]">责任作者</span>
+        <div class="text-base font-bold text-[var(--text)] mt-0.5">锡研究员 (08-16 写定)</div>
+      </div>
+      <div>
+        <span class="text-[var(--text-muted)]">复核周期状态</span>
+        <div class="text-base font-bold text-[var(--alert)] mt-0.5">超期 3 天 (需复核)</div>
+      </div>
+      <div>
+        <span class="text-[var(--text-muted)]">白名单指标覆盖</span>
+        <div class="text-base font-bold text-[var(--text)] mt-0.5">6 个核心指标全部绑定</div>
+      </div>
+    </div>
+
+    <section class="space-y-3">
+      <div class="flex items-center justify-between">
+        <h2 class="text-sm font-bold text-[var(--text)] flex items-center gap-2">
+          <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">01</span>
+          阈值监测与测距雷达 (Live Distance Radar)
+        </h2>
+        <span class="text-xs text-[var(--text-muted)]">优先级规则：短线风控线 > 介入位 > 观察位</span>
+      </div>
+      <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] overflow-hidden shadow-sm">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-[var(--surface-soft)] text-[11px] font-semibold text-[var(--text-muted)] border-b border-[var(--line)]">
+            <tr>
+              <th class="py-2.5 px-3">阈值名称</th>
+              <th class="py-2.5 px-3">关联指标</th>
+              <th class="py-2.5 px-3">触发条件</th>
+              <th class="py-2.5 px-3">当前实际值</th>
+              <th class="py-2.5 px-3 w-44">安全边际 / 测距</th>
+              <th class="py-2.5 px-3">动作提示</th>
+              <th class="py-2.5 px-3 text-center">状态</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[var(--line)]">
+            <tr>
+              <td class="py-3 px-3 font-bold">短线宏观风控线</td>
+              <td class="py-3 px-3">CBOE VIX 指数</td>
+              <td class="py-3 px-3 font-mono font-bold text-[var(--alert)]">&gt; 19.0</td>
+              <td class="py-3 px-3 tabular font-bold">15.56</td>
+              <td class="py-3 px-3">
+                <div class="flex justify-between text-[10px] text-[var(--text-muted)] mb-1">
+                  <span>距触发 3.44 点</span>
+                  <span class="text-[var(--down)]">安全 81%</span>
+                </div>
+                <div class="w-full bg-[var(--surface-soft)] h-2 rounded-full overflow-hidden border border-[var(--line)]">
+                  <div class="bg-[var(--primary)] h-full rounded-full" style="width: 81%;"></div>
+                </div>
+              </td>
+              <td class="py-3 px-3 text-[var(--text-muted)]">降低单边多头敞口</td>
+              <td class="py-3 px-3 text-center"><span class="px-2 py-0.5 text-[10px] font-semibold rounded bg-[var(--primary-soft)] text-[var(--primary)]">未触发</span></td>
+            </tr>
+            <tr>
+              <td class="py-3 px-3 font-bold">云南矿端加工费企稳位</td>
+              <td class="py-3 px-3">Mysteel 云南40% TC</td>
+              <td class="py-3 px-3 font-mono font-bold text-[var(--primary)]">&gt; 20,000 元/吨</td>
+              <td class="py-3 px-3 tabular font-bold text-[var(--amber)]">17,500</td>
+              <td class="py-3 px-3">
+                <div class="flex justify-between text-[10px] text-[var(--text-muted)] mb-1">
+                  <span>仍处紧缩区</span>
+                  <span class="text-[var(--amber)]">矿紧确认</span>
+                </div>
+                <div class="w-full bg-[var(--surface-soft)] h-2 rounded-full overflow-hidden border border-[var(--line)]">
+                  <div class="bg-[var(--amber)] h-full rounded-full" style="width: 60%;"></div>
+                </div>
+              </td>
+              <td class="py-3 px-3 text-[var(--text-muted)]">若放量且TC回升则弱化矿紧叙事</td>
+              <td class="py-3 px-3 text-center"><span class="px-2 py-0.5 text-[10px] font-semibold rounded bg-[var(--surface-soft)] text-[var(--text-muted)]">持续监测</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- ========================================================================= -->
+  <!-- PAGE 4: INDICATORS & CALIBER DICTIONARY -->
+  <!-- ========================================================================= -->
+  <main id="view-indicators" class="page-view max-w-7xl mx-auto px-6 py-6 space-y-6">
+    <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[var(--line-strong)]">
+      <div>
+        <div class="text-[10px] font-bold tracking-widest text-[var(--primary)] uppercase mb-1">DATA GOVERNANCE & DICTIONARY</div>
+        <h1 class="text-2xl font-black tracking-tight text-[var(--text)]">指标登记与口径字典</h1>
+        <p class="text-xs text-[var(--text-muted)] mt-1">26 条登记指标 ｜ 8 个口径约束维度 ｜ 派生计算容差守护</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="toggleDrawer(true)" class="px-3 py-1.5 text-xs font-semibold rounded bg-[var(--primary)] text-white hover:bg-[var(--primary-hover)]">+ 人工录入</button>
+      </div>
+    </div>
+
+    <section class="space-y-3">
+      <div class="flex items-center justify-between">
+        <h2 class="text-sm font-bold text-[var(--text)] flex items-center gap-2">
+          <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">01</span>
+          指标登记清单 (点击代码一键复制)
+        </h2>
+      </div>
+      <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] overflow-hidden shadow-sm">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-[var(--surface-soft)] text-[11px] font-semibold text-[var(--text-muted)] border-b border-[var(--line)]">
+            <tr>
+              <th class="py-2 px-3">series_id</th>
+              <th class="py-2 px-3">指标名称</th>
+              <th class="py-2 px-3">类别</th>
+              <th class="py-2 px-3">口径关键约束</th>
+              <th class="py-2 px-3">单位</th>
+              <th class="py-2 px-3">数据源</th>
+              <th class="py-2 px-3 text-center">采集方式</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[var(--line)]">
+            <tr class="hover:bg-[var(--surface-soft)]">
+              <td class="py-2 px-3 font-mono font-semibold text-[var(--primary)] cursor-pointer hover:underline" onclick="copyText('SHFE.SN.main.settle')" title="点击复制">SHFE.SN.main.settle</td>
+              <td class="py-2 px-3 font-bold">沪锡主力合约结算价</td>
+              <td class="py-2 px-3"><span class="px-1.5 py-0.2 rounded bg-[var(--surface-soft)] text-[var(--text-muted)]">价格</span></td>
+              <td class="py-2 px-3 text-[var(--text-muted)]">主力连续 (SN0) 结算价</td>
+              <td class="py-2 px-3">元/吨</td>
+              <td class="py-2 px-3">SHFE</td>
+              <td class="py-2 px-3 text-center"><span class="px-1.5 py-0.5 text-[10px] rounded bg-[var(--primary-soft)] text-[var(--primary)] font-semibold">自动</span></td>
+            </tr>
+            <tr class="hover:bg-[var(--surface-soft)]">
+              <td class="py-2 px-3 font-mono font-semibold text-[var(--primary)] cursor-pointer hover:underline" onclick="copyText('SMM.SN.spot.1')" title="点击复制">SMM.SN.spot.1</td>
+              <td class="py-2 px-3 font-bold">SMM 1# 锡现货均价</td>
+              <td class="py-2 px-3"><span class="px-1.5 py-0.2 rounded bg-[var(--surface-soft)] text-[var(--text-muted)]">价格</span></td>
+              <td class="py-2 px-3 text-[var(--text-muted)]">现货均价 · 升贴水参考</td>
+              <td class="py-2 px-3">元/吨</td>
+              <td class="py-2 px-3">SMM</td>
+              <td class="py-2 px-3 text-center"><span class="px-1.5 py-0.5 text-[10px] rounded bg-[var(--amber-soft)] text-[var(--amber)] font-semibold">人工</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- ========================================================================= -->
+  <!-- PAGE 5: DAILY REPORTS & REPLAY ARCHIVE -->
+  <!-- ========================================================================= -->
+  <main id="view-reports" class="page-view max-w-7xl mx-auto px-6 py-6 space-y-6">
+    <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[var(--line-strong)]">
+      <div>
+        <div class="text-[10px] font-bold tracking-widest text-[var(--primary)] uppercase mb-1">ARCHIVE & SNAPSHOT REPLAY</div>
+        <h1 class="text-2xl font-black tracking-tight text-[var(--text)]">每日快照与复盘归档</h1>
+        <p class="text-xs text-[var(--text-muted)] mt-1">按交易日冻结数据、口径、研判与缺口状态 ｜ 支持标准 JSON / CSV 导出</p>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+      <div class="lg:col-span-4 rounded-lg border border-[var(--line)] bg-[var(--surface)] overflow-hidden shadow-sm">
+        <div class="p-3 bg-[var(--surface-soft)] border-b border-[var(--line)] flex justify-between items-center text-xs">
+          <span class="font-bold">归档交易日历史</span>
+          <span class="text-[var(--text-muted)]">共 14 份</span>
+        </div>
+        <div class="divide-y divide-[var(--line)] max-h-[460px] overflow-y-auto">
+          <div class="p-3 bg-[var(--primary-soft)]/50 cursor-pointer border-l-4 border-[var(--primary)]">
+            <div class="flex justify-between items-center text-xs">
+              <span class="font-black tabular text-[var(--text)]">2026-09-18 (周五)</span>
+              <span class="px-1.5 py-0.2 text-[10px] font-bold rounded bg-[var(--primary)] text-white">当前激活</span>
+            </div>
+            <div class="flex justify-between text-[11px] text-[var(--text-muted)] mt-1">
+              <span>基调：区间震荡 ｜ SN2610: 405,360</span>
+              <span class="text-[var(--amber)] font-semibold">1 缺口</span>
+            </div>
+          </div>
+          <div class="p-3 hover:bg-[var(--surface-soft)] cursor-pointer">
+            <div class="flex justify-between items-center text-xs">
+              <span class="font-bold tabular text-[var(--text)]">2026-09-17 (周四)</span>
+              <span class="text-[10px] text-[var(--text-muted)]">已冻结</span>
+            </div>
+            <div class="flex justify-between text-[11px] text-[var(--text-muted)] mt-1">
+              <span>基调：区间震荡 ｜ SN2610: 403,230</span>
+              <span class="text-[var(--primary)] font-semibold">就绪 6/6</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="lg:col-span-8 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-5 shadow-sm space-y-4">
+        <div class="flex justify-between items-center pb-3 border-b border-[var(--line)]">
+          <div>
+            <h3 class="text-base font-bold">2026-09-18 锡投研日报快照</h3>
+            <p class="text-xs text-[var(--text-muted)] mt-0.5">生成时间：2026-09-18 16:45:00 CST</p>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="switchPage('variety')" class="px-2.5 py-1 text-xs font-semibold rounded bg-[var(--primary)] text-white hover:bg-[var(--primary-hover)]">前往当日看板</button>
+          </div>
+        </div>
+
+        <pre class="p-3 rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] font-mono text-[11px] text-[var(--text)] overflow-x-auto leading-relaxed">
+{
+  "variety": "SN",
+  "as_of": "2026-09-18",
+  "judgment": { "version": 1, "tone": "区间震荡", "expired_days": 3 },
+  "core_metrics": { "main_settle": 405360, "spot": 406000, "basis": 640, "warrant": 4979 },
+  "gaps": [{ "series_id": "MYSTEEL.SN.TC.YN40", "reason": "人工录入未更新" }]
+}</pre>
+      </div>
+    </div>
+  </main>
+
+  <!-- ========================================================================= -->
+  <!-- PAGE 6: MANUAL ENTRY & AUDIT LOG -->
+  <!-- ========================================================================= -->
+  <main id="view-entry" class="page-view max-w-7xl mx-auto px-6 py-6 space-y-6">
+    <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[var(--line-strong)]">
+      <div>
+        <div class="text-[10px] font-bold tracking-widest text-[var(--primary)] uppercase mb-1">MANUAL DATA INGESTION & AUDIT</div>
+        <h1 class="text-2xl font-black tracking-tight text-[var(--text)]">人工录入通道与操作留痕</h1>
+        <p class="text-xs text-[var(--text-muted)] mt-1">SMM / Mysteel / LME 商业授权数据录入 ｜ 严禁篡改历史 ｜ 自动触发派生计算</p>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <div class="lg:col-span-5 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-5 shadow-sm space-y-4">
+        <h3 class="text-sm font-bold text-[var(--text)] pb-2 border-b border-[var(--line)]">录入商业授权观测值</h3>
+
+        <form onsubmit="event.preventDefault(); submitDedicatedEntry();" class="space-y-3.5 text-xs">
+          <div>
+            <label class="block font-semibold text-[var(--text)] mb-1">选择指标</label>
+            <select id="entry-series" class="w-full px-3 py-2 rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--text)]">
+              <option value="SMM.SN.spot.1">SMM 1# 锡现货均价 (元/吨) — SMM.SN.spot.1</option>
+              <option value="MYSTEEL.SN.TC.YN40">云南 40% 锡精矿加工费 (元/吨) — MYSTEEL.SN.TC.YN40</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block font-semibold text-[var(--text)] mb-1">观测数值</label>
+            <input type="number" step="any" id="entry-value" placeholder="例如: 406000" class="w-full px-3 py-2 rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--text)] tabular font-bold text-sm" required>
+          </div>
+
+          <div>
+            <label class="block font-semibold text-[var(--text)] mb-1">数据代表时点 as_of (非录入时间)</label>
+            <input type="datetime-local" value="2026-09-18T11:30" class="w-full px-3 py-2 rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--text)] tabular" required>
+          </div>
+
+          <div>
+            <label class="block font-semibold text-[var(--text)] mb-1">数据源出处与凭证</label>
+            <input type="text" id="entry-note" placeholder="如: SMM 官网 11:30 定盘价" class="w-full px-3 py-2 rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--text)]" required>
+          </div>
+
+          <div>
+            <label class="block font-semibold text-[var(--text)] mb-1">录入人责任签名</label>
+            <input type="text" id="entry-by" value="张三" class="w-full px-3 py-2 rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--text)]" required>
+          </div>
+
+          <button type="submit" class="w-full py-2.5 rounded-md bg-[var(--primary)] text-white font-bold hover:bg-[var(--primary-hover)] shadow-sm">提交并触发重新计算</button>
+        </form>
+      </div>
+
+      <div class="lg:col-span-7 rounded-lg border border-[var(--line)] bg-[var(--surface)] overflow-hidden shadow-sm flex flex-col justify-between">
+        <div class="p-3.5 bg-[var(--surface-soft)] border-b border-[var(--line)] flex justify-between items-center text-xs">
+          <span class="font-bold">今日人工录入与审计台账 (Audit Log)</span>
+          <span class="text-[var(--text-muted)]">实时持久化留痕</span>
+        </div>
+        <table class="w-full text-left text-xs">
+          <thead class="bg-[var(--surface-soft)] text-[11px] font-semibold text-[var(--text-muted)] border-b border-[var(--line)]">
+            <tr>
+              <th class="py-2.5 px-3">时点 as_of</th>
+              <th class="py-2.5 px-3">指标名称</th>
+              <th class="py-2.5 px-3 text-right">数值</th>
+              <th class="py-2.5 px-3">录入人</th>
+              <th class="py-2.5 px-3">凭证来源</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[var(--line)]">
+            <tr>
+              <td class="py-2.5 px-3 tabular text-[var(--text-muted)]">09-18 11:30</td>
+              <td class="py-2.5 px-3 font-bold">SMM 1# 锡现货均价</td>
+              <td class="py-2.5 px-3 text-right tabular font-bold">406,000 元/吨</td>
+              <td class="py-2.5 px-3">张三</td>
+              <td class="py-2.5 px-3 text-[var(--text-muted)]">SMM 官网定盘价</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="p-3 bg-[var(--surface-soft)] border-t border-[var(--line)] text-[11px] text-[var(--text-muted)]">
+          所有人工录入观测打上 source="人工" 标签，并自动触发基差与派生计算。
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ========================================================================= -->
+  <!-- SLIDE-OVER QUICK ENTRY DRAWER (Global Drawer across all views) -->
+  <!-- ========================================================================= -->
+  <div id="quick-drawer-backdrop" onclick="toggleDrawer(false)" class="hidden fixed inset-0 z-40 bg-black/30 backdrop-blur-xs transition-opacity"></div>
+  <aside id="quick-drawer" class="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-[var(--surface)] border-l border-[var(--line)] shadow-2xl p-6 flex flex-col justify-between translate-x-full transition-transform duration-300 ease-in-out">
+    <div>
+      <div class="flex items-center justify-between pb-4 border-b border-[var(--line)]">
+        <div>
+          <h3 class="text-base font-bold text-[var(--text)]">原地快速录入 (Global Drawer)</h3>
+          <p class="text-xs text-[var(--text-muted)] mt-0.5">保持心流，无需离开当前页面</p>
+        </div>
+        <button onclick="toggleDrawer(false)" class="p-1 rounded-md text-[var(--text-muted)] hover:bg-[var(--surface-soft)] text-lg">&times;</button>
+      </div>
+
+      <form id="drawer-form" class="mt-5 space-y-4 text-xs">
+        <div>
+          <label class="block font-semibold text-[var(--text)] mb-1">录入指标</label>
+          <select id="drawer-series" class="w-full px-3 py-2 rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--text)]">
+            <option value="MYSTEEL.SN.TC.YN40">云南 40% 锡精矿加工费 (TC) — MYSTEEL.SN.TC.YN40</option>
+            <option value="SMM.SN.spot.1">SMM 1# 锡现货均价 — SMM.SN.spot.1</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-[var(--text)] mb-1">录入数值</label>
+          <div class="relative">
+            <input type="number" step="any" id="drawer-value" placeholder="例如: 17500" class="w-full px-3 py-2 rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--text)] tabular font-bold text-sm" required>
+            <span id="drawer-unit" class="absolute right-3 top-2 text-[var(--text-muted)]">元/吨</span>
+          </div>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-[var(--text)] mb-1">数据时点 as_of (代表哪一刻)</label>
+          <input type="datetime-local" value="2026-09-18T11:30" class="w-full px-3 py-2 rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--text)] tabular" required>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-[var(--text)] mb-1">来源说明 / 凭据</label>
+          <input type="text" placeholder="例如: Mysteel 官方周报 11:00 报价" class="w-full px-3 py-2 rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--text)]" required>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-[var(--text)] mb-1">录入人</label>
+          <input type="text" value="张三" class="w-full px-3 py-2 rounded-md border border-[var(--line)] bg-[var(--surface)] text-[var(--text)]" required>
+        </div>
+      </form>
+    </div>
+
+    <div class="pt-4 border-t border-[var(--line)] flex items-center justify-end gap-3">
+      <button onclick="toggleDrawer(false)" class="px-4 py-2 rounded-md border border-[var(--line)] font-medium text-[var(--text-muted)] hover:bg-[var(--surface-soft)]">取消</button>
+      <button onclick="submitDrawerMock()" class="px-5 py-2 rounded-md bg-[var(--primary)] text-white font-semibold hover:bg-[var(--primary-hover)] shadow-sm">提交并立即重算</button>
+    </div>
+  </aside>
+
+  <!-- Notification Toast -->
+  <div id="toast" class="hidden fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg bg-[var(--primary)] text-white text-xs font-semibold shadow-xl flex items-center gap-2">
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+    <span id="toast-msg">操作成功</span>
+  </div>
+
+  <script>
+    function switchPage(pageId) {
+      document.querySelectorAll('.page-view').forEach(v => v.classList.remove('active'));
+      document.querySelectorAll('.nav-btn').forEach(b => {
+        b.classList.remove('active');
+        b.classList.remove('text-[var(--primary)]');
+        b.classList.add('text-[var(--text-muted)]');
+      });
+
+      const targetView = document.getElementById('view-' + pageId);
+      const targetTab = document.getElementById('tab-' + pageId);
+      if (targetView && targetTab) {
+        targetView.classList.add('active');
+        targetTab.classList.add('active');
+        targetTab.classList.remove('text-[var(--text-muted)]');
+        targetTab.classList.add('text-[var(--primary)]');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    }
+
+    function toggleTheme() {
+      document.documentElement.classList.toggle('dark');
+    }
+
+    function togglePopover(id) {
+      const el = document.getElementById(id);
+      const isHidden = el.classList.contains('hidden');
+      document.querySelectorAll('[id^="pop"]').forEach(p => p.classList.add('hidden'));
+      if (isHidden) {
+        el.classList.remove('hidden');
+      }
+    }
+
+    function toggleDrawer(open) {
+      const drawer = document.getElementById('quick-drawer');
+      const backdrop = document.getElementById('quick-drawer-backdrop');
+      if (open) {
+        backdrop.classList.remove('hidden');
+        drawer.classList.remove('translate-x-full');
+      } else {
+        drawer.classList.add('translate-x-full');
+        backdrop.classList.add('hidden');
+      }
+    }
+
+    function openDrawerWith(seriesId, name, unit) {
+      document.getElementById('drawer-series').value = seriesId;
+      document.getElementById('drawer-unit').innerText = unit;
+      toggleDrawer(true);
+    }
+
+    function submitDrawerMock() {
+      toggleDrawer(false);
+      showToast("已原地录入数据！后台已自动重新计算派生指标与快照。");
+    }
+
+    function submitDedicatedEntry() {
+      showToast("录入成功！审计日志已追加，并同步更新基差与仓单。");
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      const text = document.getElementById('toast-msg');
+      text.innerText = msg;
+      toast.classList.remove('hidden');
+      setTimeout(() => { toast.classList.add('hidden'); }, 3500);
+    }
+
+    function copyText(txt) {
+      navigator.clipboard.writeText(txt);
+      showToast(`已复制指标代码: ${txt}`);
+    }
+
+    const contractData = [
+      { name: "SN2609", price: "405,100", type: "次主力" },
+      { name: "SN2610", price: "405,360", type: "主力合约" },
+      { name: "SN2611", price: "405,480", type: "次月" }
+    ];
+
+    function highlightContract(idx) {
+      const item = contractData[idx];
+      document.getElementById('chart-hover-indicator').innerText = `${item.name}: ${item.price} 元/吨 (${item.type})`;
+      const circles = document.querySelectorAll('#curve-points circle');
+      circles.forEach((c, i) => {
+        if (i === idx) {
+          c.setAttribute('r', '7');
+        } else {
+          c.setAttribute('r', i === 1 ? '5.5' : '4');
+        }
+      });
+    }
+
+    function resetContract() {
+      document.getElementById('chart-hover-indicator').innerText = 'SN2610 (主力): 405,360 元/吨';
+      const circles = document.querySelectorAll('#curve-points circle');
+      circles.forEach((c, i) => {
+        c.setAttribute('r', i === 1 ? '5.5' : '4');
+      });
+    }
+  </script>
+</body>
+</html>

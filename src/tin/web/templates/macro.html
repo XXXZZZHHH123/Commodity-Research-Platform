@@ -1,33 +1,74 @@
 {% extends "base.html" %}
-{% from "_trend.html" import trend %}
-{% block title %}宏观数据 · 锡研究工作台{% endblock %}
-{% block navdate %}<span class="date">数据截点 {{ d }}</span>{% endblock %}
+{% from "_card.html" import trend %}
+{% block title %}宏观与跨资产 · 锡 SN{% endblock %}
 {% block main %}
-<header class="page-head">
-  <div><div class="eyebrow">MACRO LENS</div><h1>宏观与跨资产</h1><p>与锡的金融定价、风险偏好和需求周期直接相关的公开序列。</p></div>
-  <div class="head-stat"><b>{{ sources.counts['已接入'] }}</b><span>类来源已接入</span></div>
-</header>
 
-{% for group in groups %}
-<section class="section-block">
-  <div class="section-title"><div><span class="section-index">0{{ loop.index }}</span><h2>{{ group.name }}</h2></div><span>{{ group.cards | length }} 条序列</span></div>
-  <div class="trend-grid">
-    {% for c in group.cards %}{{ trend(c) }}{% endfor %}
+<div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[var(--line-strong)]">
+  <div>
+    <div class="text-[10px] font-bold tracking-widest text-[var(--primary)] uppercase mb-1">MACRO LENS &amp; CROSS-ASSET</div>
+    <h1 class="text-2xl font-black tracking-tight">宏观与跨资产镜头</h1>
+    <p class="text-xs text-[var(--text-muted)] mt-1">金融条件、实际利率、全球半导体景气与宏观流动性 ｜ 锡已金融化为风险资产的 Beta，短线定价权在这些序列上</p>
+  </div>
+  <div class="flex items-center gap-1.5 text-xs flex-wrap">
+    <span class="px-2.5 py-1 rounded bg-[var(--primary)] text-white font-medium">全部 {{ groups | map(attribute='cards') | map('length') | sum }}</span>
+    {% for g in groups %}
+    <a href="#group-{{ loop.index }}" class="px-2.5 py-1 rounded bg-[var(--surface-soft)] text-[var(--text-muted)] hover:text-[var(--text)]">{{ g.name }} {{ g.cards | length }}</a>
+    {% endfor %}
+  </div>
+</div>
+
+{% for g in groups %}
+<section class="space-y-3" id="group-{{ loop.index }}">
+  <div class="flex items-center justify-between gap-3 flex-wrap">
+    <h2 class="text-sm font-bold flex items-center gap-2">
+      <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">{{ '%02d' | format(loop.index) }}</span>
+      {{ g.name }}
+    </h2>
+    <span class="text-xs text-[var(--text-muted)]">{{ g.cards | selectattr('status', 'equalto', 'ok') | list | length }} / {{ g.cards | length }} 已取到</span>
+  </div>
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+    {% for m in g.cards %}{{ trend(m) }}{% endfor %}
   </div>
 </section>
 {% endfor %}
 
-<section class="section-block">
-  <div class="section-title"><div><span class="section-index">06</span><h2>数据源接入台账</h2></div><span>来自 DATA_SOURCES_AND_PROCESSING</span></div>
-  <div class="source-stats">
-    {% for status, count in sources.counts.items() %}<div><b>{{ count }}</b><span>{{ status }}</span></div>{% endfor %}
+<section class="space-y-3">
+  <div class="flex items-center justify-between gap-3 flex-wrap">
+    <h2 class="text-sm font-bold flex items-center gap-2">
+      <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">{{ '%02d' | format(groups | length + 1) }}</span>
+      数据源台账
+    </h2>
+    <span class="text-xs text-[var(--text-muted)]">需凭证的源明确标记，不以占位数据冒充已接入</span>
   </div>
-  <div class="table-wrap"><table class="source-table">
-    <thead><tr><th>来源</th><th>层级</th><th>覆盖</th><th>访问条件</th><th>状态</th></tr></thead>
-    <tbody>{% for row in sources.rows %}<tr>
-      <td><b>{{ row.name }}</b></td><td>{{ row.level }}</td><td>{{ row.scope }}</td><td>{{ row.access }}</td>
-      <td><span class="status-pill s-{{ row.status }}">{{ row.status }}</span></td>
-    </tr>{% endfor %}</tbody>
-  </table></div>
+  <div class="flex flex-wrap gap-2 text-[11px]">
+    {% for status, count in sources.counts.items() %}
+    {% if count %}<span class="px-2 py-1 rounded bg-[var(--surface-soft)] text-[var(--text-muted)]">{{ status }} <b class="tabular text-[var(--text)]">{{ count }}</b></span>{% endif %}
+    {% endfor %}
+  </div>
+  <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] overflow-hidden shadow-sm overflow-x-auto">
+    <table class="w-full text-left text-xs">
+      <thead class="bg-[var(--surface-soft)] text-[11px] font-semibold text-[var(--text-muted)] border-b border-[var(--line)]">
+        <tr><th class="py-2.5 px-3">数据源</th><th class="py-2.5 px-3">层级</th>
+          <th class="py-2.5 px-3">覆盖范围</th><th class="py-2.5 px-3">访问方式</th><th class="py-2.5 px-3 text-center">状态</th></tr>
+      </thead>
+      <tbody class="divide-y divide-[var(--line)]">
+        {% for s in sources.rows %}
+        <tr class="hover:bg-[var(--surface-soft)]">
+          <td class="py-2 px-3 font-bold">{{ s.name }}</td>
+          <td class="py-2 px-3 text-[var(--text-muted)]">{{ s.level }}</td>
+          <td class="py-2 px-3 text-[var(--text-muted)]">{{ s.scope }}</td>
+          <td class="py-2 px-3 tabular text-[11px] text-[var(--text-muted)]">{{ s.access }}</td>
+          <td class="py-2 px-3 text-center">
+            <span class="px-2 py-0.5 text-[10px] font-semibold rounded
+              {% if s.status == '已接入' %}bg-[var(--primary-soft)] text-[var(--primary)]
+              {% elif s.status == '需凭证' %}bg-[var(--alert-soft)] text-[var(--alert)]
+              {% elif s.status == '待接入' %}bg-[var(--amber-soft)] text-[var(--amber)]
+              {% else %}bg-[var(--surface-soft)] text-[var(--text-muted)]{% endif %}">{{ s.status }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="text-[11px] text-[var(--text-muted)]">订阅与授权数据一期不写任何抓取代码，只能走人工录入通道（00 §7.1）。</p>
 </section>
 {% endblock %}

@@ -1,21 +1,77 @@
 {% extends "base.html" %}
-{% block title %}指标 · 锡{% endblock %}
+{% block title %}指标登记与口径字典 · 锡 SN{% endblock %}
 {% block main %}
-<header class="page-head"><div><div class="eyebrow">DATA DICTIONARY</div><h1>指标与口径</h1><p>{{ rows | length }} 条登记指标，不含逐合约行情序列。</p></div><a class="text-action" href="/sn/entry">人工录入</a></header>
-<section class="section-block first"><div class="section-title"><div><span class="section-index">01</span><h2>指标登记表</h2></div><span>事实层唯一标识</span></div>
-<div class="table-wrap"><table><tr><th>series_id</th><th>名称</th><th>类别</th><th>口径</th><th>单位</th><th>来源</th><th>频率</th><th>方式</th></tr>
-{% for r in rows %}
-<tr><td class="small">{{ r.series_id }}</td>
-<td>{{ r.name }}{% if r.is_proxy %}<span class="tag">代理</span>{% endif %}{% if r.note %}<div class="small">{{ r.note }}</div>{% endif %}</td>
-<td>{{ r.category }}</td>
-<td class="small">{% for k, v in r.caliber.items() %}{{ v }}{{ ' · ' if not loop.last }}{% endfor %}</td>
-<td>{{ r.unit }}</td><td>{{ r.source }}{% if r.vendor_code %}<div class="small">{{ r.vendor_code }}</div>{% endif %}</td><td>{{ r.frequency }}</td>
-<td>{{ '自动' if r.fetch_mode == 'auto' else '人工' }}</td></tr>
-{% endfor %}</table>
-</div></section>
 
-<section class="section-block"><div class="section-title"><div><span class="section-index">02</span><h2>口径字典</h2></div><span>计算前置约束</span></div>
-<div class="table-wrap"><table><tr><th>维度</th><th>枚举值</th><th>说明</th></tr>
-{% for d in dimensions %}<tr><td>{{ d.label }}</td><td>{% for e in d.enum %}{{ e.value }}{{ ' / ' if not loop.last }}{% endfor %}</td><td class="small">{{ d.note }}</td></tr>{% endfor %}
-</table></div></section>
+<div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[var(--line-strong)]">
+  <div>
+    <div class="text-[10px] font-bold tracking-widest text-[var(--primary)] uppercase mb-1">DATA GOVERNANCE &amp; DICTIONARY</div>
+    <h1 class="text-2xl font-black tracking-tight">指标登记与口径字典</h1>
+    <p class="text-xs text-[var(--text-muted)] mt-1">{{ rows | length }} 条登记指标 ｜ {{ dimensions | length }} 个口径维度 ｜ 判断只能引用已登记指标</p>
+  </div>
+  <button onclick="toggleDrawer(true)" class="px-3 py-1.5 text-xs font-semibold rounded bg-[var(--primary)] text-white hover:bg-[var(--primary-hover)] shrink-0">+ 人工录入</button>
+</div>
+
+<section class="space-y-3">
+  <div class="flex items-center justify-between gap-3 flex-wrap">
+    <h2 class="text-sm font-bold flex items-center gap-2">
+      <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">01</span>
+      指标登记清单<span class="text-xs font-normal text-[var(--text-muted)]">（点击代码可复制）</span>
+    </h2>
+    <span class="text-xs text-[var(--text-muted)]">
+      自动 {{ rows | selectattr('fetch_mode', 'equalto', 'auto') | list | length }} ·
+      人工 {{ rows | selectattr('fetch_mode', 'equalto', 'manual') | list | length }}
+      <span class="text-[10px]">（逐合约行情序列未列入）</span></span>
+  </div>
+  <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] overflow-hidden shadow-sm overflow-x-auto">
+    <table class="w-full text-left text-xs">
+      <thead class="bg-[var(--surface-soft)] text-[11px] font-semibold text-[var(--text-muted)] border-b border-[var(--line)]">
+        <tr><th class="py-2 px-3">series_id</th><th class="py-2 px-3">指标名称</th><th class="py-2 px-3">类别</th>
+          <th class="py-2 px-3">口径约束</th><th class="py-2 px-3">单位</th><th class="py-2 px-3">数据源</th>
+          <th class="py-2 px-3">频率</th><th class="py-2 px-3 text-center">采集方式</th></tr>
+      </thead>
+      <tbody class="divide-y divide-[var(--line)]">
+        {% for r in rows %}
+        <tr class="hover:bg-[var(--surface-soft)]">
+          <td class="py-2 px-3 tabular font-semibold text-[var(--primary)] cursor-pointer hover:underline whitespace-nowrap"
+              onclick="copyText('{{ r.series_id }}')" title="点击复制">{{ r.series_id }}</td>
+          <td class="py-2 px-3 font-bold">{{ r.name }}
+            {% if r.is_proxy %}<span class="ml-1 px-1.5 py-0.5 text-[10px] rounded bg-[var(--amber-soft)] text-[var(--amber)]">代理</span>{% endif %}
+            {% if r.note %}<div class="text-[10px] font-normal text-[var(--text-muted)]">{{ r.note }}</div>{% endif %}</td>
+          <td class="py-2 px-3"><span class="px-1.5 py-0.5 rounded bg-[var(--surface-soft)] text-[var(--text-muted)] whitespace-nowrap">{{ r.category }}</span></td>
+          <td class="py-2 px-3 text-[var(--text-muted)]">{% for k, v in r.caliber.items() %}{{ v }}{{ ' · ' if not loop.last }}{% endfor %}</td>
+          <td class="py-2 px-3 whitespace-nowrap">{{ r.unit }}</td>
+          <td class="py-2 px-3">{{ r.source }}{% if r.vendor_code %}<div class="text-[10px] tabular text-[var(--text-muted)]">{{ r.vendor_code }}</div>{% endif %}</td>
+          <td class="py-2 px-3">{{ r.frequency }}</td>
+          <td class="py-2 px-3 text-center"><span class="px-1.5 py-0.5 text-[10px] rounded font-semibold whitespace-nowrap
+            {{ 'bg-[var(--primary-soft)] text-[var(--primary)]' if r.fetch_mode == 'auto' else 'bg-[var(--amber-soft)] text-[var(--amber)]' }}">
+            {{ '自动' if r.fetch_mode == 'auto' else '人工' }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="space-y-3">
+  <h2 class="text-sm font-bold flex items-center gap-2">
+    <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">02</span>
+    口径字典
+  </h2>
+  <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] overflow-hidden shadow-sm overflow-x-auto">
+    <table class="w-full text-left text-xs">
+      <thead class="bg-[var(--surface-soft)] text-[11px] font-semibold text-[var(--text-muted)] border-b border-[var(--line)]">
+        <tr><th class="py-2 px-3">维度</th><th class="py-2 px-3">枚举值</th><th class="py-2 px-3">为什么必须区分</th></tr>
+      </thead>
+      <tbody class="divide-y divide-[var(--line)]">
+        {% for dim in dimensions %}
+        <tr class="hover:bg-[var(--surface-soft)]">
+          <td class="py-2 px-3 font-bold whitespace-nowrap">{{ dim.label }}<div class="text-[10px] font-normal tabular text-[var(--text-muted)]">{{ dim.key }}</div></td>
+          <td class="py-2 px-3">{% for e in dim.enum %}<span class="inline-block mr-1 mb-1 px-1.5 py-0.5 rounded bg-[var(--surface-soft)] text-[var(--text-muted)]">{{ e.value }}</span>{% endfor %}</td>
+          <td class="py-2 px-3 text-[var(--text-muted)]">{{ dim.note }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
 {% endblock %}

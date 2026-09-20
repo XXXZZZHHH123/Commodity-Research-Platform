@@ -17,7 +17,7 @@ from tin.judgments.validate import activation_blockers
 from tin.models import FetchRun, Indicator, Observation
 
 PER_CONTRACT = re.compile(r"^SHFE\.[A-Z]+\.\d{4}\.")
-OVERSEAS = {"CBOE", "LME", "代理指标"}
+OVERSEAS = {"CBOE", "LME", "代理指标", "FRED"}  # 境外源：北京时间当日尚未发布，按上一工作日要求
 SOURCE_ABBR = {"SHFE": "上期所", "CFETS": "外汇交易中心", "CBOE": "CBOE", "SMM": "SMM", "Mysteel": "Mysteel"}
 
 
@@ -54,6 +54,10 @@ class Card:
     unit: str
     status: str  # ok / missing / blocked
     value: float | None = None
+    series_id: str | None = None
+    badge: str | None = None
+    change: float | None = None
+    change_pct: float | None = None
     as_of: str | None = None
     source: str | None = None
     caliber: str | None = None
@@ -66,12 +70,19 @@ class Card:
     detail: dict = field(default_factory=dict)
 
 
+def previous_value(session: Session, series_id: str, before: datetime) -> float | None:
+    """上一个数据点的值，用于算涨跌。取的是严格早于 before 的最近一条。"""
+    o = latest_obs(session, series_id, before)
+    return o.value if o else None
+
+
 def _obs_card(session: Session, key: str, label: str, series_id: str, d: date) -> Card:
     ind = session.get(Indicator, series_id)
     o = latest_obs(session, series_id, day_end(d))
     exp = expected_date(ind, d)
     card = Card(key=key, label=label, unit=ind.unit, status="missing", manual=ind.fetch_mode == "manual",
                 proxy=ind.is_proxy, source=SOURCE_ABBR.get(ind.source, ind.source),
+                series_id=series_id, badge=ind.source,
                 expected_by=exp.isoformat() if exp else None)
     if o is None:
         card.note = "尚无数据"
@@ -84,22 +95,38 @@ def _obs_card(session: Session, key: str, label: str, series_id: str, d: date) -
     card.caliber = " · ".join(str(cal[k]) for k in ("contract", "price_type", "stock_scope", "spot_source") if cal.get(k))
     if card.manual:
         card.entered = f"{o.entered_by} 录入于 {_local(o.fetched_at)}"
+    prev = previous_value(session, series_id, o.as_of)
+    if prev is not None:
+        card.change = o.value - prev
+        card.change_pct = (card.change / prev * 100) if prev else None
     card.detail = {"series_id": series_id, "source_url": o.source_url, "caliber": cal,
                    "revision": o.revision, "note": o.note}
     return card
 
 
-def _derived_card(derived: dict, key: str, label: str, formula_id: str) -> Card:
+def _derived_card(derived: dict, key: str, label: str, formula_id: str, prev: float | None = None) -> Card:
     spec = REGISTRY[formula_id]
     r = derived.get(formula_id)
     if r is None:
-        return Card(key=key, label=label, unit=spec.unit, status="missing", note="当日尚未计算")
+        return Card(key=key, label=label, unit=spec.unit, status="missing", note="当日尚未计算", badge="派生")
     detail = {"formula": spec.expression, "tolerance": spec.tolerance, "inputs": r.inputs, "params": r.params}
     if r.status != "ok":
         status = "missing" if r.status == "missing_input" else "blocked"
-        return Card(key=key, label=label, unit=spec.unit, status=status, note=r.note, detail=detail)
-    return Card(key=key, label=label, unit=spec.unit, status="ok", value=r.value, as_of=_local(r.as_of),
-                source="派生", note=r.note, detail=detail)
+        return Card(key=key, label=label, unit=spec.unit, status=status, note=r.note, detail=detail, badge="派生")
+    card = Card(key=key, label=label, unit=spec.unit, status="ok", value=r.value, as_of=_local(r.as_of),
+                source="派生", badge="派生", note=r.note, detail=detail)
+    if prev is not None:
+        card.change = r.value - prev
+    return card
+
+
+def previous_derived(session: Session, variety: str, d: date, formula_id: str) -> float | None:
+    from tin.models import Derived
+    row = session.scalars(
+        select(Derived).where(Derived.variety == variety, Derived.formula_id == formula_id,
+                              Derived.trade_date < d.isoformat(), Derived.value.is_not(None))
+        .order_by(Derived.trade_date.desc(), Derived.id.desc()).limit(1)).first()
+    return row.value if row else None
 
 
 def core_cards(session: Session, variety: str, d: date) -> list[Card]:
@@ -115,8 +142,9 @@ def core_cards(session: Session, variety: str, d: date) -> list[Card]:
     return [
         main,
         _obs_card(session, "spot", "现货价（SMM 1#）", f"SMM.{variety}.spot.1", d),
-        _derived_card(derived, "basis", "基差", "BASIS"),
-        _derived_card(derived, "spread", "近月−次月价差", "SPREAD_M1M2"),
+        _derived_card(derived, "basis", "基差", "BASIS", previous_derived(session, variety, d, "BASIS")),
+        _derived_card(derived, "spread", "近月−次月价差", "SPREAD_M1M2",
+                      previous_derived(session, variety, d, "SPREAD_M1M2")),
         warrant,
         _obs_card(session, "fx", "美元兑人民币中间价", "FX.USDCNY.mid", d),
     ]
@@ -236,9 +264,14 @@ def contract_curve(session: Session, variety: str, d: date) -> dict:
     shape = None
     if len(active) >= 2:
         shape = "Contango" if active[-1]["settle"] > active[0]["settle"] else "Backwardation"
+    points = _chart_points(prices, 400, 120)
+    for r, xy in zip(rows, points.split(), strict=False):
+        x, y = xy.split(",")
+        r["x"], r["y"] = float(x), float(y)
     return {
-        "rows": rows, "points": _chart_points(prices, 100, 44), "shape": shape,
+        "rows": rows, "points": points, "shape": shape,
         "min": min(prices) if prices else None, "max": max(prices) if prices else None,
+        "mid": (min(prices) + max(prices)) / 2 if prices else None,
     }
 
 
@@ -323,3 +356,107 @@ def snapshot(session: Session, variety: str, d: date) -> dict:
         "derived": sorted(derived, key=lambda x: x["formula_id"]),
         "signals": [], "gaps": gaps(session, variety, d), "surveys": [],
     }
+
+
+def _fmt(v: float | None, unit: str = "") -> str:
+    if v is None:
+        return "—"
+    digits = 4 if unit == "元" else 0 if abs(v) >= 1000 or float(v).is_integer() else 2
+    return f"{v:,.{digits}f}".replace("-", "−")
+
+
+def threshold_radar(session: Session, variety: str, d: date) -> list[dict]:
+    """阈值测距：只陈述当前值、触发条件与距离，不给「安全与否」的结论（P1）。"""
+    j = current_judgment(session, variety)
+    if j is None:
+        return []
+    out = []
+    for t in j.thresholds:
+        ind = session.get(Indicator, t["series_id"])
+        o = latest_obs(session, t["series_id"], day_end(d)) if ind else None
+        row = {"id": t["id"], "name": t["name"], "series_id": t["series_id"],
+               "series_name": ind.name if ind else t["series_id"], "unit": ind.unit if ind else "",
+               "type": t["type"], "horizon": t["horizon"], "action_hint": t.get("action_hint"),
+               "note": t.get("note"), "state": "数据缺失", "value": None, "progress": 0,
+               "distance": "该指标暂无数据", "as_of": None}
+        op, target = t["operator"], t["value"]
+        row["condition"] = (f"{_fmt(target[0])} – {_fmt(target[1])}" if op == "between"
+                            else f"{op} {_fmt(target)}")
+        if o is None:
+            out.append(row)
+            continue
+        v = o.value
+        row.update({"value": v, "as_of": _local(o.as_of)})
+        if op == "between":
+            lo, hi = target
+            hit = lo <= v <= hi
+            gap = 0 if hit else (lo - v if v < lo else v - hi)
+            row["state"] = "在区间内" if hit else "未触发"
+            row["progress"] = 100 if hit else max(0, 100 - abs(gap) / max(hi - lo, 1) * 100)
+            row["distance"] = "已进入区间" if hit else f"距区间 {_fmt(abs(gap), row['unit'])} {row['unit']}"
+        else:
+            hit = (v > target if op == ">" else v >= target if op == ">=" else
+                   v < target if op == "<" else v <= target)
+            row["state"] = "已触发" if hit else "未触发"
+            row["progress"] = min(100, v / target * 100 if target else 0) if op in (">", ">=") \
+                else min(100, target / v * 100 if v else 0)
+            row["distance"] = ("已越线" if hit else
+                               f"距触发 {_fmt(abs(target - v), row['unit'])} {row['unit']}")
+        out.append(row)
+    return out
+
+
+def ticker(session: Session, variety: str, d: date) -> list[dict]:
+    """顶部行情条：核心数字的极简版，只显示已取到的。"""
+    items = []
+    for c in core_cards(session, variety, d):
+        if c.status != "ok":
+            continue
+        items.append({"label": c.label.split("（")[0], "value": _fmt(c.value, c.unit), "unit": c.unit,
+                      "change": c.change, "change_pct": c.change_pct})
+    vix = _obs_card(session, "vix", "VIX", "MACRO.VIX", d)
+    if vix.status == "ok":
+        items.append({"label": "VIX", "value": _fmt(vix.value, vix.unit), "unit": "",
+                      "change": vix.change, "change_pct": vix.change_pct})
+    return items
+
+
+def archive_days(session: Session, variety: str, limit: int = 40) -> list[dict]:
+    """归档快照列表，摘要直接取自当日冻结的 JSON，不重算。"""
+    import json
+    folder = settings.exports_dir / variety
+    if not folder.exists():
+        return []
+    out = []
+    for path in sorted(folder.glob("*.json"), reverse=True)[:limit]:
+        item = {"date": path.stem, "weekday": "一二三四五六日"[date.fromisoformat(path.stem).weekday()],
+                "tone": None, "main": None, "gaps": None, "generated_at": None}
+        try:
+            snap = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            out.append(item)
+            continue
+        jm = snap.get("judgment") or {}
+        main = next((o for o in snap.get("observations", [])
+                     if o["series_id"] == f"SHFE.{variety}.main.settle"), None)
+        item.update({"tone": jm.get("tone"), "gaps": len(snap.get("gaps", [])),
+                     "generated_at": snap.get("generated_at"),
+                     "main": _fmt(main["value"], main["unit"]) if main else None})
+        out.append(item)
+    return out
+
+
+def audit_entries(session: Session, limit: int = 20) -> list[dict]:
+    from tin.models import AuditLog
+    rows = session.scalars(select(AuditLog).where(AuditLog.action == "人工录入")
+                           .order_by(AuditLog.id.desc()).limit(limit)).all()
+    names = {i.series_id: (i.name, i.unit) for i in session.scalars(select(Indicator))}
+    out = []
+    for r in rows:
+        name, unit = names.get(r.target_id, (r.target_id, ""))
+        detail = r.detail or {}
+        as_of = detail.get("as_of")
+        out.append({"as_of": as_of[:16].replace("T", " ") if as_of else "—", "name": name,
+                    "series_id": r.target_id, "value": _fmt(detail.get("value"), unit), "unit": unit,
+                    "actor": r.actor, "note": detail.get("note"), "at": _local(r.at)})
+    return out
