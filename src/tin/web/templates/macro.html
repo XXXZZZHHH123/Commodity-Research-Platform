@@ -3,23 +3,28 @@
 {% block title %}宏观与跨资产 · 锡 SN{% endblock %}
 {% block main %}
 
-<div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[var(--line-strong)]">
+<div id="macro-top" class="macro-top-anchor pb-4 border-b border-[var(--line-strong)]">
   <div>
     <div class="text-[10px] font-bold tracking-widest text-[var(--primary)] uppercase mb-1">MACRO LENS &amp; CROSS-ASSET</div>
     <h1 class="text-2xl font-black tracking-tight">宏观与跨资产镜头</h1>
     <p class="text-xs text-[var(--text-muted)] mt-1">金融条件、实际利率、全球半导体景气与宏观流动性 ｜ 锡已金融化为风险资产的 Beta，短线定价权在这些序列上</p>
   </div>
-  <div class="flex items-center gap-1.5 text-xs flex-wrap">
-    <span class="px-2.5 py-1 rounded bg-[var(--primary)] text-white font-medium">全部 {{ groups | map(attribute='cards') | map('length') | sum }}</span>
-    {% for g in groups %}
-    <a href="#group-{{ loop.index }}" class="px-2.5 py-1 rounded bg-[var(--surface-soft)] text-[var(--text-muted)] hover:text-[var(--text)]">{{ g.name }} {{ g.cards | length }}</a>
-    {% endfor %}
-  </div>
 </div>
 
+<nav class="macro-filter-bar" aria-label="宏观数据分类">
+  <div class="macro-filter-inner bg-[var(--surface)]/95 backdrop-blur-md">
+    <div class="macro-filter-scroll">
+      <a href="#macro-top" data-macro-filter data-target="macro-top" class="macro-filter-link active">全部 {{ groups | map(attribute='cards') | map('length') | sum }}</a>
+      {% for g in groups %}
+      <a href="#group-{{ loop.index }}" data-macro-filter data-target="group-{{ loop.index }}" class="macro-filter-link">{{ g.name }} {{ g.cards | length }}</a>
+      {% endfor %}
+    </div>
+  </div>
+</nav>
+
 {% for g in groups %}
-<section class="space-y-3" id="group-{{ loop.index }}">
-  <div class="flex items-center justify-between gap-3 flex-wrap">
+<section class="macro-anchor space-y-3" id="group-{{ loop.index }}">
+  <div class="macro-group-heading flex items-center gap-3 flex-wrap">
     <h2 class="text-sm font-bold flex items-center gap-2">
       <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">{{ '%02d' | format(loop.index) }}</span>
       {{ g.name }}
