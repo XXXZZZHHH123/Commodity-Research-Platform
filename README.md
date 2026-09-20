@@ -20,6 +20,7 @@ python -m tin.jobs fetch --date 2026-09-18 --only fred_macro  # 单独更新宏�
 python -m tin.jobs backfill --days 14       # 回补近 14 天上期所数据与 VIX
 python -m tin.jobs enter SMM.SN.spot.1 406000 --as-of "2026-09-18 11:30" --by 张三 --note "SMM 1#锡均价"
 uvicorn tin.web.app:app --host 0.0.0.0 --port 8765
+# 批量导入：/sn/entry 页「下载导入模板」→ 填好后「批量导入 Excel」→ 预览确认 → 入库
 pytest
 ```
 

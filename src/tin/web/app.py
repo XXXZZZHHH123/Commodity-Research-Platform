@@ -3,9 +3,9 @@ import io
 import json
 from datetime import date, datetime, time
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
-from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -31,6 +31,8 @@ from tin.export.board import (
     threshold_radar,
     ticker,
 )
+from tin.export.excel import build_import_template
+from tin.ingest import excel_importer
 from tin.ingest.record import RecordError, record
 from tin.judgments.importer import import_text
 from tin.judgments.service import JudgmentError, current, save_version, to_payload
@@ -44,9 +46,8 @@ app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 templates = Jinja2Templates(directory=HERE / "templates")
 
 V = settings.variety
-# 人工录入指标的常规发布时刻，作为快速录入抽屉的 as_of 预填值
-DEFAULT_ENTRY_TIME = {"SMM.SN.spot.1": time(11, 30), "MYSTEEL.SN.stock.social": time(15, 0),
-                      "MYSTEEL.SN.TC.YN40": time(11, 0), "LME.SN.stock": time(19, 0)}
+# 指标未登记默认发布时刻时的兜底值（收盘截点）
+FALLBACK_ENTRY_TIME = time(15, 0)
 
 
 def _num(value, unit: str = "", signed: bool = False) -> str:
@@ -107,7 +108,7 @@ def _manual_indicators(s) -> list[dict]:
                      .order_by(Indicator.category, Indicator.series_id)).all()
     today = datetime.now(SHANGHAI).date()
     return [{"series_id": i.series_id, "name": i.name, "unit": i.unit, "frequency": i.frequency,
-             "default_as_of": datetime.combine(today, DEFAULT_ENTRY_TIME.get(i.series_id, time(15, 0)))
+             "default_as_of": datetime.combine(today, i.default_entry_time or FALLBACK_ENTRY_TIME)
              .strftime("%Y-%m-%dT%H:%M")} for i in rows]
 
 
@@ -272,6 +273,55 @@ def contracts_csv(date: str | None = None):
     buf.seek(0)
     return StreamingResponse(iter([buf.getvalue().encode("utf-8-sig")]), media_type="text/csv",
                              headers={"Content-Disposition": f'attachment; filename="{V}_contracts_{d}.csv"'})
+
+
+# ---------- Excel 批量导入 ----------
+
+XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@app.get("/api/sn/import/template")
+def import_template():
+    with SessionLocal() as s:
+        data = build_import_template(s, V)
+    name = f"{V}_批量导入模板_{datetime.now(SHANGHAI):%Y%m%d}.xlsx"
+    return StreamingResponse(iter([data]), media_type=XLSX_MEDIA,
+                             headers={"Content-Disposition": f'attachment; filename="{quote(name)}"'})
+
+
+@app.post("/api/sn/import/preview")
+async def import_preview(file: UploadFile = File(...), actor: str = Form(...)):
+    if not actor.strip():
+        raise HTTPException(400, "请填写导入操作人")
+    data = await file.read()
+    with SessionLocal() as s:
+        try:
+            return JSONResponse(excel_importer.build_preview(
+                s, data, file.filename or "未命名文件", actor.strip(), V))
+        except excel_importer.ImportError_ as e:
+            raise HTTPException(400, str(e)) from None
+
+
+@app.post("/api/sn/import/commit")
+def import_commit(body: dict = Body(...)):
+    actor = str(body.get("actor", "")).strip()
+    note = str(body.get("default_note", "")).strip()
+    if not actor or not note:
+        raise HTTPException(400, "导入操作人与来源说明均为必填")
+    with SessionLocal() as s:
+        try:
+            result = excel_importer.commit_preview(
+                s, str(body.get("preview_id", "")), list(body.get("selected_row_keys") or []),
+                dict(body.get("column_overrides") or {}), actor, note)
+        except excel_importer.ImportError_ as e:
+            raise HTTPException(400, str(e)) from None
+        s.add(AuditLog(at=datetime.now(SHANGHAI), actor=actor, action="Excel批量导入",
+                       target_type="observation", target_id=str(body.get("preview_id", ""))[:80],
+                       detail={"committed": result["committed"], "revisions": result["revisions"],
+                               "stale": len(result["stale_rows"]), "note": note,
+                               "recalculated_dates": result["recalculated_dates"]}))
+        s.commit()
+        return JSONResponse(result)
 
 
 @app.get("/api/sn/snapshot")

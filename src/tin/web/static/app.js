@@ -25,13 +25,31 @@ document.addEventListener("click", (e) => {
   document.querySelectorAll("[data-popover]").forEach((p) => p.classList.add("hidden"));
 });
 
-function toggleDrawer(open) {
-  const drawer = document.getElementById("quick-drawer");
-  const backdrop = document.getElementById("quick-drawer-backdrop");
+// 抽屉通用开关：支持快速录入、批量导入等多个抽屉共用同一个遮罩
+function toggleDrawer(drawerId, open) {
+  const drawer = document.getElementById(drawerId);
+  const backdrop = document.getElementById("drawer-backdrop");
   if (!drawer) return;
   drawer.classList.toggle("translate-x-full", !open);
-  backdrop.classList.toggle("hidden", !open);
-  if (open) setTimeout(() => document.getElementById("drawer-value").focus(), 320);
+  if (open) {
+    document.querySelectorAll("[data-drawer]").forEach((d) => {
+      if (d.id !== drawerId) d.classList.add("translate-x-full");
+    });
+  }
+  const anyOpen = [...document.querySelectorAll("[data-drawer]")]
+    .some((d) => !d.classList.contains("translate-x-full"));
+  backdrop.classList.toggle("hidden", !anyOpen);
+  // 抽屉打开时锁住主体滚动，避免出现双滚动条
+  document.body.classList.toggle("overflow-hidden", anyOpen);
+  if (open && drawerId === "quick-drawer") {
+    setTimeout(() => document.getElementById("drawer-value").focus(), 320);
+  }
+}
+
+function closeDrawers() {
+  document.querySelectorAll("[data-drawer]").forEach((d) => d.classList.add("translate-x-full"));
+  document.getElementById("drawer-backdrop").classList.add("hidden");
+  document.body.classList.remove("overflow-hidden");
 }
 
 function openDrawerWith(seriesId) {
@@ -40,7 +58,7 @@ function openDrawerWith(seriesId) {
     select.value = seriesId;
     syncDrawerUnit();
   }
-  toggleDrawer(true);
+  toggleDrawer("quick-drawer", true);
 }
 
 function syncDrawerUnit() {
@@ -132,6 +150,157 @@ document.addEventListener("DOMContentLoaded", () => {
   syncDrawerUnit();
   initMacroFilters();
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") toggleDrawer(false);
+    if (e.key === "Escape") closeDrawers();
   });
+});
+
+// ---------- Excel 批量导入 ----------
+
+let importState = null;
+
+function openImportDrawer() {
+  toggleDrawer("import-drawer", true);
+}
+
+function importReset() {
+  importState = null;
+  document.getElementById("import-result").innerHTML = "";
+  document.getElementById("import-commit").disabled = true;
+  document.getElementById("import-file").value = "";
+}
+
+async function importUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const actor = document.getElementById("import-actor").value.trim();
+  if (!actor) {
+    showToast("请先填写导入操作人");
+    input.value = "";
+    return;
+  }
+  const box = document.getElementById("import-result");
+  box.innerHTML = '<div class="py-8 text-center text-[var(--text-muted)]">正在解析文件结构与核验口径…</div>';
+
+  const body = new FormData();
+  body.append("file", file);
+  body.append("actor", actor);
+  try {
+    const res = await fetch("/api/sn/import/preview", { method: "POST", body });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "解析失败");
+    importState = data;
+    importRender();
+  } catch (err) {
+    box.innerHTML = `<div class="p-3 rounded-lg bg-[var(--alert-soft)] text-[var(--alert)]">${err.message}</div>`;
+    document.getElementById("import-commit").disabled = true;
+  }
+}
+
+function importRender() {
+  const d = importState;
+  const options = JSON.parse(document.getElementById("import-options").textContent);
+  const esc = (t) => String(t == null ? "" : t).replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+  const pending = d.columns.filter((c) => c.needs_choice);
+
+  const chip = (label, n, tone) =>
+    `<span class="px-2 py-1 rounded ${tone}">${label} <b class="tabular">${n}</b></span>`;
+  let html = `<div class="flex flex-wrap gap-2 text-[11px] mb-3">
+    ${chip("可导入", d.ready_count, "bg-[var(--primary-soft)] text-[var(--primary)]")}
+    ${chip("将产生修订", d.revision_count, "bg-[var(--amber-soft)] text-[var(--amber)]")}
+    ${chip("相同忽略", d.skipped_count, "bg-[var(--surface-soft)] text-[var(--text-muted)]")}
+    ${chip("异常未导入", d.error_count, "bg-[var(--alert-soft)] text-[var(--alert)]")}
+  </div>`;
+
+  if (pending.length) {
+    html += `<div class="mb-3 p-3 rounded-lg bg-[var(--amber-soft)] text-[11px]">
+      <b class="text-[var(--amber)]">${pending.length} 列需要确认口径后才能导入</b>
+      <div class="text-[var(--text-muted)] mt-0.5">名称匹配无法区分品位与计量口径，请逐列选定。</div>
+      ${pending.map((c) => `<div class="mt-2">
+        <div class="font-semibold">${esc(c.header)}</div>
+        <div class="text-[var(--text-muted)] mb-1">${esc(c.error)}</div>
+        <select data-col="${c.col_key}" onchange="importSyncCommit()" class="w-full px-2 py-1.5 rounded-md">
+          <option value="">— 请选择对应指标 —</option>
+          ${options.map((o) => `<option value="${o.series_id}">${esc(o.name)}（${esc(o.unit)}）— ${o.series_id}</option>`).join("")}
+        </select></div>`).join("")}
+    </div>`;
+  }
+
+  const list = (title, rows, tone, checked, selectable) => {
+    if (!rows.length) return "";
+    return `<details class="mb-2" ${rows.length && selectable ? "open" : ""}>
+      <summary class="cursor-pointer text-xs font-semibold ${tone}">${title}（${rows.length}）</summary>
+      <div class="mt-1 max-h-52 overflow-y-auto text-[11px] divide-y divide-[var(--line)]">
+        ${rows.map((r) => `<label class="flex items-start gap-2 py-1.5">
+          ${selectable ? `<input type="checkbox" class="mt-0.5" data-row="${r.row_key}" ${checked ? "checked" : ""}>` : ""}
+          <span class="flex-1">
+            <span class="tabular">${esc(r.as_of).slice(0, 16).replace("T", " ")}</span>
+            <span class="ml-2">${esc(r.series_id || "—")}</span>
+            <b class="ml-2 tabular">${r.value}</b>
+            ${r.old_value != null ? `<span class="ml-2 text-[var(--amber)]">原值 ${r.old_value} → 新值 ${r.value}</span>` : ""}
+            ${r.warn ? `<div class="text-[var(--amber)]">${esc(r.warn)}</div>` : ""}
+            ${r.reason ? `<div class="text-[var(--alert)]">${esc(r.reason)}</div>` : ""}
+            ${r.time_filled ? '<span class="ml-1 text-[var(--text-muted)]">[时点按登记发布时刻补齐]</span>' : ""}
+          </span></label>`).join("")}
+      </div></details>`;
+  };
+
+  const by = (c) => d.rows.filter((r) => r.category === c);
+  html += list("可导入", by("ready"), "text-[var(--primary)]", true, true);
+  html += list("将产生修订（需逐条确认）", by("revision"), "text-[var(--amber)]", false, true);
+  html += list("异常未导入", by("error"), "text-[var(--alert)]", false, false);
+  if (d.skipped_count) {
+    html += `<div class="text-[11px] text-[var(--text-muted)]">${d.skipped_count} 条与库内数值完全一致，已自动忽略。</div>`;
+  }
+  document.getElementById("import-result").innerHTML = html;
+  importSyncCommit();
+}
+
+function importSyncCommit() {
+  const unresolved = [...document.querySelectorAll("#import-result select[data-col]")]
+    .some((s) => !s.value);
+  const chosen = document.querySelectorAll("#import-result input[data-row]:checked").length;
+  const btn = document.getElementById("import-commit");
+  btn.disabled = unresolved || !chosen;
+  btn.textContent = unresolved ? "请先确认口径" : `确认入库（${chosen} 条）`;
+}
+
+async function importCommit() {
+  const note = document.getElementById("import-note").value.trim();
+  const actor = document.getElementById("import-actor").value.trim();
+  if (!note || !actor) {
+    showToast("导入操作人与来源说明均为必填");
+    return;
+  }
+  const overrides = {};
+  document.querySelectorAll("#import-result select[data-col]").forEach((s) => {
+    if (s.value) overrides[s.dataset.col] = { series_id: s.value };
+  });
+  const keys = [...document.querySelectorAll("#import-result input[data-row]:checked")]
+    .map((c) => c.dataset.row);
+
+  const btn = document.getElementById("import-commit");
+  btn.disabled = true;
+  btn.textContent = "正在入库…";
+  try {
+    const res = await fetch("/api/sn/import/commit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        preview_id: importState.preview_id, selected_row_keys: keys,
+        column_overrides: overrides, actor, default_note: note,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "入库失败");
+    const stale = data.stale_rows.length ? `，${data.stale_rows.length} 条被拦截` : "";
+    showToast(`已入库 ${data.committed} 条${stale}；已重算 ${data.recalculated_dates.length} 个交易日`);
+    setTimeout(() => window.location.reload(), 1200);
+  } catch (err) {
+    showToast(err.message);
+    importSyncCommit();
+  }
+}
+
+document.addEventListener("change", (e) => {
+  if (e.target.matches("#import-result input[data-row]")) importSyncCommit();
 });
