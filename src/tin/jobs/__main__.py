@@ -6,6 +6,7 @@ import logging
 import subprocess
 import sys
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 from tin.compute.engine import compute_day, latest_trade_date
 from tin.config import ROOT, SHANGHAI, settings
@@ -77,6 +78,43 @@ def cmd_backfill(a):
                 compute_day(s, d)
 
 
+def _weekdays(end: date, days: int) -> list[date]:
+    """目标日往前 N 个自然日里的工作日。周末各源都不发布，抓了只是白白 404。"""
+    return [d for d in (end - timedelta(days=i) for i in range(days, -1, -1)) if d.weekday() < 5]
+
+
+def cmd_snap_raw(a):
+    """下载官方源原件并落盘留证。不连数据库，GitHub Actions 上跑的就是这一个命令。"""
+    from tin.ingest.raw import FAILED, snapshot_day
+
+    out = Path(a.out)
+    failed = False
+    for d in _weekdays(_date(a.date), a.days):
+        manifest = snapshot_day(d, out)
+        for name, e in manifest["sources"].items():
+            n = len(e["files"])
+            print(f"{d} {name:18s} {e['status']:4s} {n:2d} 件  {e.get('error') or ''}")
+            failed |= e["status"] == FAILED
+    # 「未发布」是节假日的正常结果，不算失败；只有真实故障才让 workflow 变红
+    sys.exit(1 if failed else 0)
+
+
+def cmd_import_raw(a):
+    """回放留证原件入库。与当天在线跑 fetch 等价，且可重复执行。"""
+    from tin.ingest.raw import replay_day
+
+    raw = Path(a.raw)
+    with SessionLocal() as s:
+        for d in _weekdays(_date(a.date), a.days):
+            if not (raw / "manifest" / f"{d.isoformat()}.json").exists():
+                print(f"{d} 无留证，跳过")
+                continue
+            runs = replay_day(s, d, raw)
+            print(f"{d} " + "  ".join(f"{r.fetcher}={r.status}({r.written})" for r in runs))
+            if any(r.fetcher == "shfe_quotes" and r.status == "ok" for r in runs):
+                compute_day(s, d)
+
+
 def cmd_enter(a):
     with SessionLocal() as s:
         ind = s.get(Indicator, a.series_id)
@@ -107,6 +145,16 @@ def main():
     sp.add_argument("--days", type=int, default=10)
     sp.add_argument("--date")
     sp.set_defaults(fn=cmd_backfill)
+    sp = sub.add_parser("snap-raw", help="下载官方源原件留证（不入库）")
+    sp.add_argument("--out", default=str(ROOT / "raw"), help="留证根目录")
+    sp.add_argument("--days", type=int, default=0, help="连同前 N 个自然日一起抓，用于补漏")
+    sp.add_argument("--date")
+    sp.set_defaults(fn=cmd_snap_raw)
+    sp = sub.add_parser("import-raw", help="回放留证原件入库并计算派生值")
+    sp.add_argument("--raw", default=str(ROOT / "raw"), help="留证根目录")
+    sp.add_argument("--days", type=int, default=7)
+    sp.add_argument("--date")
+    sp.set_defaults(fn=cmd_import_raw)
     sp = sub.add_parser("enter", help="人工录入一条观测")
     sp.add_argument("series_id")
     sp.add_argument("value", type=float)

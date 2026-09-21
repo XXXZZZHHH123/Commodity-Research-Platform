@@ -21,6 +21,8 @@ python -m tin.jobs backfill --days 14       # 回补近 14 天上期所数据与
 python -m tin.jobs enter SMM.SN.spot.1 406000 --as-of "2026-09-18 11:30" --by 张三 --note "SMM 1#锡均价"
 uvicorn tin.web.app:app --host 0.0.0.0 --port 8765
 # 批量导入：/sn/entry 页「下载导入模板」→ 填好后「批量导入 Excel」→ 预览确认 → 入库
+python -m tin.jobs snap-raw --out .rawstore/raw --days 3   # 下载官方源原件留证（不入库，GitHub Actions 跑的就是它）
+python -m tin.jobs import-raw --raw .rawstore/raw --days 7 # 回放原件入库并计算派生值，可重复执行
 pytest
 ```
 
@@ -30,6 +32,15 @@ pytest
 30 16 * * 1-5  cd /path/to/tin_display && /path/to/envs/tin/bin/python -m tin.jobs daily >> logs/daily.log 2>&1
 0  8  * * 1-5  cd /path/to/tin_display && /path/to/envs/tin/bin/python -m tin.jobs daily >> logs/daily.log 2>&1
 ```
+
+## 自动取数（GitHub Actions）
+
+`.github/workflows/` 下三个 workflow：`ci` 跑测试与合规断言，`probe-sources` 手动探测各官方源在
+GitHub runner 上的可达性，`fetch-raw` 每个交易日定时下载原件并提交到 `data-raw` 分支。
+
+Actions 只负责「抓到并留证」，**不碰数据库**——事实库里有人工录入的授权数据，不能出网。
+本机再用 `import-raw` 回放原件入库，结果与当天在线跑 `daily` 等价，且可重复执行。
+方案与落地步骤见 `docs/GitHub_Actions自动取数方案.md`。
 
 ## 数据源
 

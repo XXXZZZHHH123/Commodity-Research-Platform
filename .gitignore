@@ -13,3 +13,7 @@ build/
 dist/
 
 .venv
+
+# 原件留证只存在于 data-raw 分支与本地工作副本，不进 main
+raw/
+.rawstore/

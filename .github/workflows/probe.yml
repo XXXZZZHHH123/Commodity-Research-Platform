@@ -1,0 +1,31 @@
+name: probe-sources
+
+# 手动触发的探针：回答「GitHub 的机器够不够得着上期所与外汇交易中心」。
+# 只打印状态码与首行内容，不写任何数据，也不产生任何提交。
+on: workflow_dispatch
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 探测各官方源的可达性
+        run: |
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36'
+          D=$(TZ=Asia/Shanghai date +%Y%m%d)
+          B=https://www.shfe.com.cn/data/tradedata/future
+          probe() {  # 名称 方法 URL [是否带 UA]
+            hdr=(-A "$UA"); [ "$4" = "no-ua" ] && hdr=()
+            code=$(curl -sL -o /tmp/p -w '%{http_code}' -X "$2" "${hdr[@]}" --max-time 30 "$3" || echo 000)
+            printf '%-18s %s %9s bytes  %s\n' "$1" "$code" "$(stat -c%s /tmp/p)" "$(head -c 100 /tmp/p | tr -d '\n')"
+          }
+          echo "目标日 $D（北京时间）"
+          probe shfe_quotes        GET  "$B/dailydata/kx$D.dat"
+          probe shfe_warrant       GET  "$B/stockdata/dailystock_$D/ZH/all.html"
+          probe shfe_weekly_stock  GET  "$B/stockdata/weeklystock_$D/ZH/all.html"
+          probe cfets_fx           POST 'https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/fx/ccpr.json'
+          probe cboe_vix           GET  'https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv'
+          # FRED 不带 UA：带浏览器 UA 的并发请求会被挂住
+          probe fred_macro         GET  'https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS2&cosd=2026-08-01&coed=2026-09-18' no-ua
+          echo
+          echo "判读：200 且体量与本地实测同量级（kx 约 120KB、ccpr 约 11KB）即通过。"
+          echo "若 SHFE / CFETS 返回 403、被重定向到验证页或超时，按方案 §7 改走境内外拆线或 self-hosted runner。"

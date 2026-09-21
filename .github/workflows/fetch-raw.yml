@@ -1,0 +1,85 @@
+name: fetch-raw
+
+# 每个交易日按时下载官方源原件，原样提交到 data-raw 分支留证。
+# 本机再用 `python -m tin.jobs import-raw` 回放入库——Actions 永远不碰数据库。
+on:
+  schedule:
+    # cron 用 UTC；北京时间减 8 小时。分钟刻意避开整点，那是 GitHub 调度最拥挤的时候。
+    - cron: '43 1 * * 1-5'   # 09:43 北京 —— 中间价发布后。该接口只给当日值，错过就永久丢失
+    - cron: '17 9 * * 1-5'   # 17:17 北京 —— 上期所日行情与仓单发布后
+    - cron: '23 23 * * 0-4'  # 07:23 北京（次日）—— 美东收盘后的 FRED 与 VIX
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 连同前 N 个自然日一起抓（补漏用）
+        default: '3'
+
+concurrency:
+  group: fetch-raw          # 三个时段若因调度延迟撞车，串行执行，不并发写同一分支
+  cancel-in-progress: false
+
+permissions:
+  contents: write           # 仅用于提交 data-raw 分支
+  issues: write             # 真实故障时开 issue
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: data-raw
+          path: .rawstore
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt && pip install -e .
+
+      - name: 抓取原件
+        # 每次都额外回补前几日：GitHub 的定时会延迟、偶尔漏跑，而 record() 是幂等的，
+        # 多抓几天永远安全。退出码只在真实故障时非 0，节假日的「未发布」不算。
+        run: |
+          python -m tin.jobs snap-raw \
+            --out .rawstore/raw \
+            --days "${{ github.event.inputs.days || 3 }}"
+
+      - name: 提交留证
+        working-directory: .rawstore
+        run: |
+          git config user.name  'tin-bot'
+          git config user.email 'tin-bot@users.noreply.github.com'
+          git add raw
+          if git diff --cached --quiet; then
+            echo '无新增原件，跳过提交'
+            exit 0
+          fi
+          git commit -m "raw: $(TZ=Asia/Shanghai date +'%F %H:%M') 自动留证"
+          git push
+
+      - name: 失败时开 issue
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = '取数失败：' + new Date().toISOString().slice(0, 10);
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: 'fetch-failure',
+            });
+            const body = `[\`${context.runId}\`](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) 失败。\n\n` +
+              '「未发布」不会触发本 issue，所以这是一次真实故障：源站改版、网络不可达，或解析不通过。';
+            // 已有未关闭的同类 issue 就追加评论，避免连续失败刷屏
+            if (open.length) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: open[0].number, body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body, labels: ['fetch-failure'],
+              });
+            }
