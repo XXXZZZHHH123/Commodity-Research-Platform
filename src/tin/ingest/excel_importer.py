@@ -81,10 +81,8 @@ def _norm(text: str) -> str:
 def _decode_csv(data: bytes) -> str:
     if data.startswith(b"\xef\xbb\xbf"):
         return data[3:].decode("utf-8")
-    # 先按 UTF-8 严格解码：GBK 内容会在此失败，再交给探测器。
-    # 反过来把探测结果放在首位时，短样本容易被猜成别的 8 位编码，解出乱码却不报错。
     # 顺序按方案 §3.1.3：UTF-8 严格解码 → GB18030（中文环境主力编码）→ 探测器 → 兜底。
-    # 探测器放前面时，短样本容易被猜成其它 CJK 编码，能解码但全是乱码。
+    # 探测器不能放在首位：短样本容易被猜成其它 CJK 编码，能解码但全是乱码且不报错。
     guess = from_bytes(data[:10240]).best()
     for encoding in ["utf-8", "gb18030"] + ([guess.encoding] if guess else []) + ["latin-1"]:
         try:

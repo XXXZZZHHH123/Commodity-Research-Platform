@@ -9,10 +9,6 @@ from sqlalchemy import select
 
 from tin.config import SHANGHAI
 from tin.ingest.excel_importer import (
-    ERROR,
-    READY,
-    REVISION,
-    SKIP,
     ImportError_,
     build_preview,
     commit_preview,
@@ -21,7 +17,7 @@ from tin.ingest.excel_importer import (
     parse_value,
     read_table,
 )
-from tin.models import AuditLog, ImportPreview, Indicator, Observation
+from tin.models import ImportPreview, Indicator, Observation
 
 
 def xlsx(rows) -> bytes:
