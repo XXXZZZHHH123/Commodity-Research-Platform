@@ -90,16 +90,45 @@ def test_ok_derived_value_is_written_with_number_format(loaded):
 
 # ---------- 低频对齐，禁止前向填充 ----------
 
-def test_weekly_series_is_blank_on_non_publish_days(loaded):
-    cols = [Column("trade_date", "交易日", "meta"),
+def _weekly_scenario(session):
+    """9/10–9/18 为交易日，周库存只在 9/11 与 9/18 两个周五有值。"""
+    from tin.ingest.record import record
+    from tin.schemas.caliber import Caliber
+    from tin.schemas.observation import ObservationIn
+    for day, seq in ((10, 166), (11, 167), (14, 168), (15, 169), (16, 170)):
+        if session.get(TradingDay, f"2026-09-{day}") is None:
+            session.add(TradingDay(trade_date=f"2026-09-{day}", year=2026, year_seq=seq))
+    for day, value in ((11, 7652), (18, 7059)):
+        record(session, ObservationIn(
+            series_id="SHFE.SN.stock.weekly", value=value,
+            as_of=datetime(2026, 9, day, 15, tzinfo=SHANGHAI),
+            caliber=Caliber(time_type="交易时点", stock_scope="交易所库存"), source="SHFE"))
+    session.commit()
+    return [Column("trade_date", "交易日", "meta"),
             Column("SHFE.SN.stock.weekly", "周库存", "observation")]
-    ws = sheet(build_export(loaded, "SN", cols, actor="张三")[0])
-    values = [v for v in cells(ws, 2) if v is not None]
-    assert len(values) == 1, "周库存只在发布日有值，其余交易日必须留空"
 
-    blanks = [ws.cell(row=r, column=2) for r in range(2, ws.max_row + 1)
-              if ws.cell(row=r, column=2).value is None]
-    assert blanks and all("非发布日" in c.comment.text for c in blanks)
+
+def test_weekly_series_is_blank_on_non_publish_days(loaded):
+    """覆盖区间之内的非发布日必须留空并注明，不得沿用前值。"""
+    ws = sheet(build_export(loaded, "SN", _weekly_scenario(loaded), actor="张三")[0])
+    assert [v for v in cells(ws, 2) if v is not None] == [7059, 7652]
+
+    inside = [ws.cell(row=r, column=2) for r in range(2, ws.max_row + 1)
+              if ws.cell(row=r, column=2).value is None
+              and "2026-09-11" < ws.cell(row=r, column=1).value < "2026-09-18"]
+    assert inside and all("非发布日" in c.comment.text for c in inside)
+
+
+def test_dates_before_a_series_starts_are_not_annotated(loaded):
+    """长跨度导出时，指标尚未开始的那段留白不逐格批注，改在说明页写明覆盖区间。"""
+    data = build_export(loaded, "SN", _weekly_scenario(loaded), actor="张三")[0]
+    ws = sheet(data)
+    before = next(ws.cell(row=r, column=2) for r in range(2, ws.max_row + 1)
+                  if ws.cell(row=r, column=1).value == "2026-09-10")
+    assert before.value is None and before.comment is None
+
+    text = "\n".join(str(c.value) for row in sheet(data, 1).iter_rows() for c in row if c.value)
+    assert "本区间数据覆盖" in text and "2026-09-11 至 2026-09-18" in text
 
 
 def test_monthly_value_on_non_trading_day_is_carried_to_next_trade_date(loaded):

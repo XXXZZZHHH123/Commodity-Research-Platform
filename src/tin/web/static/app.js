@@ -362,6 +362,52 @@ function exportUndo() {
   showToast("已恢复到模板初始配置");
 }
 
+function exportSelectAll(on) {
+  const keep = exportState.selected.filter((c) => c.field === "trade_date");
+  exportState.selected = on
+    ? exportState.groups.flatMap((g) => g.fields.map((f) => ({ field: f.field, label: f.label, kind: f.kind })))
+    : keep;
+  exportRender();
+}
+
+function exportToggleGroup(groupIndex, on) {
+  const group = exportState.groups[groupIndex];
+  const inGroup = new Set(group.fields.map((f) => f.field));
+  exportState.selected = exportState.selected.filter((c) => !inGroup.has(c.field) || c.field === "trade_date");
+  if (on) {
+    group.fields.forEach((f) => {
+      if (!exportState.selected.some((c) => c.field === f.field)) {
+        exportState.selected.push({ field: f.field, label: f.label, kind: f.kind });
+      }
+    });
+  }
+  exportRender();
+}
+
+let exportDragFrom = null;
+
+function exportDragStart(index, event) {
+  exportDragFrom = index;
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", String(index));
+}
+
+function exportDragOver(index, event) {
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+}
+
+function exportDrop(index, event) {
+  event.preventDefault();
+  const from = exportDragFrom ?? Number(event.dataTransfer.getData("text/plain"));
+  exportDragFrom = null;
+  if (from === null || Number.isNaN(from) || from === index) return;
+  const list = exportState.selected;
+  const [moved] = list.splice(from, 1);
+  list.splice(index, 0, moved);
+  exportRender();
+}
+
 function exportRender() {
   const esc = (t) => String(t == null ? "" : t).replace(/[<>&"]/g, (c) =>
     ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
@@ -385,8 +431,11 @@ function exportRender() {
     ${tpl ? `<button type="button" onclick="exportDelete()" class="px-2 py-1.5 text-xs rounded-md text-[var(--alert)] hover:bg-[var(--alert-soft)]">删除</button>` : ""}`;
 
   document.getElementById("export-pills").innerHTML = exportState.selected.map((c, i) => `
-    <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--primary-soft)] text-[var(--primary)] text-[11px]">
-      <b class="tabular">${i + 1}.</b>${esc(c.label)}
+    <span draggable="true" title="可拖拽调序，或用 ◀ ▶ 按键"
+          ondragstart="exportDragStart(${i}, event)" ondragover="exportDragOver(${i}, event)"
+          ondrop="exportDrop(${i}, event)"
+          class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--primary-soft)] text-[var(--primary)] text-[11px] cursor-grab active:cursor-grabbing">
+      <span class="opacity-50">⠿</span><b class="tabular">${i + 1}.</b>${esc(c.label)}
       ${c.field === "trade_date" ? "" : `
         <button type="button" onclick="exportMove(${i}, -1)" ${i === 0 ? "disabled" : ""} class="disabled:opacity-30" title="前移">◀</button>
         <button type="button" onclick="exportMove(${i}, 1)" ${i === exportState.selected.length - 1 ? "disabled" : ""} class="disabled:opacity-30" title="后移">▶</button>
@@ -396,8 +445,13 @@ function exportRender() {
   const chosen = new Set(exportState.selected.map((c) => c.field));
   document.getElementById("export-groups").innerHTML = exportState.groups.map((g, gi) => {
     const picked = g.fields.filter((f) => chosen.has(f.field)).length;
+    const allOn = picked === g.fields.length;
     return `<details class="border-b border-[var(--line)] py-1.5" ${gi < 2 ? "open" : ""}>
-      <summary class="cursor-pointer text-xs font-semibold">${esc(g.name)}
+      <summary class="cursor-pointer text-xs font-semibold flex items-center gap-1.5">
+        <input type="checkbox" onclick="event.preventDefault(); exportToggleGroup(${gi}, ${!allOn})"
+               ${allOn ? "checked" : ""} ${picked && !allOn ? "data-partial" : ""}
+               title="${allOn ? "清空本组" : "全选本组"}">
+        <span>${esc(g.name)}</span>
         <span class="text-[var(--text-muted)] font-normal tabular">(${picked}/${g.fields.length})</span></summary>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-1 mt-1.5">
         ${g.fields.map((f) => `<label class="flex items-start gap-1.5 text-[11px] py-0.5">
@@ -408,6 +462,12 @@ function exportRender() {
             ${f.note ? `<div class="text-[var(--text-muted)]">${esc(f.note)}</div>` : ""}</span></label>`).join("")}
       </div></details>`;
   }).join("");
+
+  document.getElementById("export-custom-dates").classList.toggle(
+    "hidden", document.getElementById("export-range").value !== "custom");
+  document.querySelectorAll("#export-groups input[data-partial]").forEach((box) => {
+    box.indeterminate = true;  // 半选：本组只勾了一部分
+  });
 }
 
 function exportPayload() {

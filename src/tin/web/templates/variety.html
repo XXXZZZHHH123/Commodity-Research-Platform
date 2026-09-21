@@ -21,7 +21,7 @@
       <div class="text-xl font-bold tabular {{ 'text-[var(--amber)]' if gaps else '' }}">{{ gaps | length }}</div>
       <div class="text-[11px] text-[var(--text-muted)]">待录入缺口</div>
     </div>
-    <button onclick="openExportDrawer()" class="px-3 py-1.5 text-xs font-semibold rounded border border-[var(--line)] hover:bg-[var(--surface-soft)] whitespace-nowrap">自定义导出 Excel</button>
+    <button onclick="openExportDrawer()" class="px-3 py-1.5 text-xs font-semibold rounded bg-[var(--primary)] text-white hover:bg-[var(--primary-hover)] shadow-sm whitespace-nowrap">自定义导出 Excel</button>
   </div>
 </div>
 
@@ -261,7 +261,13 @@
     </div>
 
     <div>
-      <div class="text-[11px] font-semibold text-[var(--text-muted)] mb-1">可选字段（按指标类别分组）</div>
+      <div class="flex items-center justify-between gap-2 mb-1">
+        <span class="text-[11px] font-semibold text-[var(--text-muted)]">可选字段（按指标类别分组）</span>
+        <span class="flex items-center gap-1 text-[11px]">
+          <button type="button" onclick="exportSelectAll(true)" class="px-1.5 py-0.5 rounded hover:bg-[var(--surface-soft)] text-[var(--primary)]">全选</button>
+          <button type="button" onclick="exportSelectAll(false)" class="px-1.5 py-0.5 rounded hover:bg-[var(--surface-soft)] text-[var(--text-muted)]">清空</button>
+        </span>
+      </div>
       <div id="export-groups" class="border-t border-[var(--line)]"></div>
     </div>
 
@@ -273,8 +279,11 @@
       <label class="block"><span class="font-semibold">数据区间</span>
         <select id="export-range" onchange="exportRender()" class="mt-1 w-full px-2 py-1.5 rounded-md">
           <option value="recent_30_trade_days">最近 30 个交易日</option>
-          <option value="recent_60_trade_days">最近 60 个交易日</option>
-          <option value="recent_120_trade_days">最近 120 个交易日</option>
+          <option value="recent_90_trade_days">最近 90 个交易日（约一季度）</option>
+          <option value="recent_180_trade_days">最近 180 个交易日（约半年）</option>
+          <option value="recent_1y">最近一年</option>
+          <option value="recent_2y">最近两年</option>
+          <option value="recent_5y">最近五年</option>
           <option value="custom">自定义起止日期</option>
         </select></label>
       <label class="block"><span class="font-semibold">数据排序</span>
@@ -282,10 +291,12 @@
           <option value="desc">按日期倒序（最新在前）</option>
           <option value="asc">按日期正序</option>
         </select></label>
-      <label class="block"><span class="font-semibold">起始日期</span>
-        <input id="export-start" type="date" class="mt-1 w-full px-2 py-1.5 rounded-md tabular"></label>
-      <label class="block"><span class="font-semibold">结束日期</span>
-        <input id="export-end" type="date" class="mt-1 w-full px-2 py-1.5 rounded-md tabular"></label>
+      <div id="export-custom-dates" class="col-span-2 hidden grid grid-cols-2 gap-2">
+        <label class="block"><span class="font-semibold">起始日期</span>
+          <input id="export-start" type="date" class="mt-1 w-full px-2 py-1.5 rounded-md tabular"></label>
+        <label class="block"><span class="font-semibold">结束日期</span>
+          <input id="export-end" type="date" class="mt-1 w-full px-2 py-1.5 rounded-md tabular"></label>
+      </div>
       <label class="block col-span-2"><span class="font-semibold">导出人姓名</span>
         <span class="text-[var(--text-muted)]">（必填，用于合规审计）</span>
         <input id="export-actor" type="text" required class="mt-1 w-full px-2 py-1.5 rounded-md"></label>

@@ -34,7 +34,10 @@ COMPLIANCE_TEXT = ("【内部投研参考 严禁外发】本表含 SMM / Mysteel
 NUMBER_FORMATS = {"元/吨": "#,##0", "吨": "#,##0", "实物吨": "#,##0", "手": "#,##0",
                   "元": "0.0000", "%": "0.00", "点": "#,##0.00", "指数": "#,##0.00"}
 
-DATE_RANGES = {"recent_30_trade_days": 30, "recent_60_trade_days": 60, "recent_120_trade_days": 120}
+DATE_RANGES = {"recent_30_trade_days": 30, "recent_90_trade_days": 90, "recent_180_trade_days": 180,
+               "recent_1y": 250, "recent_2y": 500, "recent_5y": 1250,
+               # 旧键：已存模板可能仍在使用
+               "recent_60_trade_days": 60, "recent_120_trade_days": 120}
 
 
 @dataclass
@@ -82,10 +85,15 @@ def _trade_dates(session: Session, date_range: str, start: str | None, end: str 
     return rows[-DATE_RANGES.get(date_range, 30):]
 
 
-def _observation_series(session: Session, series_id: str, dates: list[date]) -> dict[date, dict]:
-    """把观测落到交易日行上。非发布日留空（禁止 ffill）；as_of 非交易日则顺延到下一个交易日。"""
+def _observation_series(session: Session, series_id: str,
+                        dates: list[date]) -> tuple[dict[date, dict], tuple[date, date] | None]:
+    """把观测落到交易日行上。非发布日留空（禁止 ffill）；as_of 非交易日则顺延到下一个交易日。
+
+    同时返回该指标在本次区间内的数据覆盖起止：覆盖区间之外的留白不写批注，
+    否则导出长跨度时会出现成千上万条毫无信息量的"数据缺失"批注。
+    """
     if not dates:
-        return {}
+        return {}, None
     lo = datetime.combine(dates[0] - timedelta(days=95), datetime.min.time()).replace(tzinfo=SHANGHAI)
     hi = datetime.combine(dates[-1] + timedelta(days=1), datetime.min.time()).replace(tzinfo=SHANGHAI)
     rows = session.scalars(
@@ -103,7 +111,8 @@ def _observation_series(session: Session, series_id: str, dates: list[date]) -> 
         if later:  # 月度数据 as_of 常落在非交易日的月末
             out[later[0]] = {"value": obs.value,
                              "note": f"[顺延对齐] 原始数据时点 as_of 为 {on}（非交易日），顺延对齐至本交易日"}
-    return out
+    coverage = (min(out), max(out)) if out else None
+    return out, coverage
 
 
 def _derived_series(session: Session, variety: str, formula_id: str, dates: list[date]) -> dict[date, dict]:
@@ -146,9 +155,10 @@ def _judgment_series(session: Session, variety: str, dates: list[date], field: s
 
 # ---------- 生成 ----------
 
-def _resolve(session: Session, variety: str, columns: list[Column], dates: list[date]) -> tuple[dict, list[str]]:
+def _resolve(session: Session, variety: str, columns: list[Column],
+             dates: list[date]) -> tuple[dict, list[str], dict]:
     known = {i.series_id: i for i in session.scalars(select(Indicator))}
-    data, skipped = {}, []
+    data, skipped, coverage = {}, [], {}
     for col in columns:
         if col.kind == "meta":
             continue
@@ -157,7 +167,7 @@ def _resolve(session: Session, variety: str, columns: list[Column], dates: list[
             if ind is None or ind.status != "可用":
                 skipped.append(col.field)  # 模板引用了已停用/已删除的指标：跳过而不是报错
                 continue
-            data[col.field] = _observation_series(session, col.field, dates)
+            data[col.field], coverage[col.field] = _observation_series(session, col.field, dates)
         elif col.kind == "derived":
             if col.field not in REGISTRY:
                 skipped.append(col.field)
@@ -165,7 +175,7 @@ def _resolve(session: Session, variety: str, columns: list[Column], dates: list[
             data[col.field] = _derived_series(session, variety, col.field, dates)
         else:
             data[col.field] = _judgment_series(session, variety, dates, col.field)
-    return data, skipped
+    return data, skipped, coverage
 
 
 def _header_label(col: Column, known: dict) -> str:
@@ -180,7 +190,7 @@ def build_export(session: Session, variety: str, columns: list[Column], *, date_
                  start_date: str | None = None, end_date: str | None = None,
                  sort_order: str = "desc", actor: str = "") -> tuple[bytes, dict]:
     dates = _trade_dates(session, date_range, start_date, end_date)
-    data, skipped = _resolve(session, variety, columns, dates)
+    data, skipped, coverage = _resolve(session, variety, columns, dates)
     known = {i.series_id: i for i in session.scalars(select(Indicator))}
     columns = [c for c in columns if c.kind == "meta" or c.field not in skipped]
 
@@ -206,7 +216,9 @@ def build_export(session: Session, variety: str, columns: list[Column], *, date_
                 continue
             point = data.get(col.field, {}).get(d)
             if point is None:
-                cell.comment = Comment(_absent_note(session, col, known, d), "系统")
+                note = _absent_note(col, known, d, coverage.get(col.field))
+                if note:
+                    cell.comment = Comment(note, "系统")
                 continue
             cell.value = point["value"]
             if isinstance(point["value"], (int, float)):
@@ -221,7 +233,7 @@ def build_export(session: Session, variety: str, columns: list[Column], *, date_
         ws.column_dimensions[ws.cell(row=1, column=idx).column_letter].width = max(
             14, min(30, len(_header_label(col, known)) + 6))
 
-    _write_dictionary(wb, session, variety, columns, known, skipped, dates, actor)
+    _write_dictionary(wb, session, variety, columns, known, skipped, dates, actor, coverage)
     buf = io.BytesIO()
     wb.save(buf)
 
@@ -232,8 +244,14 @@ def build_export(session: Session, variety: str, columns: list[Column], *, date_
                             "range": [ordered[-1].isoformat(), ordered[0].isoformat()] if ordered else []}
 
 
-def _absent_note(session: Session, col: Column, known: dict, d: date) -> str:
-    """空单元格必须说明它为什么空：阻断、未计算、还是没取到数——三者含义完全不同。"""
+def _absent_note(col: Column, known: dict, d: date, coverage: tuple[date, date] | None) -> str | None:
+    """空单元格必须说明它为什么空：阻断、未计算、还是没取到数——三者含义完全不同。
+
+    但该指标还没开始有数据的那段留白不逐格批注（长跨度导出会产生上千条无信息量批注），
+    改在说明页统一写明数据自何时起可用。
+    """
+    if coverage and not (coverage[0] <= d <= coverage[1]):
+        return None
     if col.kind == "derived":
         return "[未计算] 该交易日尚未执行派生计算"
     if col.kind == "judgment":
@@ -246,14 +264,15 @@ def _absent_note(session: Session, col: Column, known: dict, d: date) -> str:
 
 
 def _write_dictionary(wb: Workbook, session: Session, variety: str, columns: list[Column],
-                      known: dict, skipped: list[str], dates: list[date], actor: str) -> None:
+                      known: dict, skipped: list[str], dates: list[date], actor: str,
+                      coverage: dict | None = None) -> None:
     ws = wb.create_sheet("口径与合规说明")
     ws.append([COMPLIANCE_TEXT])
     ws["A1"].font, ws["A1"].fill = WARN_FONT, WARN_FILL
     ws.append([f"导出人：{actor or '—'}　导出时间：{datetime.now(SHANGHAI):%Y-%m-%d %H:%M}　"
                f"数据区间：{dates[0] if dates else '—'} 至 {dates[-1] if dates else '—'}　共 {len(dates)} 个交易日"])
     ws.append([])
-    ws.append(["列名", "代码", "口径", "单位", "来源", "频率", "取数方式"])
+    ws.append(["列名", "代码", "口径", "单位", "来源", "频率", "取数方式", "本区间数据覆盖"])
     for cell in ws[4]:
         cell.fill, cell.font = HEADER_FILL, HEADER_FONT
 
@@ -261,8 +280,10 @@ def _write_dictionary(wb: Workbook, session: Session, variety: str, columns: lis
         if col.kind == "observation":
             ind = known[col.field]
             caliber = " · ".join(str(v) for k, v in ind.caliber.items() if k != "note")
+            span = (coverage or {}).get(col.field)
             ws.append([ind.name, col.field, caliber, ind.unit, ind.source, ind.frequency,
-                       "人工录入" if ind.fetch_mode == "manual" else "自动采集"])
+                       "人工录入" if ind.fetch_mode == "manual" else "自动采集",
+                       f"{span[0]} 至 {span[1]}" if span else "本区间内无数据"])
         elif col.kind == "derived":
             spec = REGISTRY[col.field]
             ws.append([spec.name, col.field, f"{spec.expression}；容差：{spec.tolerance}",
@@ -280,7 +301,8 @@ def _write_dictionary(wb: Workbook, session: Session, variety: str, columns: lis
     if skipped:
         ws.append([])
         ws.append([f"以下指标已停用或不存在，本次导出已略过：{'、'.join(skipped)}"])
-    for width, letter in ((30, "A"), (26, "B"), (52, "C"), (10, "D"), (14, "E"), (8, "F"), (12, "G")):
+    for width, letter in ((30, "A"), (26, "B"), (52, "C"), (10, "D"), (14, "E"), (8, "F"),
+                          (12, "G"), (24, "H")):
         ws.column_dimensions[letter].width = width
 
 

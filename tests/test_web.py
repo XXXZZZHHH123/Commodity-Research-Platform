@@ -39,3 +39,37 @@ def test_static_assets_carry_a_version_fingerprint(tmp_path, monkeypatch):
         assert web.static_version() != first, "静态文件变化后指纹必须随之变化"
     finally:
         os.utime(js, (original, original))
+
+
+def test_every_inline_handler_resolves_to_a_real_function():
+    """模板里 onclick/onchange 绑定的函数必须真的存在。
+
+    否则页面渲染正常、按钮也在，点下去却毫无反应，控制台外没有任何提示——
+    这个哑失败在自定义导出上已经发生过一次。
+    """
+    import re
+
+    from tin.web import app as web
+
+    sources = [(web.HERE / "static" / "app.js").read_text(encoding="utf-8")]
+    attrs: list[tuple[str, str]] = []
+    for tpl in sorted((web.HERE / "templates").glob("*.html")):
+        text = tpl.read_text(encoding="utf-8")
+        sources.extend(re.findall(r"<script\b[^>]*>(.*?)</script>", text, re.S))
+        attrs += [(tpl.name, v) for v in re.findall(r'\son\w+="([^"]*)"', text)]
+    # 模板里 `${...}` 内嵌的字符串同样会被浏览器当成处理器执行
+    for src in list(sources):
+        attrs += [("app.js", v) for v in re.findall(r'\son\w+="([^"]*)"', src)]
+
+    defined = set()
+    for src in sources:
+        defined |= set(re.findall(r"(?:^|\n)\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)", src))
+        defined |= set(re.findall(r"(?:^|\n)\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=", src))
+    builtin = {"event", "window", "alert", "confirm", "this", "return", "if", "typeof"}
+
+    missing = set()
+    for where, value in attrs:
+        for name in re.findall(r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(", value):
+            if name not in defined and name not in builtin:
+                missing.add(f"{where}: {name}()")
+    assert not missing, f"事件绑定指向不存在的函数：{sorted(missing)}"
