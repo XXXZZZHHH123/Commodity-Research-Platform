@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from tin.caliber.dictionary import DIMENSIONS
 from tin.compute.engine import compute_day, latest_trade_date
@@ -137,6 +137,14 @@ def _shell(s, nav: str, d: date | None = None, **extra) -> dict:
 @app.get("/")
 def root():
     return RedirectResponse(f"/{V.lower()}")
+
+
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    """Deployment health check: the process and its configured database must both work."""
+    with SessionLocal() as s:
+        s.execute(text("SELECT 1"))
+    return {"status": "ok"}
 
 
 @app.get("/sn")

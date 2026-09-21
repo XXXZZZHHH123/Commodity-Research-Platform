@@ -1,0 +1,69 @@
+name: CI and deploy
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -e .
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Verify migrations and application import
+        env:
+          TIN_DATABASE_URL: sqlite:///${{ runner.temp }}/tin-ci.db
+        run: |
+          python -m alembic upgrade head
+          python -c "from tin.web.app import app; assert app.title"
+
+  deploy:
+    name: Deploy production
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: [self-hosted, linux, x64, commodity-production]
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_URL }}
+    concurrency:
+      group: commodity-production
+      cancel-in-progress: false
+    steps:
+      - name: Check out tested revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Deploy atomically
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: bash deploy/deploy.sh

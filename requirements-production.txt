@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# Production PostgreSQL driver. SQLite remains available for single-host trials.
+psycopg[binary]>=3.2
