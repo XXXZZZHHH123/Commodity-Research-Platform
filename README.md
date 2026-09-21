@@ -24,12 +24,28 @@ uvicorn tin.web.app:app --host 0.0.0.0 --port 8765
 pytest
 ```
 
-## 定时任务（内网服务器 crontab）
+服务器直连不到的数据源，走离线搬运（见「数据源」一节）：
+
+```bash
+python -m tin.jobs snap-raw  --out raw --days 3   # 在能上网的机器上下载原件，不碰数据库
+python -m tin.jobs import-raw --raw raw --days 7  # 把 raw/ 拷到服务器后回放入库，可重复执行
+```
+
+## 定时取数
+
+取数跑在服务器自己身上，由 systemd timer 调度（工作日 08:00 与 16:30，见
+`deploy/container/systemd/`）。16:30 那次取当日行情与仓单，08:00 那次主要补隔夜的
+FRED 与 VIX——当天的上期所文件那会儿还没挂出来，属正常「未发布」。
+
+不走部署脚本的机器用 crontab 等价：
 
 ```cron
 30 16 * * 1-5  cd /path/to/tin_display && /path/to/envs/tin/bin/python -m tin.jobs daily >> logs/daily.log 2>&1
 0  8  * * 1-5  cd /path/to/tin_display && /path/to/envs/tin/bin/python -m tin.jobs daily >> logs/daily.log 2>&1
 ```
+
+取数不依赖 GitHub Actions：服务器连不上 GitHub，这条路走不通，理由与推演见
+[`docs/自动取数方案与否决记录.md`](docs/自动取数方案与否决记录.md)。
 
 ## GitHub CI/CD 与内网部署
 
@@ -52,6 +68,10 @@ GitHub 托管 runner 上执行测试，成功后由公司 Linux 主机上的 run
 | VIX | CBOE 官方 CSV | 自动 |
 | 美债、实际利率、美元、SPX、SOX、信用、流动性、商品与美国周期 | FRED CSV | 自动 |
 | SMM 现货、社库、TC、开工率、LME、ICDX、SOX、SPX、海关 | 订阅 / 授权 / 月度 | **人工录入**（页面「指标 → 人工录入」） |
+
+服务器所在内网若访问不到境外源（FRED、CBOE 占库内观测的绝大多数），用 `snap-raw` /
+`import-raw` 离线搬运：在能上网的机器上抓原件，拷进服务器回放入库。回放走与在线采集
+完全相同的 `record()` 闸门，已由 `tests/test_raw_replay.py` 断言两者逐行一致。
 
 订阅与授权数据一期不写任何抓取代码（00 §7.1）。
 

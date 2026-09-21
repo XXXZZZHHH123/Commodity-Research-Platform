@@ -44,6 +44,18 @@ jobs:
           python -m alembic upgrade head
           python -c "from tin.web.app import app; assert app.title"
 
+      - name: Verify no runtime data is tracked
+        run: |
+          # 合规红线写进 CI 比写进文档可靠：tin.db 里有人工录入的 SMM / LME 授权数据，
+          # 一旦提交到 GitHub 就等于外发（PRD 00 §7.1）。
+          bad=$(git ls-files | grep -E '\.db$|^data/|^exports/|^raw/' || true)
+          if [ -n "$bad" ]; then
+            echo "以下文件不应进入版本库："
+            echo "$bad"
+            exit 1
+          fi
+          echo "未发现事实库或运行时产物"
+
   deploy:
     name: Deploy production
     if: >-
