@@ -31,7 +31,8 @@ from tin.export.board import (
     threshold_radar,
     ticker,
 )
-from tin.export.excel import build_import_template
+from tin.export import templates as export_templates
+from tin.export.excel import Column, build_export, build_import_template, field_catalog
 from tin.ingest import excel_importer
 from tin.ingest.record import RecordError, record
 from tin.judgments.importer import import_text
@@ -322,6 +323,71 @@ def import_commit(body: dict = Body(...)):
                                "recalculated_dates": result["recalculated_dates"]}))
         s.commit()
         return JSONResponse(result)
+
+
+# ---------- Excel 自定义导出 ----------
+
+
+@app.get("/api/sn/export/fields")
+def export_fields():
+    with SessionLocal() as s:
+        return JSONResponse({"groups": field_catalog(s, V)})
+
+
+@app.get("/api/sn/export/templates")
+def export_templates_list():
+    with SessionLocal() as s:
+        return JSONResponse({"templates": export_templates.list_templates(s, V)})
+
+
+@app.post("/api/sn/export/templates")
+def export_templates_save(body: dict = Body(...)):
+    with SessionLocal() as s:
+        try:
+            saved = export_templates.save_template(s, V, body)
+        except export_templates.TemplateError as e:
+            raise HTTPException(400, str(e)) from None
+        return JSONResponse({"saved": saved, "templates": export_templates.list_templates(s, V)})
+
+
+@app.delete("/api/sn/export/templates/{template_id}")
+def export_templates_delete(template_id: int):
+    with SessionLocal() as s:
+        try:
+            return JSONResponse(export_templates.delete_template(s, V, template_id))
+        except export_templates.TemplateError as e:
+            raise HTTPException(404, str(e)) from None
+
+
+@app.post("/api/sn/export/excel")
+def export_excel(body: dict = Body(...)):
+    actor = str(body.get("actor", "")).strip()
+    if not actor:
+        raise HTTPException(400, "请填写导出人姓名（用于合规审计）")
+    columns = [Column(field=str(c["field"]), label=str(c.get("label") or c["field"]), kind=str(c["kind"]))
+               for c in (body.get("columns") or [])]
+    if not columns:
+        raise HTTPException(400, "请至少选择一个导出字段")
+
+    with SessionLocal() as s:
+        data, meta = build_export(
+            s, V, columns, date_range=str(body.get("date_range") or "recent_30_trade_days"),
+            start_date=body.get("start_date"), end_date=body.get("end_date"),
+            sort_order=str(body.get("sort_order") or "desc"), actor=actor)
+        # 商业授权数据带出系统必须留痕（04 §8）
+        s.add(AuditLog(at=datetime.now(SHANGHAI), actor=actor, action="Excel数据导出",
+                       target_type="export", target_id=f"{V}_{datetime.now(SHANGHAI):%Y%m%d%H%M%S}",
+                       detail={"columns": [c.field for c in columns], "rows": meta["rows"],
+                               "range": meta["range"], "skipped": meta["skipped"],
+                               "commercial_sources": meta["commercial_sources"]}))
+        s.commit()
+
+    name = f"{V}_研究数据_{datetime.now(SHANGHAI):%Y%m%d}.xlsx"
+    return StreamingResponse(iter([data]), media_type=XLSX_MEDIA, headers={
+        "Content-Disposition": f'attachment; filename="{quote(name)}"',
+        "X-Export-Rows": str(meta["rows"]),
+        "X-Export-Skipped": quote(",".join(meta["skipped"])),
+    })
 
 
 @app.get("/api/sn/snapshot")

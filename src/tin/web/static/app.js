@@ -304,3 +304,193 @@ async function importCommit() {
 document.addEventListener("change", (e) => {
   if (e.target.matches("#import-result input[data-row]")) importSyncCommit();
 });
+
+// ---------- Excel 自定义导出 ----------
+
+const exportState = { groups: [], templates: [], selected: [], templateId: null, pristine: "[]" };
+
+async function openExportDrawer() {
+  toggleDrawer("export-drawer", true);
+  if (!exportState.groups.length) {
+    const [fields, templates] = await Promise.all([
+      fetch("/api/sn/export/fields").then((r) => r.json()),
+      fetch("/api/sn/export/templates").then((r) => r.json()),
+    ]);
+    exportState.groups = fields.groups;
+    exportState.templates = templates.templates;
+    const preset = exportState.templates.find((t) => t.is_default) || exportState.templates[0];
+    exportApplyTemplate(preset ? String(preset.id) : "");
+  }
+}
+
+function exportApplyTemplate(id) {
+  const tpl = exportState.templates.find((t) => String(t.id) === String(id));
+  exportState.templateId = tpl ? tpl.id : null;
+  exportState.selected = tpl
+    ? tpl.columns.map((c) => ({ ...c }))
+    : [{ field: "trade_date", label: "交易日", kind: "meta" }];
+  exportState.pristine = JSON.stringify(exportState.selected);
+  if (tpl) {
+    document.getElementById("export-range").value = tpl.date_range;
+    document.getElementById("export-sort").value = tpl.sort_order;
+  }
+  exportRender();
+}
+
+function exportIsDirty() {
+  return JSON.stringify(exportState.selected) !== exportState.pristine;
+}
+
+function exportToggleField(field, label, kind) {
+  const at = exportState.selected.findIndex((c) => c.field === field);
+  if (at >= 0) exportState.selected.splice(at, 1);
+  else exportState.selected.push({ field, label, kind });
+  exportRender();
+}
+
+function exportMove(index, delta) {
+  const list = exportState.selected;
+  const to = index + delta;
+  if (to < 0 || to >= list.length) return;
+  [list[index], list[to]] = [list[to], list[index]];
+  exportRender();
+}
+
+function exportUndo() {
+  exportState.selected = JSON.parse(exportState.pristine);
+  exportRender();
+  showToast("已恢复到模板初始配置");
+}
+
+function exportRender() {
+  const esc = (t) => String(t == null ? "" : t).replace(/[<>&"]/g, (c) =>
+    ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
+  const dirty = exportIsDirty();
+  const tpl = exportState.templates.find((t) => t.id === exportState.templateId);
+
+  const picker = document.getElementById("export-template-bar");
+  picker.innerHTML = `
+    <select id="export-template" onchange="exportApplyTemplate(this.value)" class="flex-1 min-w-0 px-2 py-1.5 rounded-md text-xs">
+      ${exportState.templates.length
+        ? exportState.templates.map((t) => `<option value="${t.id}" ${t.id === exportState.templateId ? "selected" : ""}>
+            ${esc(t.name)}${t.is_default ? "（默认）" : ""}${t.id === exportState.templateId && dirty ? " · 已修改" : ""}</option>`).join("")
+        : '<option value="">未命名配置（未保存）</option>'}
+    </select>
+    ${dirty ? '<button type="button" onclick="exportUndo()" class="px-2 py-1.5 text-xs rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)]">撤销修改</button>' : ""}
+    <button type="button" onclick="exportSave(false)" ${dirty && tpl ? "" : "disabled"}
+      class="px-2 py-1.5 text-xs rounded-md font-semibold ${dirty && tpl ? "bg-[var(--primary)] text-white hover:bg-[var(--primary-hover)]" : "border border-[var(--line)] text-[var(--text-muted)] opacity-50"}">覆盖保存</button>
+    <button type="button" onclick="exportSave(true)" ${exportState.selected.length ? "" : "disabled"}
+      title="${exportState.selected.length ? "" : "请先勾选指标字段后再保存为模板"}"
+      class="px-2 py-1.5 text-xs rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)] disabled:opacity-40">另存为</button>
+    ${tpl ? `<button type="button" onclick="exportDelete()" class="px-2 py-1.5 text-xs rounded-md text-[var(--alert)] hover:bg-[var(--alert-soft)]">删除</button>` : ""}`;
+
+  document.getElementById("export-pills").innerHTML = exportState.selected.map((c, i) => `
+    <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--primary-soft)] text-[var(--primary)] text-[11px]">
+      <b class="tabular">${i + 1}.</b>${esc(c.label)}
+      ${c.field === "trade_date" ? "" : `
+        <button type="button" onclick="exportMove(${i}, -1)" ${i === 0 ? "disabled" : ""} class="disabled:opacity-30" title="前移">◀</button>
+        <button type="button" onclick="exportMove(${i}, 1)" ${i === exportState.selected.length - 1 ? "disabled" : ""} class="disabled:opacity-30" title="后移">▶</button>
+        <button type="button" onclick="exportToggleField('${c.field}')" title="移除">×</button>`}
+    </span>`).join("") || '<span class="text-[11px] text-[var(--text-muted)]">尚未选择字段</span>';
+
+  const chosen = new Set(exportState.selected.map((c) => c.field));
+  document.getElementById("export-groups").innerHTML = exportState.groups.map((g, gi) => {
+    const picked = g.fields.filter((f) => chosen.has(f.field)).length;
+    return `<details class="border-b border-[var(--line)] py-1.5" ${gi < 2 ? "open" : ""}>
+      <summary class="cursor-pointer text-xs font-semibold">${esc(g.name)}
+        <span class="text-[var(--text-muted)] font-normal tabular">(${picked}/${g.fields.length})</span></summary>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-1 mt-1.5">
+        ${g.fields.map((f) => `<label class="flex items-start gap-1.5 text-[11px] py-0.5">
+          <input type="checkbox" class="mt-0.5" ${chosen.has(f.field) ? "checked" : ""}
+                 onchange="exportToggleField('${f.field}', '${esc(f.label)}', '${f.kind}')">
+          <span><span class="font-medium">${esc(f.label)}</span>
+            ${f.unit ? `<span class="text-[var(--text-muted)]">（${esc(f.unit)}）</span>` : ""}
+            ${f.note ? `<div class="text-[var(--text-muted)]">${esc(f.note)}</div>` : ""}</span></label>`).join("")}
+      </div></details>`;
+  }).join("");
+}
+
+function exportPayload() {
+  return {
+    columns: exportState.selected,
+    date_range: document.getElementById("export-range").value,
+    sort_order: document.getElementById("export-sort").value,
+    start_date: document.getElementById("export-start").value || null,
+    end_date: document.getElementById("export-end").value || null,
+    actor: document.getElementById("export-actor").value.trim(),
+  };
+}
+
+async function exportSave(asNew) {
+  const tpl = exportState.templates.find((t) => t.id === exportState.templateId);
+  let name = tpl ? tpl.name : "";
+  if (asNew) {
+    name = (prompt("新模板名称：", name ? `${name} 副本` : "晨报核心") || "").trim();
+    if (!name) return;
+  } else if (!confirm(`确认将当前列配置覆盖保存至模板「${name}」吗？原模板配置将被替换。`)) {
+    return;
+  }
+  const body = { ...exportPayload(), name, id: asNew ? null : exportState.templateId };
+  const res = await fetch("/api/sn/export/templates", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    showToast(data.detail || "保存失败");
+    return;
+  }
+  exportState.templates = data.templates;
+  exportState.templateId = data.saved.id;
+  exportState.pristine = JSON.stringify(exportState.selected);
+  exportRender();
+  showToast(asNew ? `已另存为「${name}」` : `已覆盖保存「${name}」`);
+}
+
+async function exportDelete() {
+  const tpl = exportState.templates.find((t) => t.id === exportState.templateId);
+  if (!tpl || !confirm(`确认删除导出模板「${tpl.name}」吗？此操作不可逆。`)) return;
+  const res = await fetch(`/api/sn/export/templates/${tpl.id}`, { method: "DELETE" });
+  const data = await res.json();
+  if (!res.ok) {
+    showToast(data.detail || "删除失败");
+    return;
+  }
+  exportState.templates = data.templates;
+  const next = exportState.templates.find((t) => t.is_default) || exportState.templates[0];
+  exportApplyTemplate(next ? String(next.id) : "");
+  showToast(`已删除模板「${tpl.name}」`);
+}
+
+async function exportRun() {
+  const payload = exportPayload();
+  if (!payload.actor) {
+    showToast("请填写导出人姓名（用于合规审计）");
+    return;
+  }
+  if (payload.date_range === "custom" && !(payload.start_date && payload.end_date)) {
+    showToast("自定义区间需要同时填写起止日期");
+    return;
+  }
+  const btn = document.getElementById("export-run");
+  btn.disabled = true;
+  btn.textContent = "正在生成…";
+  try {
+    const res = await fetch("/api/sn/export/excel", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || "导出失败");
+    const blob = await res.blob();
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = decodeURIComponent((res.headers.get("Content-Disposition") || "").split("filename=")[1] || "").replace(/"/g, "") || "导出.xlsx";
+    link.click();
+    URL.revokeObjectURL(link.href);
+    const skipped = decodeURIComponent(res.headers.get("X-Export-Skipped") || "");
+    showToast(`已导出 ${res.headers.get("X-Export-Rows")} 行${skipped ? `；${skipped} 已停用，本次略过` : ""}`);
+  } catch (err) {
+    showToast(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "导出 Excel (.xlsx)";
+  }
+}

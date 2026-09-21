@@ -21,6 +21,7 @@
       <div class="text-xl font-bold tabular {{ 'text-[var(--amber)]' if gaps else '' }}">{{ gaps | length }}</div>
       <div class="text-[11px] text-[var(--text-muted)]">待录入缺口</div>
     </div>
+    <button onclick="openExportDrawer()" class="px-3 py-1.5 text-xs font-semibold rounded border border-[var(--line)] hover:bg-[var(--surface-soft)] whitespace-nowrap">自定义导出 Excel</button>
   </div>
 </div>
 
@@ -236,4 +237,63 @@
 </section>
 
 <p class="text-[11px] text-[var(--text-muted)]">agent 读取：<a class="text-[var(--primary)] hover:underline" href="/api/sn/snapshot?date={{ d }}">/api/sn/snapshot?date={{ d }}</a></p>
+{% endblock %}
+
+{% block drawer %}
+<aside id="export-drawer" data-drawer class="fixed right-0 top-0 bottom-0 z-50 w-full max-w-xl bg-[var(--surface)] border-l border-[var(--line)] shadow-2xl p-6 flex flex-col translate-x-full transition-transform duration-300 ease-in-out">
+  <div class="flex items-center justify-between pb-3 border-b border-[var(--line)]">
+    <div>
+      <h3 class="text-base font-bold">自定义数据导出</h3>
+      <p class="text-xs text-[var(--text-muted)] mt-0.5">按交易日成表 ｜ 低频指标不填前值 ｜ 阻断与缺失逐格写入批注</p>
+    </div>
+    <button type="button" onclick="closeDrawers()" class="p-1 rounded-md text-[var(--text-muted)] hover:bg-[var(--surface-soft)] text-lg">&times;</button>
+  </div>
+
+  <div class="mt-3 space-y-3 overflow-y-auto flex-1">
+    <div>
+      <div class="text-[11px] font-semibold text-[var(--text-muted)] mb-1">模板预设</div>
+      <div id="export-template-bar" class="flex items-center gap-1.5 flex-wrap"></div>
+    </div>
+
+    <div>
+      <div class="text-[11px] font-semibold text-[var(--text-muted)] mb-1">已选字段与列顺序（◀ ▶ 调序，× 移除）</div>
+      <div id="export-pills" class="flex flex-wrap gap-1.5 p-2 rounded-md bg-[var(--surface-soft)] min-h-[38px]"></div>
+    </div>
+
+    <div>
+      <div class="text-[11px] font-semibold text-[var(--text-muted)] mb-1">可选字段（按指标类别分组）</div>
+      <div id="export-groups" class="border-t border-[var(--line)]"></div>
+    </div>
+
+    <div class="p-2.5 rounded-md bg-[var(--amber-soft)] text-[var(--amber)] border border-[var(--amber)]/30 text-[11px]">
+      导出文件含 SMM / Mysteel 等商业授权数据时，将在说明页与打印页眉标注「内部投研参考 严禁外发」，并记入审计日志。
+    </div>
+
+    <div class="grid grid-cols-2 gap-2 text-xs">
+      <label class="block"><span class="font-semibold">数据区间</span>
+        <select id="export-range" onchange="exportRender()" class="mt-1 w-full px-2 py-1.5 rounded-md">
+          <option value="recent_30_trade_days">最近 30 个交易日</option>
+          <option value="recent_60_trade_days">最近 60 个交易日</option>
+          <option value="recent_120_trade_days">最近 120 个交易日</option>
+          <option value="custom">自定义起止日期</option>
+        </select></label>
+      <label class="block"><span class="font-semibold">数据排序</span>
+        <select id="export-sort" class="mt-1 w-full px-2 py-1.5 rounded-md">
+          <option value="desc">按日期倒序（最新在前）</option>
+          <option value="asc">按日期正序</option>
+        </select></label>
+      <label class="block"><span class="font-semibold">起始日期</span>
+        <input id="export-start" type="date" class="mt-1 w-full px-2 py-1.5 rounded-md tabular"></label>
+      <label class="block"><span class="font-semibold">结束日期</span>
+        <input id="export-end" type="date" class="mt-1 w-full px-2 py-1.5 rounded-md tabular"></label>
+      <label class="block col-span-2"><span class="font-semibold">导出人姓名</span>
+        <span class="text-[var(--text-muted)]">（必填，用于合规审计）</span>
+        <input id="export-actor" type="text" required class="mt-1 w-full px-2 py-1.5 rounded-md"></label>
+    </div>
+  </div>
+
+  <div class="pt-3 border-t border-[var(--line)] flex justify-end">
+    <button id="export-run" type="button" onclick="exportRun()" class="px-5 py-2 rounded-md bg-[var(--primary)] text-white text-xs font-semibold hover:bg-[var(--primary-hover)] disabled:opacity-40">导出 Excel (.xlsx)</button>
+  </div>
+</aside>
 {% endblock %}
