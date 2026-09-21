@@ -2,10 +2,11 @@
 Description=Run commodity data ingestion twice on weekdays
 
 [Timer]
-OnCalendar=Mon..Fri *-*-* 08:00:00 Asia/Shanghai
-OnCalendar=Mon..Fri *-*-* 16:30:00 Asia/Shanghai
+# Older systemd releases do not accept a named timezone suffix. These times use
+# the host timezone; deployment warns when the host is not Asia/Shanghai.
+OnCalendar=Mon-Fri *-*-* 08:00:00
+OnCalendar=Mon-Fri *-*-* 16:30:00
 Persistent=true
-RandomizedDelaySec=30
 Unit=commodity-research-platform-daily.service
 
 [Install]

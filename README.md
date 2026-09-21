@@ -55,7 +55,8 @@ GitHub 托管 runner 上执行测试，成功后由公司 Linux 主机上的 run
 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)。
 
 如果内网主机无法访问 GitHub，流水线会生成包含 Python 3.12、全部依赖和应用代码的
-离线容器包。服务器只需 Docker，无需安装 Python 或运行 GitHub runner，见
+离线容器包。服务器只需 Docker，无需安装 Python 或运行 GitHub runner；Nginx 在宿主机
+一次性安装，后续应用产物不重复携带，见
 [`docs/OFFLINE_DEPLOYMENT.md`](docs/OFFLINE_DEPLOYMENT.md)。
 
 ## 数据源

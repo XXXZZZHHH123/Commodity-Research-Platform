@@ -55,7 +55,7 @@ def cmd_snapshot(a):
         out = settings.exports_dir / settings.variety / f"{d.isoformat()}.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(snapshot(s, settings.variety, d), ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"快照已写入 {out.relative_to(ROOT)}")
+        print(f"快照已写入 {out}")
 
 
 def cmd_daily(a):

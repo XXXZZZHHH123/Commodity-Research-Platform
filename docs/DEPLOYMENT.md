@@ -28,7 +28,7 @@ self-hosted runner 方案保留给网络条件允许、确实需要全自动部�
 
 ## 1. Linux 前置条件
 
-- 具有 systemd 的 x86_64 Linux。
+- 具有 systemd 的 x86_64 Linux，宿主机时区为 `Asia/Shanghai`。
 - Python 3.12、`python3.12-venv`、Git、curl、rsync、Nginx。
 - 主机可以访问 GitHub HTTPS；安装 Python 依赖时还需访问 PyPI 或公司内部镜像。
 - 推荐 PostgreSQL。SQLite 只适用于单主机、单 Web worker。

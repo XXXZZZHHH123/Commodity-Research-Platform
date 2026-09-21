@@ -26,6 +26,11 @@ docker info >/dev/null 2>&1 || fail "docker daemon is not running"
 [[ "$(uname -s)" == "Linux" ]] || fail "this bundle only supports Linux"
 [[ "$(uname -m)" == "x86_64" ]] || fail "this bundle only supports x86_64"
 
+HOST_TIMEZONE="$(timedatectl show --property=Timezone --value 2>/dev/null || true)"
+if [[ -n "$HOST_TIMEZONE" && "$HOST_TIMEZONE" != "Asia/Shanghai" ]]; then
+  printf 'warning: host timezone is %s; daily timers use host-local 08:00 and 16:30\n' "$HOST_TIMEZONE" >&2
+fi
+
 SHA="$(tr -d '[:space:]' < "$VERSION_FILE")"
 VERSION="${SHA:0:12}"
 VERSIONED_IMAGE="commodity-research-platform:$VERSION"
@@ -72,6 +77,7 @@ rollback() {
     echo "health check failed; restoring previous container image" >&2
     docker image tag "$PREVIOUS_IMAGE" "$CURRENT_IMAGE"
     systemctl restart commodity-research-platform.service || true
+    systemctl start commodity-research-platform-daily.timer || true
   fi
 }
 
@@ -79,24 +85,25 @@ if ! systemctl restart commodity-research-platform.service; then
   rollback
   fail "failed to start commodity-research-platform.service"
 fi
-systemctl start commodity-research-platform-daily.timer
 
-healthy=false
+app_healthy=false
 for _ in {1..30}; do
   status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' commodity-research-platform 2>/dev/null || true)"
   if [[ "$status" == "healthy" ]]; then
-    healthy=true
+    app_healthy=true
     break
   fi
   [[ "$status" != "exited" && "$status" != "dead" ]] || break
   sleep 2
 done
 
-if [[ "$healthy" != true ]]; then
+if [[ "$app_healthy" != true ]]; then
   docker logs --tail 100 commodity-research-platform >&2 || true
   rollback
-  fail "container health check failed"
+  fail "application container health check failed"
 fi
 
+systemctl start commodity-research-platform-daily.timer
+
 printf 'deployed %s as %s\n' "$SHA" "$CURRENT_IMAGE"
-printf 'open http://127.0.0.1:8765 and check systemctl status commodity-research-platform\n'
+printf 'application is available to the host at http://127.0.0.1:8765\n'
