@@ -23,6 +23,14 @@ fail() {
   exit 1
 }
 
+run_systemctl() {
+  if [[ $EUID -eq 0 ]]; then
+    systemctl "$@"
+  else
+    sudo systemctl "$@"
+  fi
+}
+
 command -v "$PYTHON_BIN" >/dev/null || fail "$PYTHON_BIN is not installed"
 command -v rsync >/dev/null || fail "rsync is not installed"
 command -v curl >/dev/null || fail "curl is not installed"
@@ -81,15 +89,15 @@ rollback() {
     printf 'health check failed; rolling back to %s\n' "$PREVIOUS_RELEASE" >&2
     ln -sfn "$PREVIOUS_RELEASE" "$NEXT_LINK"
     mv -Tf "$NEXT_LINK" "$CURRENT_LINK"
-    sudo systemctl restart "$SERVICE_NAME"
+    run_systemctl restart "$SERVICE_NAME"
   fi
 }
 
-if ! sudo systemctl restart "$SERVICE_NAME"; then
+if ! run_systemctl restart "$SERVICE_NAME"; then
   rollback
   fail "failed to restart $SERVICE_NAME"
 fi
-sudo systemctl start "$TIMER_NAME"
+run_systemctl start "$TIMER_NAME"
 
 healthy=false
 for _ in {1..20}; do

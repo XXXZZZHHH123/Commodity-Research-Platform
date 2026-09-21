@@ -1,0 +1,12 @@
+[Unit]
+Description=Run commodity data ingestion twice on weekdays
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 08:00:00 Asia/Shanghai
+OnCalendar=Mon..Fri *-*-* 16:30:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=30
+Unit=commodity-research-platform-daily.service
+
+[Install]
+WantedBy=timers.target

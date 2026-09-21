@@ -19,9 +19,12 @@ Nginx -> FastAPI -> PostgreSQL/SQLite
 内网主机不需要接受 GitHub 的入站连接。Self-hosted runner 主动通过 HTTPS 443
 连接 GitHub 领取任务。运行数据库、导出文件和 `app.env` 不会上传到 GitHub。
 
-如果内网主机不能访问 GitHub，请改用 Actions Artifact 离线交付，见
+如果内网主机不能访问 GitHub，请优先使用 Actions Artifact 容器化离线交付，见
 [`OFFLINE_DEPLOYMENT.md`](OFFLINE_DEPLOYMENT.md)。自动部署默认关闭，只有仓库变量
 `ENABLE_SELF_HOSTED_DEPLOY=true` 时才会向 self-hosted runner 投递部署任务。
+
+容器化离线交付不需要 Python、Git、runner 或 PyPI，仅要求服务器预装 Docker。下面的
+self-hosted runner 方案保留给网络条件允许、确实需要全自动部署的环境。
 
 ## 1. Linux 前置条件
 
@@ -43,7 +46,7 @@ sudo useradd --create-home --shell /bin/bash github-runner
 ```bash
 git clone https://github.com/OWNER/REPOSITORY.git
 cd REPOSITORY
-sudo RUNNER_USER=github-runner bash deploy/bootstrap.sh
+sudo DEPLOY_USER=github-runner bash deploy/bootstrap.sh
 sudo editor /etc/commodity-research-platform/app.env
 ```
 
