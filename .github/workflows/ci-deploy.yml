@@ -2,9 +2,9 @@ name: CI and deploy
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, cicd]
   push:
-    branches: [main]
+    branches: [main, cicd]
   workflow_dispatch:
 
 permissions:
@@ -46,7 +46,9 @@ jobs:
 
   deploy:
     name: Deploy production
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/cicd')
     needs: test
     runs-on: [self-hosted, linux, x64, commodity-production]
     timeout-minutes: 30

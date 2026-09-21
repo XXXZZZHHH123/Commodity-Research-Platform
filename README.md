@@ -33,7 +33,7 @@ pytest
 
 ## GitHub CI/CD 与内网部署
 
-仓库提供 GitHub Actions + 内网 self-hosted runner 的部署方案。推送到 `main` 后先在
+仓库提供 GitHub Actions + 内网 self-hosted runner 的部署方案。推送到 `main` 或 `cicd` 后先在
 GitHub 托管 runner 上执行测试，成功后由公司 Linux 主机上的 runner 主动领取部署任务；
 不需要向公网开放 SSH、数据库或应用端口。首次安装与运维步骤见
 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)。

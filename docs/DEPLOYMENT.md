@@ -8,7 +8,7 @@ push / pull request
         v
 GitHub-hosted runner: 安装依赖、测试、迁移冒烟检查
         |
-        | main 测试通过
+        | main / cicd 测试通过
         v
 公司 Linux self-hosted runner: 本机原子发布、迁移、重启、健康检查
         |
@@ -75,9 +75,9 @@ runner 在线后应显示标签 `self-hosted`、`linux`、`x64`、`commodity-pro
 ## 3. GitHub 仓库设置
 
 1. 在 `Settings -> Environments` 创建 `production`。
-2. 将 deployment branches 限制为 `main`。
+2. 将 deployment branches 限制为 `main` 和 `cicd`。
 3. 可设置变量 `PRODUCTION_URL`，例如 `https://commodity-research.internal`。
-4. 在分支保护中要求 `Test` 通过后才能合并到 `main`。
+4. 在分支保护中要求 `Test` 通过后才能合并到 `main` 或 `cicd`。
 5. 如果必须完全自动部署，不配置 required reviewer；需要人工放行时再启用它。
 
 部署不需要 SSH 私钥或数据库密码存入 GitHub。数据库配置只保存在内网主机的
@@ -98,7 +98,7 @@ sudo systemctl reload nginx
 
 ## 5. 发布过程
 
-向 `main` 推送后 `.github/workflows/ci-deploy.yml` 自动执行：
+向 `main` 或 `cicd` 推送后 `.github/workflows/ci-deploy.yml` 自动执行：
 
 1. GitHub runner 运行全部测试和 Alembic 冒烟检查。
 2. 内网 runner 将代码复制到新的 release 目录。
@@ -129,7 +129,7 @@ readlink -f /opt/commodity-research-platform/current
 ## 7. 网络和安全边界
 
 - runner 使用专用低权限账户，不要使用 root 运行。
-- 只允许受保护的 `main` 分支触发生产部署。
+- 只允许受保护的 `main`、`cicd` 分支触发生产部署。
 - 不要在可由外部贡献者修改的工作流上使用这台生产 runner。
 - 数据库只监听内网或 localhost，浏览器只能通过 FastAPI 访问数据。
 - 订阅和授权数据保留在内网数据库，不写入 Git 仓库或 Actions artifact。
