@@ -1,8 +1,8 @@
 """L1 事实底座：只存事实，不产生判断。"""
 
-from datetime import datetime
+from datetime import datetime, time
 
-from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, String, Text, Time, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from tin.db import Base, JSONType, UTCDateTime
@@ -27,6 +27,9 @@ class Indicator(Base):
     is_proxy: Mapped[bool] = mapped_column(Boolean, default=False)
     vendor_code: Mapped[str | None] = mapped_column(String(32))
     note: Mapped[str | None] = mapped_column(Text)
+    # 该指标的常规发布时刻。录入页、快速录入抽屉与 Excel 导入共用同一个源头，
+    # 避免"系统替人编造时点"时三处默认值各不相同。
+    default_entry_time: Mapped[time | None] = mapped_column(Time)
 
 
 class Observation(Base):

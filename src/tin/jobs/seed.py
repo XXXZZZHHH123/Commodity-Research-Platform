@@ -1,4 +1,5 @@
 import json
+from datetime import time
 from pathlib import Path
 
 from sqlalchemy import select
@@ -21,6 +22,9 @@ def seed_indicators(session: Session, path: Path = SEEDS / "indicators_sn.json")
         if session.get(Indicator, row["series_id"]) is not None:
             continue
         Caliber.model_validate(row["caliber"])
+        at = row.pop("default_entry_time", None)
+        if at:
+            row["default_entry_time"] = time.fromisoformat(at)
         session.add(Indicator(variety=row.pop("variety", settings.variety), phase="P1", status="可用", **row))
         added += 1
     session.commit()
