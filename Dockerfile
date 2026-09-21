@@ -22,6 +22,7 @@ RUN python -m pip install --no-cache-dir -r requirements-production.txt
 COPY alembic.ini ./
 COPY alembic ./alembic
 COPY seeds ./seeds
+COPY PRD/参考资料/锡_研究逻辑.txt ./PRD/参考资料/锡_研究逻辑.txt
 COPY src ./src
 RUN python -m pip install --no-cache-dir --no-deps -e . \
     && groupadd --gid 10001 commodity \
