@@ -38,6 +38,10 @@ GitHub 托管 runner 上执行测试，成功后由公司 Linux 主机上的 run
 不需要向公网开放 SSH、数据库或应用端口。首次安装与运维步骤见
 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)。
 
+如果内网主机无法访问 GitHub，流水线会同时生成包含 Linux x64 / Python 3.12 全部依赖的
+离线交付包。下载 Artifact 后复制到服务器即可安装，见
+[`docs/OFFLINE_DEPLOYMENT.md`](docs/OFFLINE_DEPLOYMENT.md)。
+
 ## 数据源
 
 | 数据 | 来源 | 方式 |

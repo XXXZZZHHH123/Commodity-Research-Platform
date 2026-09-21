@@ -45,10 +45,20 @@ ln -s "$SHARED_ROOT/data" "$RELEASE_DIR/data"
 ln -s "$SHARED_ROOT/exports" "$RELEASE_DIR/exports"
 
 "$PYTHON_BIN" -m venv "$RELEASE_DIR/.venv"
-"$RELEASE_DIR/.venv/bin/python" -m pip install --disable-pip-version-check --upgrade pip
-"$RELEASE_DIR/.venv/bin/python" -m pip install --disable-pip-version-check \
-  -r "$RELEASE_DIR/requirements-production.txt"
-"$RELEASE_DIR/.venv/bin/python" -m pip install --disable-pip-version-check --no-deps -e "$RELEASE_DIR"
+if [[ -n "${WHEELHOUSE:-}" ]]; then
+  [[ -d "$WHEELHOUSE" ]] || fail "wheelhouse does not exist: $WHEELHOUSE"
+  "$RELEASE_DIR/.venv/bin/python" -m pip install --disable-pip-version-check \
+    --no-index --find-links "$WHEELHOUSE" --upgrade pip setuptools wheel
+  "$RELEASE_DIR/.venv/bin/python" -m pip install --disable-pip-version-check \
+    --no-index --find-links "$WHEELHOUSE" -r "$RELEASE_DIR/requirements-production.txt"
+  "$RELEASE_DIR/.venv/bin/python" -m pip install --disable-pip-version-check \
+    --no-index --no-build-isolation --no-deps -e "$RELEASE_DIR"
+else
+  "$RELEASE_DIR/.venv/bin/python" -m pip install --disable-pip-version-check --upgrade pip
+  "$RELEASE_DIR/.venv/bin/python" -m pip install --disable-pip-version-check \
+    -r "$RELEASE_DIR/requirements-production.txt"
+  "$RELEASE_DIR/.venv/bin/python" -m pip install --disable-pip-version-check --no-deps -e "$RELEASE_DIR"
+fi
 
 set -a
 # shellcheck disable=SC1090

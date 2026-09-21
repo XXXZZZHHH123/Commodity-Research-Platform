@@ -47,6 +47,7 @@ jobs:
   deploy:
     name: Deploy production
     if: >-
+      vars.ENABLE_SELF_HOSTED_DEPLOY == 'true' &&
       github.event_name != 'pull_request' &&
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/cicd')
     needs: test
@@ -69,3 +70,42 @@ jobs:
         env:
           RELEASE_SHA: ${{ github.sha }}
         run: bash deploy/deploy.sh
+
+  package:
+    name: Build offline Linux bundle
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/cicd')
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out tested revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-production.txt
+
+      - name: Build offline bundle
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: bash deploy/build-offline-bundle.sh dist
+
+      - name: Upload offline bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: commodity-research-linux-x64-${{ github.sha }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 30

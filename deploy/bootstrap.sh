@@ -10,11 +10,9 @@ APP_ROOT="${APP_ROOT:-/opt/commodity-research-platform}"
 SHARED_ROOT="${SHARED_ROOT:-/var/lib/commodity-research-platform}"
 CONFIG_ROOT="${CONFIG_ROOT:-/etc/commodity-research-platform}"
 SYSTEMCTL="$(command -v systemctl)"
+SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-id "$RUNNER_USER" >/dev/null 2>&1 || {
-  echo "create the runner account first: useradd --create-home --shell /bin/bash $RUNNER_USER" >&2
-  exit 1
-}
+id "$RUNNER_USER" >/dev/null 2>&1 || useradd --create-home --shell /bin/bash "$RUNNER_USER"
 
 getent group "$APP_GROUP" >/dev/null || groupadd --system "$APP_GROUP"
 id "$APP_USER" >/dev/null 2>&1 || useradd --system --gid "$APP_GROUP" --home-dir "$SHARED_ROOT" --shell /usr/sbin/nologin "$APP_USER"
@@ -25,13 +23,13 @@ install -d -o "$APP_USER" -g "$APP_GROUP" -m 2775 "$SHARED_ROOT" "$SHARED_ROOT/d
 install -d -o root -g "$APP_GROUP" -m 0750 "$CONFIG_ROOT"
 
 if [[ ! -f "$CONFIG_ROOT/app.env" ]]; then
-  install -o root -g "$APP_GROUP" -m 0640 deploy/app.env.example "$CONFIG_ROOT/app.env"
+  install -o root -g "$APP_GROUP" -m 0640 "$SOURCE_ROOT/deploy/app.env.example" "$CONFIG_ROOT/app.env"
   echo "created $CONFIG_ROOT/app.env; review it before the first deployment"
 fi
 
-install -o root -g root -m 0644 deploy/systemd/commodity-research-platform.service /etc/systemd/system/
-install -o root -g root -m 0644 deploy/systemd/commodity-research-platform-daily.service /etc/systemd/system/
-install -o root -g root -m 0644 deploy/systemd/commodity-research-platform-daily.timer /etc/systemd/system/
+install -o root -g root -m 0644 "$SOURCE_ROOT/deploy/systemd/commodity-research-platform.service" /etc/systemd/system/
+install -o root -g root -m 0644 "$SOURCE_ROOT/deploy/systemd/commodity-research-platform-daily.service" /etc/systemd/system/
+install -o root -g root -m 0644 "$SOURCE_ROOT/deploy/systemd/commodity-research-platform-daily.timer" /etc/systemd/system/
 
 cat > /etc/sudoers.d/commodity-research-platform-deploy <<EOF
 $RUNNER_USER ALL=(root) NOPASSWD: $SYSTEMCTL restart commodity-research-platform.service
@@ -47,6 +45,6 @@ cat <<EOF
 Bootstrap complete.
 1. Edit $CONFIG_ROOT/app.env.
 2. Log out and back in so $RUNNER_USER receives the $APP_GROUP group.
-3. Register the GitHub runner with label: commodity-production.
-4. Push to main, or run the workflow manually.
+3. For automatic deployment, register the GitHub runner with label: commodity-production.
+4. For offline deployment, run app/deploy/install-offline.sh from an extracted bundle.
 EOF

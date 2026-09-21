@@ -19,6 +19,10 @@ Nginx -> FastAPI -> PostgreSQL/SQLite
 内网主机不需要接受 GitHub 的入站连接。Self-hosted runner 主动通过 HTTPS 443
 连接 GitHub 领取任务。运行数据库、导出文件和 `app.env` 不会上传到 GitHub。
 
+如果内网主机不能访问 GitHub，请改用 Actions Artifact 离线交付，见
+[`OFFLINE_DEPLOYMENT.md`](OFFLINE_DEPLOYMENT.md)。自动部署默认关闭，只有仓库变量
+`ENABLE_SELF_HOSTED_DEPLOY=true` 时才会向 self-hosted runner 投递部署任务。
+
 ## 1. Linux 前置条件
 
 - 具有 systemd 的 x86_64 Linux。
@@ -77,8 +81,9 @@ runner 在线后应显示标签 `self-hosted`、`linux`、`x64`、`commodity-pro
 1. 在 `Settings -> Environments` 创建 `production`。
 2. 将 deployment branches 限制为 `main` 和 `cicd`。
 3. 可设置变量 `PRODUCTION_URL`，例如 `https://commodity-research.internal`。
-4. 在分支保护中要求 `Test` 通过后才能合并到 `main` 或 `cicd`。
-5. 如果必须完全自动部署，不配置 required reviewer；需要人工放行时再启用它。
+4. 设置变量 `ENABLE_SELF_HOSTED_DEPLOY=true` 以开启 runner 自动部署。
+5. 在分支保护中要求 `Test` 通过后才能合并到 `main` 或 `cicd`。
+6. 如果必须完全自动部署，不配置 required reviewer；需要人工放行时再启用它。
 
 部署不需要 SSH 私钥或数据库密码存入 GitHub。数据库配置只保存在内网主机的
 `/etc/commodity-research-platform/app.env`。
