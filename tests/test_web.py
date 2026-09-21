@@ -73,3 +73,28 @@ def test_every_inline_handler_resolves_to_a_real_function():
             if name not in defined and name not in builtin:
                 missing.add(f"{where}: {name}()")
     assert not missing, f"事件绑定指向不存在的函数：{sorted(missing)}"
+
+
+def test_export_validation_is_inline_not_a_floating_toast():
+    """校验失败必须就地标红，不能靠右下角浮层。
+
+    抽屉的主操作按钮也在右下角，浮层正好压住它：用户既看不全提示，也点不动按钮。
+    """
+    from tin.web import app as web
+
+    html = (web.HERE / "templates" / "variety.html").read_text(encoding="utf-8")
+    js = (web.HERE / "static" / "app.js").read_text(encoding="utf-8")
+    css = (web.HERE / "static" / "app.css").read_text(encoding="utf-8")
+
+    for slot in ("export-actor-err", "export-dates-err"):
+        assert f'id="{slot}"' in html, f"缺少 {slot} 的行内报错位"
+        # 常驻占位高度：有没有报错，按钮的位置都不动
+        anchor = html[html.index(f'id="{slot}"'):]
+        assert "min-h-[16px]" in anchor[: anchor.index(">")], f"{slot} 需要常驻高度，否则报错会顶走布局"
+
+    body = js[js.index("function exportValidate"):js.index("async function exportRun")]
+    assert "showToast" not in body, "校验提示不应再走浮层"
+    assert body.count("exportFieldError") >= 3
+
+    assert ".field-error" in css
+    assert "body.drawer-open #toast" in css, "抽屉打开时 toast 必须避开右下角的主操作按钮"

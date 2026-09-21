@@ -159,3 +159,18 @@ html { scroll-behavior: smooth; }
   nav.top, .ticker-strip, aside, #toast, .no-print { display: none !important; }
   body { background: #fff; }
 }
+
+/* 分组展开箭头：summary 用了 flex 布局，浏览器默认的三角会消失，这里自己画一个 */
+#export-groups summary { list-style: none; }
+#export-groups summary::-webkit-details-marker { display: none; }
+#export-groups .chev { display: inline-block; transition: transform 0.15s ease; }
+#export-groups details[open] > summary .chev { transform: rotate(90deg); }
+
+/* 校验失败：输入框标红并在下方给出原因，不弹浮层、不改变布局 */
+.field-error {
+  border-color: var(--alert) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--alert) 18%, transparent);
+}
+
+/* 抽屉打开时 toast 挪到左下，否则正好压在抽屉右下角的主操作按钮上 */
+body.drawer-open #toast { right: auto; left: 1.5rem; }

@@ -256,7 +256,7 @@
     </div>
 
     <div>
-      <div class="text-[11px] font-semibold text-[var(--text-muted)] mb-1">已选字段与列顺序（◀ ▶ 调序，× 移除）</div>
+      <div class="text-[11px] font-semibold text-[var(--text-muted)] mb-1">已选字段与列顺序（点击选中，◀ ▶ 调序或直接拖拽，× 移除）</div>
       <div id="export-pills" class="flex flex-wrap gap-1.5 p-2 rounded-md bg-[var(--surface-soft)] min-h-[38px]"></div>
     </div>
 
@@ -291,15 +291,23 @@
           <option value="desc">按日期倒序（最新在前）</option>
           <option value="asc">按日期正序</option>
         </select></label>
-      <div id="export-custom-dates" class="col-span-2 hidden grid grid-cols-2 gap-2">
+      <div id="export-custom-dates" class="col-span-2 hidden grid grid-cols-2 gap-x-2">
         <label class="block"><span class="font-semibold">起始日期</span>
-          <input id="export-start" type="date" class="mt-1 w-full px-2 py-1.5 rounded-md tabular"></label>
+          <input id="export-start" type="date" oninput="exportFieldError(['export-start','export-end'],'export-dates-err','')"
+                 class="mt-1 w-full px-2 py-1.5 rounded-md tabular"></label>
         <label class="block"><span class="font-semibold">结束日期</span>
-          <input id="export-end" type="date" class="mt-1 w-full px-2 py-1.5 rounded-md tabular"></label>
+          <input id="export-end" type="date" oninput="exportFieldError(['export-start','export-end'],'export-dates-err','')"
+                 class="mt-1 w-full px-2 py-1.5 rounded-md tabular"></label>
+        <!-- 常驻占位：出错时才有字，但高度始终存在，报错不会把按钮顶走 -->
+        <p id="export-dates-err" class="col-span-2 min-h-[16px] mt-1 text-[11px] text-[var(--alert)]"></p>
       </div>
-      <label class="block col-span-2"><span class="font-semibold">导出人姓名</span>
-        <span class="text-[var(--text-muted)]">（必填，用于合规审计）</span>
-        <input id="export-actor" type="text" required class="mt-1 w-full px-2 py-1.5 rounded-md"></label>
+      <div class="col-span-2">
+        <label class="block"><span class="font-semibold">导出人姓名</span>
+          <span class="text-[var(--text-muted)]">（必填，用于合规审计）</span>
+          <input id="export-actor" type="text" required oninput="exportFieldError(['export-actor'],'export-actor-err','')"
+                 class="mt-1 w-full px-2 py-1.5 rounded-md"></label>
+        <p id="export-actor-err" class="min-h-[16px] mt-1 text-[11px] text-[var(--alert)]"></p>
+      </div>
     </div>
   </div>
 

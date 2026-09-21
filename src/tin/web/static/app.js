@@ -41,6 +41,7 @@ function toggleDrawer(drawerId, open) {
   backdrop.classList.toggle("hidden", !anyOpen);
   // 抽屉打开时锁住主体滚动，避免出现双滚动条
   document.body.classList.toggle("overflow-hidden", anyOpen);
+  document.body.classList.toggle("drawer-open", anyOpen);
   if (open && drawerId === "quick-drawer") {
     setTimeout(() => document.getElementById("drawer-value").focus(), 320);
   }
@@ -311,6 +312,7 @@ const exportState = { groups: [], templates: [], selected: [], templateId: null,
 
 async function openExportDrawer() {
   toggleDrawer("export-drawer", true);
+  exportClearErrors();  // 上次的报错不该跟到下一次打开
   if (!exportState.groups.length) {
     const [fields, templates] = await Promise.all([
       fetch("/api/sn/export/fields").then((r) => r.json()),
@@ -353,6 +355,7 @@ function exportMove(index, delta) {
   const to = index + delta;
   if (to < 0 || to >= list.length) return;
   [list[index], list[to]] = [list[to], list[index]];
+  exportState.activeField = list[to].field;
   exportRender();
 }
 
@@ -384,6 +387,13 @@ function exportToggleGroup(groupIndex, on) {
   exportRender();
 }
 
+function exportSetActive(field, event) {
+  // 胶囊内的 ◀ ▶ × 各有自己的动作，点它们不该顺带改选中态
+  if (event && event.target.closest("button")) return;
+  exportState.activeField = exportState.activeField === field ? null : field;
+  exportRender();
+}
+
 let exportDragFrom = null;
 
 function exportDragStart(index, event) {
@@ -405,6 +415,7 @@ function exportDrop(index, event) {
   const list = exportState.selected;
   const [moved] = list.splice(from, 1);
   list.splice(index, 0, moved);
+  exportState.activeField = moved.field;
   exportRender();
 }
 
@@ -431,10 +442,15 @@ function exportRender() {
     ${tpl ? `<button type="button" onclick="exportDelete()" class="px-2 py-1.5 text-xs rounded-md text-[var(--alert)] hover:bg-[var(--alert-soft)]">删除</button>` : ""}`;
 
   document.getElementById("export-pills").innerHTML = exportState.selected.map((c, i) => `
-    <span draggable="true" title="可拖拽调序，或用 ◀ ▶ 按键"
+    <span draggable="true" title="点击选中后用 ◀ ▶ 调序，也可直接拖拽"
+          data-pill="${c.field}" ${c.field === exportState.activeField ? 'data-active="1"' : ""}
+          onclick="exportSetActive('${c.field}', event)"
           ondragstart="exportDragStart(${i}, event)" ondragover="exportDragOver(${i}, event)"
           ondrop="exportDrop(${i}, event)"
-          class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--primary-soft)] text-[var(--primary)] text-[11px] cursor-grab active:cursor-grabbing">
+          class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] cursor-grab active:cursor-grabbing ${
+            c.field === exportState.activeField
+              ? "bg-[var(--primary)] text-white ring-2 ring-[var(--primary)] ring-offset-1"
+              : "bg-[var(--primary-soft)] text-[var(--primary)]"}">
       <span class="opacity-50">⠿</span><b class="tabular">${i + 1}.</b>${esc(c.label)}
       ${c.field === "trade_date" ? "" : `
         <button type="button" onclick="exportMove(${i}, -1)" ${i === 0 ? "disabled" : ""} class="disabled:opacity-30" title="前移">◀</button>
@@ -451,7 +467,7 @@ function exportRender() {
         <input type="checkbox" onclick="event.preventDefault(); exportToggleGroup(${gi}, ${!allOn})"
                ${allOn ? "checked" : ""} ${picked && !allOn ? "data-partial" : ""}
                title="${allOn ? "清空本组" : "全选本组"}">
-        <span>${esc(g.name)}</span>
+        <span class="chev text-[var(--text-muted)]">▸</span><span>${esc(g.name)}</span>
         <span class="text-[var(--text-muted)] font-normal tabular">(${picked}/${g.fields.length})</span></summary>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-1 mt-1.5">
         ${g.fields.map((f) => `<label class="flex items-start gap-1.5 text-[11px] py-0.5">
@@ -521,16 +537,47 @@ async function exportDelete() {
   showToast(`已删除模板「${tpl.name}」`);
 }
 
-async function exportRun() {
+function exportFieldError(inputIds, slotId, message) {
+  const slot = document.getElementById(slotId);
+  if (slot) slot.textContent = message || "";
+  inputIds.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle("field-error", Boolean(message));
+    el.setAttribute("aria-invalid", message ? "true" : "false");
+  });
+}
+
+function exportClearErrors() {
+  exportFieldError(["export-actor"], "export-actor-err", "");
+  exportFieldError(["export-start", "export-end"], "export-dates-err", "");
+}
+
+function exportValidate() {
   const payload = exportPayload();
+  exportClearErrors();
   if (!payload.actor) {
-    showToast("请填写导出人姓名（用于合规审计）");
-    return;
+    exportFieldError(["export-actor"], "export-actor-err", "请填写导出人姓名，导出记录要留痕到人");
+    document.getElementById("export-actor").focus();
+    return null;
   }
   if (payload.date_range === "custom" && !(payload.start_date && payload.end_date)) {
-    showToast("自定义区间需要同时填写起止日期");
-    return;
+    const missing = payload.start_date ? "export-end" : "export-start";
+    exportFieldError(["export-start", "export-end"], "export-dates-err", "自定义区间需要同时填写起止日期");
+    document.getElementById(missing).focus();
+    return null;
   }
+  if (payload.date_range === "custom" && payload.start_date > payload.end_date) {
+    exportFieldError(["export-start", "export-end"], "export-dates-err", "起始日期不能晚于结束日期");
+    document.getElementById("export-start").focus();
+    return null;
+  }
+  return payload;
+}
+
+async function exportRun() {
+  const payload = exportValidate();
+  if (!payload) return;
   const btn = document.getElementById("export-run");
   btn.disabled = true;
   btn.textContent = "正在生成…";
