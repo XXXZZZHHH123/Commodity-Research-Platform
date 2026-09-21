@@ -66,6 +66,14 @@ def _num(value, unit: str = "", signed: bool = False) -> str:
     return s.replace("-", "−")
 
 
+def static_version() -> str:
+    """静态资源指纹。页面每次渲染都带上它，避免浏览器拿着旧的 app.js 配新的 HTML——
+    那样按钮在、函数不在，点了没反应且毫无提示。"""
+    newest = max((f.stat().st_mtime for f in (HERE / "static").glob("*")), default=0)
+    return str(int(newest))
+
+
+templates.env.globals["static_version"] = static_version
 templates.env.filters["num"] = _num
 templates.env.filters["local"] = lambda dt: dt.astimezone(SHANGHAI).strftime("%Y-%m-%d %H:%M") if dt else ""
 
