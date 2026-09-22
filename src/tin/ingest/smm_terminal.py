@@ -14,6 +14,7 @@ SMM 终端导出的 xlsx 每张表是「日期 × 指标」的宽表，前四行
 终端导出动辄几十万条，只能走命令行。两者最终都汇入同一个 `record()` 闸门。
 """
 
+import io
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from pathlib import Path
@@ -300,7 +301,78 @@ def load(session, path: str | Path, *, entered_by: str, variety: str = "SN",
             report.written += row is not None
             report.unchanged += row is None
         session.flush()
-        if progress and n % 20 == 0:
+        # 最后一条必定回调：否则不足 20 条的工作簿进度永远停在 0%，
+        # 跑完也没有一次收尾，前端看到的是"完成了但进度 0%"
+        if progress and (n % 20 == 0 or n == len(wanted)):
             progress(n, len(wanted), report)
     session.commit()
     return report
+
+
+# ---------- 探测与摘要（网页整体导入用） ----------
+
+def looks_like_terminal_export(data: bytes) -> bool:
+    """只看前四行的首列标签，判断这是不是 SMM 终端原样导出。
+
+    要在单元格上限之前判断，所以不能整本读进来——`read_only` 模式下逐行取前四行即可。
+    """
+    from openpyxl import load_workbook
+
+    try:
+        wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    except Exception:  # noqa: BLE001 - 打不开就不是，交给原有通道去报错
+        return False
+    try:
+        for sheet in wb.sheetnames:
+            rows = wb[sheet].iter_rows(max_row=4, max_col=1, values_only=True)
+            labels = tuple(str(r[0]).strip() if r and r[0] else "" for r in rows)
+            if labels == HEADER_LABELS:
+                return True
+        return False
+    finally:
+        wb.close()
+
+
+def summarize(session, data_or_path, variety: str = "SN") -> dict:
+    """确认页要的批次级信息。
+
+    规模到几十万条时，人能判断的是「259 个新指标、跨度 2006–2026、有没有口径冲突」，
+    不是「第 137,204 行的值对不对」。所以这里给的是批次摘要，不是行清单。
+    """
+    from collections import Counter
+
+    from tin.ingest.record import RecordError, _check_caliber_consistent
+    from tin.models import Indicator
+
+    everything = read_workbook(data_or_path)
+    active = [s for s in everything if not s.discontinued]
+
+    new, reused, conflicts = [], [], []
+    for series in active:
+        spec = derive_spec(series, variety)
+        existing = session.get(Indicator, spec.series_id)
+        if existing is None:
+            new.append(spec)
+            continue
+        reused.append({"series_id": spec.series_id, "name": existing.name})
+        # 口径冲突只可能出在已登记的那几条上，逐条预检一次，别等跑了三分钟才发现
+        probe = observations(series, entered_by="预检", variety=variety)
+        if probe:
+            try:
+                _check_caliber_consistent(existing, probe[0])
+            except RecordError as exc:
+                conflicts.append(str(exc))
+
+    days = [d for s in active for d in (min(s.points, default=None), max(s.points, default=None)) if d]
+    return {
+        "mode": "smm_terminal",
+        "series_total": len(everything),
+        "new_indicators": len(new),
+        "reused_indicators": reused,
+        "skipped_discontinued": len(everything) - len(active),
+        "points": sum(len(s.points) for s in active),
+        "first_date": min(days).isoformat() if days else None,
+        "last_date": max(days).isoformat() if days else None,
+        "categories": dict(Counter(spec.category for spec in new).most_common()),
+        "caliber_conflicts": conflicts,
+    }

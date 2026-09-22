@@ -84,10 +84,23 @@ def test_read_table_rejects_unsupported_format():
         read_table(b"x", "report.pdf")
 
 
-def test_read_table_rejects_oversized_file():
-    rows = [[f"c{c}" for c in range(50)] for _ in range(1100)]  # 55,000 单元格
+def test_read_table_rejects_files_past_the_cell_cap():
+    """上限按「逐行预览还有意义」定：再大就该走 SMM 终端那条摘要确认通道。"""
+    from tin.ingest.excel_importer import MAX_CELLS
+
+    cols = 50
+    rows = [[f"c{c}" for c in range(cols)] for _ in range(MAX_CELLS // cols + 10)]
     with pytest.raises(ImportError_, match="规模限制"):
         read_table(xlsx(rows), "big.xlsx")
+
+
+def test_read_table_accepts_a_file_just_under_the_cap():
+    """上限内必须放行——否则抬高上限等于没抬。"""
+    from tin.ingest.excel_importer import MAX_CELLS
+
+    cols = 50
+    rows = [[f"c{c}" for c in range(cols)] for _ in range(MAX_CELLS // cols - 10)]
+    assert len(read_table(xlsx(rows), "ok.xlsx")) == len(rows)
 
 
 # ---------- 表头匹配与口径防呆 ----------

@@ -201,3 +201,101 @@ def test_a_workbook_without_the_smm_layout_is_rejected_loudly():
     sheets = {"S": [["日期", "随便一列"], [datetime(2026, 9, 21), 1]]}
     with pytest.raises(smm.SmmFormatError):
         smm.read_workbook(make_workbook(sheets))
+
+
+# ---------- 网页整体导入通道 ----------
+
+def test_detects_terminal_layout_without_reading_everything():
+    """探测必须发生在单元格上限之前，所以只看前四行的首列标签。"""
+    assert smm.looks_like_terminal_export(make_workbook(SAMPLE).getvalue())
+    plain = {"S": [["日期", "SMM 1# 锡现货均价 [SMM.SN.spot.1]"], [datetime(2026, 9, 21), 409000]]}
+    assert not smm.looks_like_terminal_export(make_workbook(plain).getvalue())
+    assert not smm.looks_like_terminal_export(b"not an xlsx at all")
+
+
+def test_summary_answers_what_a_human_can_actually_judge(session):
+    """几十万行没人逐行看得完，确认页给的是批次级信息。"""
+    s = smm.summarize(session, make_workbook(SAMPLE))
+    assert s["mode"] == "smm_terminal"
+    assert s["new_indicators"] == 5
+    assert [r["series_id"] for r in s["reused_indicators"]] == ["SMM.SN.spot.1"]
+    assert s["skipped_discontinued"] == 1
+    assert s["points"] == 10
+    assert (s["first_date"], s["last_date"]) == ("2026-09-18", "2026-09-21")
+    assert s["caliber_conflicts"] == []
+    assert sum(s["categories"].values()) == s["new_indicators"]
+
+
+def test_summary_pre_checks_caliber_conflicts(session):
+    """口径冲突只会出在已登记的那几条上，预检一次，别等跑完三分钟才发现。"""
+    session.add(Indicator(
+        series_id="SMM.a1001", name="占位", variety="SN", category="价格",
+        caliber={"time_type": "交易时点", "price_type": "结算价"},
+        unit="元/吨", source="SMM 终端", frequency="日", fetch_mode="manual", phase="P1"))
+    session.flush()
+    s = smm.summarize(session, make_workbook(SAMPLE))
+    assert any("口径不符" in c for c in s["caliber_conflicts"])
+
+
+def test_staging_token_cannot_escape_the_staging_directory(tmp_path, monkeypatch):
+    """令牌直接参与拼文件名，必须挡住路径穿越。"""
+    from tin.config import settings
+    from tin.ingest import import_jobs
+
+    monkeypatch.setattr(settings, "staging_dir", tmp_path)
+    for bad in ("../../etc/passwd", "a" * 31, "../" + "a" * 29, "ABCDEF" + "0" * 26):
+        with pytest.raises(ValueError, match="令牌"):
+            import_jobs.staging_path(bad)
+
+    token = import_jobs.stage(b"x")
+    assert import_jobs.staging_path(token).parent == tmp_path
+
+
+def test_job_status_never_leaks_the_staging_token(tmp_path, monkeypatch):
+    from tin.config import settings
+    from tin.ingest import import_jobs
+
+    monkeypatch.setattr(settings, "staging_dir", tmp_path)
+    token = import_jobs.stage(make_workbook(SAMPLE).getvalue())
+    job_id = import_jobs.create_smm_job(token, "测试员", "tin.xlsx")
+    state = import_jobs.snapshot(job_id)
+    assert "token" not in state
+    assert state["state"] == "running" and state["percent"] == 0
+
+
+def test_background_job_imports_and_reports(tmp_path, monkeypatch, session):
+    """后台任务跑完要把结果留在状态里，并写一条审计。"""
+    from sqlalchemy.orm import sessionmaker
+
+    from tin.config import settings
+    from tin.ingest import import_jobs
+    from tin.models import AuditLog
+
+    monkeypatch.setattr(settings, "staging_dir", tmp_path)
+    monkeypatch.setattr("tin.db.SessionLocal", sessionmaker(session.get_bind(), expire_on_commit=False))
+
+    token = import_jobs.stage(make_workbook(SAMPLE).getvalue())
+    job_id = import_jobs.create_smm_job(token, "测试员", "tin.xlsx")
+    import_jobs.execute(job_id)
+
+    state = import_jobs.snapshot(job_id)
+    assert state["state"] == "done", state.get("error")
+    assert state["registered"] == 5 and state["written"] == 10
+    assert state["percent"] == 100
+    # 暂存文件跑完即删，不留副本
+    assert not import_jobs.staging_path(token).exists()
+
+    log = session.scalars(select(AuditLog).where(AuditLog.action == "导入")).all()
+    assert len(log) == 1 and log[0].detail["written"] == 10
+
+
+def test_background_job_records_failure_instead_of_swallowing_it(tmp_path, monkeypatch):
+    from tin.config import settings
+    from tin.ingest import import_jobs
+
+    monkeypatch.setattr(settings, "staging_dir", tmp_path)
+    token = import_jobs.stage("这不是一个 xlsx".encode())
+    job_id = import_jobs.create_smm_job(token, "测试员", "坏文件.xlsx")
+    import_jobs.execute(job_id)
+    state = import_jobs.snapshot(job_id)
+    assert state["state"] == "failed" and state["error"]

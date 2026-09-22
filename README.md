@@ -31,7 +31,9 @@ python -m tin.jobs import-smm /path/to/tin.xlsx --by 张三 --dry-run  # 先试�
 python -m tin.jobs import-smm /path/to/tin.xlsx --by 张三            # 再入库，可重复执行
 ```
 
-按 SMM 的「指标Id」精确对齐，不做名称猜测；方案见 `docs/SMM终端整体导入方案.md`。
+按 SMM 的「指标Id」精确对齐，不做名称猜测。也可以直接把整本工作簿拖进 `/sn/entry` 的批量导入框：
+系统识别出终端格式后会改走**批次摘要确认**（新指标数、观测点、时间范围、口径冲突预检），
+确认后转后台任务并显示进度。方案见 `docs/SMM终端整体导入方案.md`。
 
 服务器直连不到的数据源，走离线搬运（见「数据源」一节）：
 
