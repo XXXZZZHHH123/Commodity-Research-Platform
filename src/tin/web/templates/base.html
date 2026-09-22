@@ -139,6 +139,61 @@
   </form>
 </aside>
 
+<div id="series-chart-modal" class="series-chart-modal hidden fixed inset-0" role="dialog"
+     aria-modal="true" aria-hidden="true" aria-labelledby="series-chart-title">
+  <button type="button" class="series-chart-backdrop absolute inset-0" data-chart-close
+          aria-label="关闭历史图表"></button>
+  <section class="series-chart-surface absolute inset-x-3 top-1/2 -translate-y-1/2 mx-auto max-w-6xl overflow-hidden">
+    <header class="series-chart-header flex items-start justify-between gap-4 px-5 py-4 border-b border-[var(--line)]">
+      <div class="min-w-0">
+        <div class="flex items-center gap-2 text-[10px] font-semibold text-[var(--text-muted)] mb-1">
+          <span id="series-chart-provider" class="px-1.5 py-0.5 rounded bg-[var(--surface-soft)]"></span>
+          <span id="series-chart-id" class="tabular truncate"></span>
+        </div>
+        <h2 id="series-chart-title" class="text-base font-bold text-[var(--text)] truncate">历史走势</h2>
+      </div>
+      <button type="button" data-chart-close class="series-chart-close grid place-items-center shrink-0"
+              aria-label="关闭历史图表" title="关闭">&times;</button>
+    </header>
+
+    <div class="series-chart-toolbar flex items-center justify-between gap-3 px-5 py-2.5 border-b border-[var(--line)]">
+      <div class="series-chart-ranges flex items-center" role="group" aria-label="图表时间范围">
+        <button type="button" data-chart-range="1m">1月</button>
+        <button type="button" data-chart-range="3m">3月</button>
+        <button type="button" data-chart-range="1y" class="active">1年</button>
+        <button type="button" data-chart-range="all">全部</button>
+      </div>
+      <a id="series-chart-source" href="#" target="_blank" rel="noopener"
+         class="hidden text-[11px] font-semibold text-[var(--primary)] hover:underline">原始数据 ↗</a>
+    </div>
+
+    <div class="series-chart-body px-3 sm:px-5 py-4">
+      <div id="series-chart-loading" class="series-chart-state">正在载入数据</div>
+      <div id="series-chart-error" class="series-chart-state hidden text-[var(--alert)]"></div>
+      <div id="series-chart-content" class="hidden">
+        <div id="series-chart-plot" class="series-chart-plot relative">
+          <svg id="series-chart-svg" viewBox="0 0 1000 440" preserveAspectRatio="none"
+               role="img" aria-label="历史时间序列图"></svg>
+          <div id="series-chart-readout" class="series-chart-readout" aria-live="polite">
+            <div id="series-chart-readout-date" class="text-[10px] text-[var(--text-muted)] tabular"></div>
+            <div class="mt-0.5 flex items-baseline gap-1.5">
+              <span id="series-chart-readout-value" class="text-lg font-black tabular text-[var(--text)]"></span>
+              <span id="series-chart-readout-unit" class="text-[10px] text-[var(--text-muted)]"></span>
+            </div>
+            <div id="series-chart-readout-change" class="text-[10px] font-semibold tabular"></div>
+          </div>
+        </div>
+        <footer class="series-chart-stats grid grid-cols-2 sm:grid-cols-4 border-t border-[var(--line)] mt-2">
+          <div><span>最新</span><strong id="series-chart-stat-latest"></strong></div>
+          <div><span>区间最高</span><strong id="series-chart-stat-high"></strong></div>
+          <div><span>区间最低</span><strong id="series-chart-stat-low"></strong></div>
+          <div><span>观测点</span><strong id="series-chart-stat-count"></strong></div>
+        </footer>
+      </div>
+    </div>
+  </section>
+</div>
+
 <div id="toast" class="hidden fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg bg-[var(--primary)] text-white text-xs font-semibold shadow-xl flex items-center gap-2">
   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
   <span id="toast-msg"></span>

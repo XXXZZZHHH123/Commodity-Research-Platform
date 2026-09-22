@@ -83,11 +83,23 @@
 </div>
 {%- endmacro %}
 
-{% macro trend(m) -%}
-<div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-3.5 shadow-sm">
+{% macro trend(m, chart_date) -%}
+<article class="macro-trend-card {{ 'is-interactive' if m.status == 'ok' }} rounded-lg border border-[var(--line)] bg-[var(--surface)] p-3.5 shadow-sm relative">
+  {% if m.status == 'ok' %}
+  <button type="button" class="macro-chart-trigger absolute inset-0 z-10 rounded-lg"
+          data-series-chart="{{ m.series_id }}" data-chart-date="{{ chart_date }}"
+          aria-label="展开 {{ m.name }} 历史图表" aria-haspopup="dialog" title="展开历史图表"></button>
+  {% endif %}
   <div class="flex justify-between items-start gap-2">
     <span class="text-xs font-bold">{{ m.name }}</span>
-    <span class="shrink-0 px-1.5 py-0.5 text-[9px] rounded bg-[var(--surface-soft)] text-[var(--text-muted)]">{{ m.provider }} · {{ m.source_level }}</span>
+    <span class="flex items-center gap-1.5 shrink-0">
+      <span class="px-1.5 py-0.5 text-[9px] rounded bg-[var(--surface-soft)] text-[var(--text-muted)]">{{ m.provider }} · {{ m.source_level }}</span>
+      {% if m.status == 'ok' %}
+      <svg class="macro-expand-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="M9 21H3v-6"/><path d="m3 21 7-7"/>
+      </svg>
+      {% endif %}
+    </span>
   </div>
   {% if m.status == 'ok' %}
   <div class="my-2.5 flex items-end justify-between gap-2">
@@ -107,5 +119,5 @@
   <div class="my-2.5 text-sm font-semibold text-[var(--text-muted)]">尚未取数</div>
   <div class="text-[10px] text-[var(--text-muted)] border-t border-[var(--line)] pt-1">运行宏观数据采集后显示</div>
   {% endif %}
-</div>
+</article>
 {%- endmacro %}

@@ -32,7 +32,7 @@
     <span class="text-xs text-[var(--text-muted)]">{{ g.cards | selectattr('status', 'equalto', 'ok') | list | length }} / {{ g.cards | length }} 已取到</span>
   </div>
   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-    {% for m in g.cards %}{{ trend(m) }}{% endfor %}
+    {% for m in g.cards %}{{ trend(m, d) }}{% endfor %}
   </div>
 </section>
 {% endfor %}
