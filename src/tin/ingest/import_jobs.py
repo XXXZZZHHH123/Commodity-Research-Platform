@@ -91,10 +91,10 @@ def snapshot(job_id: str) -> dict | None:
         return {**state, "percent": job.percent}
 
 
-def create_smm_job(token: str, actor: str, filename: str, variety: str = "SN") -> str:
+def create_terminal_job(token: str, actor: str, filename: str, variety: str = "SN") -> str:
     """登记一个任务并返回任务号。真正的执行由调用方丢进后台。"""
     staging_path(token)  # 令牌不合法就在这里炸，别等到后台线程里
-    job = Job(id=uuid.uuid4().hex, kind="smm_terminal", filename=filename, actor=actor,
+    job = Job(id=uuid.uuid4().hex, kind="vendor_terminal", filename=filename, actor=actor,
               started_at=datetime.now(timezone.utc).isoformat(), token=token, variety=variety)
     with _LOCK:
         _JOBS[job.id] = job
@@ -104,7 +104,7 @@ def create_smm_job(token: str, actor: str, filename: str, variety: str = "SN") -
 def execute(job_id: str) -> None:
     """后台线程里跑。任何异常都落到任务状态上，不吞掉。"""
     from tin.db import SessionLocal
-    from tin.ingest.smm_terminal import load
+    from tin.ingest.vendor_terminal import load
     from tin.models import AuditLog
 
     with _LOCK:
@@ -124,7 +124,7 @@ def execute(job_id: str) -> None:
                           progress=progress)
             session.add(AuditLog(
                 at=datetime.now(timezone.utc), actor=job.actor, action="导入",
-                target_type="smm_terminal", target_id=job.filename[:80],
+                target_type="vendor_terminal", target_id=job.filename[:80],
                 detail={"registered": report.registered, "written": report.written,
                         "unchanged": report.unchanged, "rejected": len(report.rejected)}))
             session.commit()

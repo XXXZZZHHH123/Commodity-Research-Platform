@@ -1,7 +1,7 @@
-"""SMM 终端导出工作簿的整体导入（docs/SMM终端整体导入方案.md）。"""
+"""数据商终端导出工作簿的整体导入（docs/数据商终端整体导入方案.md）。"""
 
 import io
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 import pytest
 from openpyxl import Workbook
@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from tin.caliber.dictionary import ContractKind, PriceType, SpotSource, StockScope, WeightBasis
 from tin.config import SHANGHAI
-from tin.ingest import smm_terminal as smm
+from tin.ingest import vendor_terminal as vt
 from tin.ingest.record import latest_index, record
 from tin.models import Indicator, Observation
 from tin.schemas.caliber import Caliber
@@ -55,7 +55,7 @@ SAMPLE = {
 
 @pytest.fixture
 def series():
-    return {s.vendor_code: s for s in smm.read_workbook(make_workbook(SAMPLE))}
+    return {s.code: s for s in vt.read_workbook(make_workbook(SAMPLE))}
 
 
 def test_reads_the_four_row_header_layout(series):
@@ -86,33 +86,33 @@ def test_duplicate_vendor_ids_are_taken_once():
         ["频率", "周", "周"],
         [datetime(2026, 9, 18), 7059, 7059],
     ]}
-    got = smm.read_workbook(make_workbook(sheets))
-    assert [s.vendor_code for s in got] == ["a10024418"]
+    got = vt.read_workbook(make_workbook(sheets))
+    assert [s.code for s in got] == ["a10024418"]
 
 
 def test_discontinued_columns_are_flagged(series):
-    assert series["a1003"].discontinued
-    assert not series["a1001"].discontinued
+    assert vt.discontinued(series["a1003"])
+    assert not vt.discontinued(series["a1001"])
 
 
 def test_override_binds_to_the_already_registered_series(series):
     """已登记的现货价不另建一份，否则 BASIS 会指着一条空序列算不出数。"""
-    assert series["s20002960"].series_id == "SMM.SN.spot.1"
-    assert series["a1001"].series_id == "SMM.a1001"
+    assert vt.SMM.series_id("s20002960") == "SMM.SN.spot.1"
+    assert vt.SMM.series_id("a1001") == "SMM.a1001"
 
 
 def test_caliber_is_derived_from_the_name_hierarchy(series):
-    cal = smm.derive_caliber(series["a1001"]).dump()
+    cal = vt.derive_caliber(series["a1001"]).dump()
     assert cal["price_type"] == PriceType.收盘价
     assert cal["contract_kind"] == ContractKind.主力合约
     assert cal["time_type"] == "交易时点"
 
-    assert smm.derive_caliber(series["a1002"]).dump()["contract_kind"] == ContractKind.连二连续
-    assert smm.derive_caliber(series["a10020744"]).dump()["stock_scope"] == StockScope.社会库存
-    assert smm.derive_caliber(series["a10005168"]).dump()["weight_basis"] == WeightBasis.实物吨
-    assert smm.derive_caliber(series["s20002960"]).dump()["spot_source"] == SpotSource.SMM
+    assert vt.derive_caliber(series["a1002"]).dump()["contract_kind"] == ContractKind.连二连续
+    assert vt.derive_caliber(series["a10020744"]).dump()["stock_scope"] == StockScope.社会库存
+    assert vt.derive_caliber(series["a10005168"]).dump()["weight_basis"] == WeightBasis.实物吨
+    assert vt.derive_caliber(series["s20002960"]).dump()["spot_source"] == SpotSource.SMM
     # SMM 自采数据是发布时点，不是交易时点
-    assert smm.derive_caliber(series["a10020744"]).dump()["time_type"] == "发布时点"
+    assert vt.derive_caliber(series["a10020744"]).dump()["time_type"] == "发布时点"
 
 
 def test_unknown_spot_market_stays_blank_rather_than_inventing_a_value():
@@ -124,22 +124,22 @@ def test_unknown_spot_market_stays_blank_rather_than_inventing_a_value():
         ["频率", "日", "日"],
         [datetime(2026, 9, 21), 408000, 409000],
     ]}
-    by_code = {s.vendor_code: s for s in smm.read_workbook(make_workbook(sheets))}
-    gejiu = smm.derive_caliber(by_code["s22795417"]).dump()
+    by_code = {s.code: s for s in vt.read_workbook(make_workbook(sheets))}
+    gejiu = vt.derive_caliber(by_code["s22795417"]).dump()
     assert "spot_source" not in gejiu or gejiu["spot_source"] is None
     assert "个旧" in gejiu["note"]
-    assert smm.derive_caliber(by_code["s20123078"]).dump()["spot_source"] == SpotSource.长江有色
+    assert vt.derive_caliber(by_code["s20123078"]).dump()["spot_source"] == SpotSource.长江有色
 
 
 def test_load_registers_indicators_and_writes_observations(session):
-    report = smm.load(session, make_workbook(SAMPLE), entered_by="测试")
+    report = vt.load(session, make_workbook(SAMPLE), entered_by="测试")
     assert report.skipped_series == 1  # 停用列
     assert report.rejected == []
     assert report.written == 10  # 两表各列的有效点之和，停用列不计
 
     ind = session.get(Indicator, "SMM.a1001")
     assert ind is not None and ind.vendor_code == "a1001" and ind.fetch_mode == "manual"
-    assert ind.source == smm.SOURCE
+    assert ind.source == vt.SMM.label
 
     rows = session.scalars(select(Observation).where(Observation.series_id == "SMM.a1001")).all()
     assert {r.value for r in rows} == {407490.0, 409000.0}
@@ -149,24 +149,44 @@ def test_load_registers_indicators_and_writes_observations(session):
 
 
 def test_load_is_idempotent(session):
-    first = smm.load(session, make_workbook(SAMPLE), entered_by="测试")
-    second = smm.load(session, make_workbook(SAMPLE), entered_by="测试")
+    first = vt.load(session, make_workbook(SAMPLE), entered_by="测试")
+    second = vt.load(session, make_workbook(SAMPLE), entered_by="测试")
     assert first.written > 0
     assert second.written == 0
     assert second.unchanged == first.written
     assert second.registered == 0
 
 
-def test_load_still_goes_through_the_record_gate(session):
-    """口径与登记不符时必须被拒，批量通道不是绕过闸门的后门。"""
+def test_registered_caliber_wins_over_name_derivation(session):
+    """已登记指标以登记口径入库，不用按名称猜的那个。
+
+    否则钢联「锡锭：库存：中国」会被推成交易所库存，而它登记的是社会库存——
+    一条本该入库的数据会被闸门挡住，挡的还是推导规则自己的错。
+    """
     session.add(Indicator(
         series_id="SMM.a1001", name="占位", variety="SN", category="价格",
-        caliber={"time_type": "交易时点", "price_type": "结算价"},  # 与表里的「收盘价」不符
+        caliber={"time_type": "交易时点", "price_type": "结算价"},
         unit="元/吨", source="SMM 终端", frequency="日", fetch_mode="manual", phase="P1"))
     session.flush()
 
-    report = smm.load(session, make_workbook(SAMPLE), entered_by="测试")
-    assert any("口径不符" in r for r in report.rejected)
+    report = vt.load(session, make_workbook(SAMPLE), entered_by="测试")
+    assert report.rejected == []
+    rows = session.scalars(select(Observation).where(Observation.series_id == "SMM.a1001")).all()
+    assert len(rows) == 2
+    assert rows[0].caliber_snapshot["price_type"] == "结算价", "入库快照记的是登记口径"
+
+
+def test_load_still_goes_through_the_record_gate(session):
+    """闸门没被绕过：停用的指标一律拒收，批量通道不是后门。"""
+    session.add(Indicator(
+        series_id="SMM.a1001", name="占位", variety="SN", category="价格",
+        caliber={"time_type": "交易时点", "price_type": "收盘价"},
+        unit="元/吨", source="SMM 终端", frequency="日", fetch_mode="manual",
+        phase="P1", status="停用"))
+    session.flush()
+
+    report = vt.load(session, make_workbook(SAMPLE), entered_by="测试")
+    assert any("已停用" in r for r in report.rejected)
     assert session.scalars(select(Observation).where(Observation.series_id == "SMM.a1001")).all() == []
 
 
@@ -199,42 +219,46 @@ def test_batch_cache_behaves_exactly_like_the_uncached_gate(session):
 def test_a_workbook_without_the_smm_layout_is_rejected_loudly():
     """格式不符要明确报错，不能静默返回空——静默返回空正是网页导入那个「四个 0」的病根。"""
     sheets = {"S": [["日期", "随便一列"], [datetime(2026, 9, 21), 1]]}
-    with pytest.raises(smm.SmmFormatError):
-        smm.read_workbook(make_workbook(sheets))
+    with pytest.raises(vt.VendorFormatError):
+        vt.read_workbook(make_workbook(sheets))
 
 
 # ---------- 网页整体导入通道 ----------
 
 def test_detects_terminal_layout_without_reading_everything():
     """探测必须发生在单元格上限之前，所以只看前四行的首列标签。"""
-    assert smm.looks_like_terminal_export(make_workbook(SAMPLE).getvalue())
+    assert vt.detect(make_workbook(SAMPLE).getvalue()) is not None
     plain = {"S": [["日期", "SMM 1# 锡现货均价 [SMM.SN.spot.1]"], [datetime(2026, 9, 21), 409000]]}
-    assert not smm.looks_like_terminal_export(make_workbook(plain).getvalue())
-    assert not smm.looks_like_terminal_export(b"not an xlsx at all")
+    assert vt.detect(make_workbook(plain).getvalue()) is None
+    assert vt.detect(b"not an xlsx at all") is None
 
 
 def test_summary_answers_what_a_human_can_actually_judge(session):
     """几十万行没人逐行看得完，确认页给的是批次级信息。"""
-    s = smm.summarize(session, make_workbook(SAMPLE))
-    assert s["mode"] == "smm_terminal"
+    s = vt.summarize(session, make_workbook(SAMPLE))
+    assert s["mode"] == "vendor_terminal"
     assert s["new_indicators"] == 5
     assert [r["series_id"] for r in s["reused_indicators"]] == ["SMM.SN.spot.1"]
     assert s["skipped_discontinued"] == 1
     assert s["points"] == 10
     assert (s["first_date"], s["last_date"]) == ("2026-09-18", "2026-09-21")
-    assert s["caliber_conflicts"] == []
+    assert s["caliber_notes"] == []
     assert sum(s["categories"].values()) == s["new_indicators"]
 
 
-def test_summary_pre_checks_caliber_conflicts(session):
-    """口径冲突只会出在已登记的那几条上，预检一次，别等跑完三分钟才发现。"""
+def test_summary_surfaces_where_registration_and_derivation_disagree(session):
+    """登记口径与按名称推导的不一致时，摆出来给人看——但以登记为准，不阻断。
+
+    人按供应商编码做的绑定比按名称的推导权威；两者打架只说明推导规则有问题，
+    或者那条登记绑错了编码。两种都该让人知道，而不是静默选一个。
+    """
     session.add(Indicator(
         series_id="SMM.a1001", name="占位", variety="SN", category="价格",
-        caliber={"time_type": "交易时点", "price_type": "结算价"},
+        caliber={"time_type": "交易时点", "price_type": "结算价"},  # 文件里那列是「收盘价」
         unit="元/吨", source="SMM 终端", frequency="日", fetch_mode="manual", phase="P1"))
     session.flush()
-    s = smm.summarize(session, make_workbook(SAMPLE))
-    assert any("口径不符" in c for c in s["caliber_conflicts"])
+    s = vt.summarize(session, make_workbook(SAMPLE))
+    assert any("price_type 登记为 结算价，按名称推导为 收盘价" in note for note in s["caliber_notes"])
 
 
 def test_staging_token_cannot_escape_the_staging_directory(tmp_path, monkeypatch):
@@ -257,7 +281,7 @@ def test_job_status_never_leaks_the_staging_token(tmp_path, monkeypatch):
 
     monkeypatch.setattr(settings, "staging_dir", tmp_path)
     token = import_jobs.stage(make_workbook(SAMPLE).getvalue())
-    job_id = import_jobs.create_smm_job(token, "测试员", "tin.xlsx")
+    job_id = import_jobs.create_terminal_job(token, "测试员", "tin.xlsx")
     state = import_jobs.snapshot(job_id)
     assert "token" not in state
     assert state["state"] == "running" and state["percent"] == 0
@@ -275,7 +299,7 @@ def test_background_job_imports_and_reports(tmp_path, monkeypatch, session):
     monkeypatch.setattr("tin.db.SessionLocal", sessionmaker(session.get_bind(), expire_on_commit=False))
 
     token = import_jobs.stage(make_workbook(SAMPLE).getvalue())
-    job_id = import_jobs.create_smm_job(token, "测试员", "tin.xlsx")
+    job_id = import_jobs.create_terminal_job(token, "测试员", "tin.xlsx")
     import_jobs.execute(job_id)
 
     state = import_jobs.snapshot(job_id)
@@ -295,7 +319,113 @@ def test_background_job_records_failure_instead_of_swallowing_it(tmp_path, monke
 
     monkeypatch.setattr(settings, "staging_dir", tmp_path)
     token = import_jobs.stage("这不是一个 xlsx".encode())
-    job_id = import_jobs.create_smm_job(token, "测试员", "坏文件.xlsx")
+    job_id = import_jobs.create_terminal_job(token, "测试员", "坏文件.xlsx")
     import_jobs.execute(job_id)
     state = import_jobs.snapshot(job_id)
     assert state["state"] == "failed" and state["error"]
+
+
+# ---------- 钢联 Mysteel 版式 ----------
+
+MYSTEEL_SAMPLE = {
+    "Sheet1": [  # 少一行「更新时间」——钢联自己的表头行数就不固定
+        ["钢联数据"],
+        ["指标名称", "锡精矿：40%Sn：加工费：云南（日）", "锡精矿：60%Sn：加工费：广西（日）"],
+        ["单位", "元/吨", "元/吨"],
+        ["指标编码", "ID01538256", "ID01538259"],
+        ["频度", "日", "日"],
+        ["指标描述", "·", "·"],
+        [datetime(2026, 12, 31), "#N/A", "#N/A"],
+        [datetime(2026, 9, 22), 17500, 12000],
+        [datetime(2026, 9, 19), 17300, "#N/A"],
+    ],
+    "Sheet2": [
+        ["钢联数据"],
+        ["指标名称", "锡锭：库存：中国（周）", "LME：锡：期货库存（日）", "SHFE：锡：主力合约：结算价（日）"],
+        ["单位", "吨", "吨", "元/吨"],
+        ["指标编码", "ID01517441", "FU00015899", "FU00016040"],
+        ["频度", "周", "日", "日"],
+        ["指标描述", "样本覆盖全国主要产区", "·", "·"],
+        ["更新时间", "2026-09-22 11:35:08", "·", "·"],
+        [datetime(2026, 9, 18), 8968, 4780, 408500],
+    ],
+}
+
+
+@pytest.fixture
+def mysteel():
+    return {s.code: s for s in vt.read_workbook(make_workbook(MYSTEEL_SAMPLE))}
+
+
+def test_mysteel_layout_is_detected_and_parsed(mysteel):
+    """钢联的标签、顺序、表头行数都和 SMM 不同，靠「首列是日期」定位数据起点。"""
+    assert vt.detect(make_workbook(MYSTEEL_SAMPLE).getvalue()) is vt.MYSTEEL
+    assert set(mysteel) == {"ID01538256", "ID01538259", "ID01517441", "FU00015899", "FU00016040"}
+    tc = mysteel["ID01538256"]
+    assert tc.unit == "元/吨" and tc.frequency == "日"
+    assert tc.points == {date(2026, 9, 22): 17500.0, date(2026, 9, 19): 17300.0}
+
+
+def test_mysteel_na_marker_is_not_zero(mysteel):
+    """钢联用 #N/A 表示无值，当成 0 会直接污染事实层。"""
+    assert date(2026, 12, 31) not in mysteel["ID01538256"].points
+    assert mysteel["ID01538259"].points == {date(2026, 9, 22): 12000.0}
+
+
+def test_mysteel_description_lands_in_the_caliber_note(mysteel):
+    note = vt.derive_caliber(mysteel["ID01517441"]).dump()["note"]
+    assert "钢联 ID01517441" in note and "样本覆盖全国主要产区" in note
+
+
+def test_tc_grade_is_read_from_the_name(mysteel):
+    """40%Sn 与 60%Sn 的加工费数值不可比，品位是必须落下来的口径维度。"""
+    assert vt.derive_caliber(mysteel["ID01538256"]).dump()["tc_grade"] == "40度"
+    assert vt.derive_caliber(mysteel["ID01538259"]).dump()["tc_grade"] == "60度"
+    # 加工费不是价格类型，不能硬塞一个
+    assert "price_type" not in vt.derive_caliber(mysteel["ID01538256"]).dump()
+
+
+def test_exchange_stock_and_survey_stock_are_not_the_same_scope(mysteel):
+    """LME 的期货库存是交易所库存，钢联自采的锡锭库存是社会库存，两者不可混算。"""
+    assert vt.derive_caliber(mysteel["FU00015899"]).dump()["stock_scope"] == "交易所库存"
+    assert vt.derive_caliber(mysteel["ID01517441"]).dump()["stock_scope"] == "社会库存"
+    assert vt.derive_caliber(mysteel["FU00015899"]).dump()["time_type"] == "交易时点"
+    assert vt.derive_caliber(mysteel["ID01517441"]).dump()["time_type"] == "发布时点"
+
+
+def test_mysteel_overrides_bind_the_three_registered_indicators(mysteel, session):
+    """这三个编码在库里已有登记，必须归到原 series_id，否则判断读的还是空序列。"""
+    assert vt.MYSTEEL.series_id("ID01538256") == "MYSTEEL.SN.TC.YN40"
+    assert vt.MYSTEEL.series_id("ID01517441") == "MYSTEEL.SN.stock.social"
+    assert vt.MYSTEEL.series_id("FU00082529") == "ICDX.SN.volume"
+    assert vt.MYSTEEL.series_id("ID01538259") == "MYSTEEL.ID01538259"
+
+
+def test_registered_entry_time_is_used_for_known_indicators(mysteel, session):
+    """已登记指标的发布时刻以登记为准，否则同一序列走导入和走录入页会落在不同时刻。"""
+    from tin.models import Indicator
+
+    tc = session.get(Indicator, "MYSTEEL.SN.TC.YN40")
+    assert tc.default_entry_time == time(11, 0)
+    obs = vt.observations(mysteel["ID01538256"], "测试", registered=tc)
+    assert {o.as_of.astimezone(SHANGHAI).strftime("%H:%M") for o in obs} == {"11:00"}
+    # 未登记的按发布方的常规时刻
+    assert vt.entry_time_for(mysteel["ID01538259"]) == time(15, 0)
+
+
+def test_summary_counts_points_dated_in_the_future(session):
+    """年频/季频按期末标注，会出现晚于今天的点——不拦，但要让人知道有多少。"""
+    s = vt.summarize(session, make_workbook(MYSTEEL_SAMPLE))
+    assert s["vendor"] == "钢联终端"
+    assert s["future_points"] == 0  # 12-31 那行全是 #N/A，没有真值
+    assert any("ICDX" not in m for m in s["frequency_mismatches"]) or s["frequency_mismatches"]
+
+
+def test_mysteel_load_writes_through_the_same_gate(session):
+    report = vt.load(session, make_workbook(MYSTEEL_SAMPLE), entered_by="测试")
+    assert report.rejected == []
+    assert report.reused == 2  # TC 与锡锭库存已登记；ICDX 不在这个样本里
+    rows = session.scalars(
+        select(Observation).where(Observation.series_id == "MYSTEEL.SN.TC.YN40")).all()
+    assert {r.value for r in rows} == {17500.0, 17300.0}
+    assert rows[0].caliber_snapshot["tc_grade"] == "40度"

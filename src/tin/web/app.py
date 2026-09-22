@@ -33,7 +33,7 @@ from tin.export.board import (
 )
 from tin.export import templates as export_templates
 from tin.export.excel import Column, build_export, build_import_template, field_catalog
-from tin.ingest import excel_importer, import_jobs, smm_terminal
+from tin.ingest import excel_importer, import_jobs, vendor_terminal
 from tin.ingest.record import RecordError, record
 from tin.judgments.importer import import_text
 from tin.judgments.service import JudgmentError, current, save_version, to_payload
@@ -313,13 +313,13 @@ async def import_preview(file: UploadFile = File(...), actor: str = Form(...)):
     data = await file.read()
     name = file.filename or "未命名文件"
 
-    # SMM 终端原样导出的工作簿动辄几十万条，逐行预览既装不下也没人看得完。
-    # 它按指标Id 精确对齐，不存在"这列对应哪个指标"的不确定性，该确认的是批次级信息。
-    if smm_terminal.looks_like_terminal_export(data):
+    # 数据商终端原样导出的工作簿动辄几十万条，逐行预览既装不下也没人看得完。
+    # 它按供应商编码精确对齐，不存在"这列对应哪个指标"的不确定性，该确认的是批次级信息。
+    if vendor_terminal.detect(data) is not None:
         with SessionLocal() as s:
             try:
-                summary = smm_terminal.summarize(s, io.BytesIO(data), V)
-            except smm_terminal.SmmFormatError as e:
+                summary = vendor_terminal.summarize(s, io.BytesIO(data), V)
+            except vendor_terminal.VendorFormatError as e:
                 raise HTTPException(400, str(e)) from None
         return JSONResponse({**summary, "token": import_jobs.stage(data), "filename": name})
 
@@ -330,14 +330,14 @@ async def import_preview(file: UploadFile = File(...), actor: str = Form(...)):
             raise HTTPException(400, str(e)) from None
 
 
-@app.post("/api/sn/import/smm/commit")
-def import_smm_commit(tasks: BackgroundTasks, body: dict = Body(...)):
+@app.post("/api/sn/import/terminal/commit")
+def import_terminal_commit(tasks: BackgroundTasks, body: dict = Body(...)):
     """确认整体导入。立刻返回任务号，几分钟的入库放后台跑。"""
     actor = str(body.get("actor", "")).strip()
     if not actor:
         raise HTTPException(400, "请填写导入操作人")
     try:
-        job_id = import_jobs.create_smm_job(
+        job_id = import_jobs.create_terminal_job(
             str(body.get("token", "")), actor, str(body.get("filename", "未命名文件")), V)
     except ValueError as e:
         raise HTTPException(400, str(e)) from None

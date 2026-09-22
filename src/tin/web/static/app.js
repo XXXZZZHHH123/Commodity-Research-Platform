@@ -192,7 +192,7 @@ async function importUpload(input) {
     importState = data;
     // SMM 终端导出走摘要确认：按指标Id 精确对齐，没有"这列对应哪个指标"可确认，
     // 几十万行也没人逐行看得完，该判断的是批次级信息
-    if (data.mode === "smm_terminal") smmRenderSummary(data);
+    if (data.mode === "vendor_terminal") smmRenderSummary(data);
     else importRender();
   } catch (err) {
     box.innerHTML = `<div class="p-3 rounded-lg bg-[var(--alert-soft)] text-[var(--alert)]">${err.message}</div>`;
@@ -209,12 +209,12 @@ function smmRenderSummary(d) {
        <span class="text-[var(--text-muted)]">${label}</span>
        <b class="tabular ${tone}">${value}</b></div>`;
 
-  const conflicts = d.caliber_conflicts || [];
+  const notes = (d.caliber_notes || []).concat(d.frequency_mismatches || []);
   const reused = d.reused_indicators || [];
   document.getElementById("import-result").innerHTML = `
     <div class="p-3 rounded-lg bg-[var(--primary-soft)] text-xs">
-      <div class="font-semibold text-[var(--primary)] mb-1">识别为 SMM 终端导出格式</div>
-      <div class="text-[var(--text-muted)] text-[11px]">按「指标Id」精确对齐，不做名称猜测。
+      <div class="font-semibold text-[var(--primary)] mb-1">识别为${esc(d.vendor ? " " + d.vendor : "数据商终端")}导出格式</div>
+      <div class="text-[var(--text-muted)] text-[11px]">按供应商编码精确对齐，不做名称猜测。
         规模超出逐行预览的范围，请确认下面的批次信息。</div>
     </div>
     <div class="mt-3 text-xs">
@@ -225,10 +225,12 @@ function smmRenderSummary(d) {
       ${stat("跳过已停用列", n(d.skipped_discontinued) + " 列")}
       ${stat("观测点", n(d.points) + " 条")}
       ${stat("时间范围", esc(d.first_date) + " ~ " + esc(d.last_date))}
-      ${stat("口径冲突预检", conflicts.length ? n(conflicts.length) + " 条" : "无",
-             conflicts.length ? "text-[var(--alert)]" : "")}
-      ${conflicts.length ? `<div class="pl-3 text-[11px] text-[var(--alert)]">${
-        conflicts.slice(0, 5).map(esc).join("<br>")}</div>` : ""}
+      ${d.future_points ? stat("其中晚于今天的点", n(d.future_points) + " 条（年/季频按期末标注，该期尚未走完）",
+                               "text-[var(--amber)]") : ""}
+      ${stat("登记与推导的差异", notes.length ? n(notes.length) + " 条（以登记为准）" : "无",
+             notes.length ? "text-[var(--amber)]" : "")}
+      ${notes.length ? `<div class="pl-3 text-[11px] text-[var(--amber)]">${
+        notes.slice(0, 6).map(esc).join("<br>")}</div>` : ""}
       <div class="mt-2 pt-2 border-t border-[var(--line)]">
         <div class="text-[var(--text-muted)] mb-1">新指标分类</div>
         <div class="flex flex-wrap gap-1">${Object.entries(d.categories || {}).map(([k, v]) =>
@@ -252,7 +254,7 @@ async function smmCommit() {
   btn.disabled = true;
   btn.textContent = "正在提交…";
   try {
-    const res = await fetch("/api/sn/import/smm/commit", {
+    const res = await fetch("/api/sn/import/terminal/commit", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: importState.token, filename: importState.filename,
                              actor: document.getElementById("import-actor").value.trim() }),
