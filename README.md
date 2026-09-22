@@ -24,6 +24,17 @@ uvicorn tin.web.app:app --host 0.0.0.0 --port 8765
 pytest
 ```
 
+数据商终端（SMM / 钢联）导出的整本工作簿走整体导入（几十万条，逐行预览装不下）：
+
+```bash
+python -m tin.jobs import-terminal /path/to/tin.xlsx --by 张三 --dry-run  # 先试算
+python -m tin.jobs import-terminal /path/to/tin.xlsx --by 张三            # 再入库，可重复执行
+```
+
+按各家的供应商编码精确对齐，不做名称猜测。也可以直接把整本工作簿拖进 `/sn/entry` 的批量导入框：
+系统识别出终端格式后会改走**批次摘要确认**（新指标数、观测点、时间范围、口径冲突预检），
+确认后转后台任务并显示进度。方案见 [`docs/数据进出方案.md`](docs/数据进出方案.md)。
+
 服务器直连不到的数据源，走离线搬运（见「数据源」一节）：
 
 ```bash
@@ -45,7 +56,7 @@ FRED 与 VIX——当天的上期所文件那会儿还没挂出来，属正常�
 ```
 
 取数不依赖 GitHub Actions：服务器连不上 GitHub，这条路走不通，理由与推演见
-[`docs/自动取数方案与否决记录.md`](docs/自动取数方案与否决记录.md)。
+[`docs/数据进出方案.md`](docs/数据进出方案.md) §13.1。
 
 ## GitHub CI/CD 与内网部署
 
