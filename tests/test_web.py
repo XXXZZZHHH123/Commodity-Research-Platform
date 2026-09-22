@@ -2,8 +2,16 @@ from datetime import date
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
-from tin.web.app import _board_date, _shell
+from tin.web.app import _board_date, _shell, app
+
+
+def test_health_check_reaches_database(session, monkeypatch):
+    monkeypatch.setattr("tin.web.app.SessionLocal", lambda: session)
+    response = TestClient(app).get("/healthz")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
 
 
 def test_calendar_date_uses_nearest_previous_trading_day(loaded):

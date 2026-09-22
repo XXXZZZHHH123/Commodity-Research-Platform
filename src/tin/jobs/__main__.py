@@ -6,6 +6,7 @@ import logging
 import subprocess
 import sys
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 from tin.compute.engine import compute_day, latest_trade_date
 from tin.config import ROOT, SHANGHAI, settings
@@ -54,7 +55,7 @@ def cmd_snapshot(a):
         out = settings.exports_dir / settings.variety / f"{d.isoformat()}.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(snapshot(s, settings.variety, d), ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"快照已写入 {out.relative_to(ROOT)}")
+        print(f"快照已写入 {out}")
 
 
 def cmd_daily(a):
@@ -75,6 +76,61 @@ def cmd_backfill(a):
             print(d, " ".join(f"{r.fetcher}={r.status}" for r in runs))
             if any(r.fetcher == "shfe_quotes" and r.status == "ok" for r in runs):
                 compute_day(s, d)
+
+
+def _weekdays(end: date, days: int) -> list[date]:
+    """目标日往前 N 个自然日里的工作日。周末各源都不发布，抓了只是白白 404。"""
+    return [d for d in (end - timedelta(days=i) for i in range(days, -1, -1)) if d.weekday() < 5]
+
+
+def cmd_snap_raw(a):
+    """下载官方源原件并落盘留证。不连数据库，可跑在任何能上网的机器上。"""
+    from tin.ingest.raw import FAILED, snapshot_day
+
+    out = Path(a.out)
+    failed = False
+    for d in _weekdays(_date(a.date), a.days):
+        manifest = snapshot_day(d, out)
+        for name, e in manifest["sources"].items():
+            n = len(e["files"])
+            print(f"{d} {name:18s} {e['status']:4s} {n:2d} 件  {e.get('error') or ''}")
+            failed |= e["status"] == FAILED
+    # 「未发布」是节假日的正常结果，不算失败；只有真实故障才让 workflow 变红
+    sys.exit(1 if failed else 0)
+
+
+def cmd_import_raw(a):
+    """回放留证原件入库。与当天在线跑 fetch 等价，且可重复执行。
+
+    用于服务器直连不到的数据源：在能上网的机器上 snap-raw，把 raw/ 拷过来再 import-raw。
+    """
+    from tin.ingest.raw import replay_day
+
+    raw = Path(a.raw)
+    with SessionLocal() as s:
+        for d in _weekdays(_date(a.date), a.days):
+            if not (raw / "manifest" / f"{d.isoformat()}.json").exists():
+                print(f"{d} 无留证，跳过")
+                continue
+            runs = replay_day(s, d, raw)
+            print(f"{d} " + "  ".join(f"{r.fetcher}={r.status}({r.written})" for r in runs))
+            if any(r.fetcher == "shfe_quotes" and r.status == "ok" for r in runs):
+                compute_day(s, d)
+
+
+def cmd_import_terminal(a):
+    """把数据商终端导出的整本工作簿入库（SMM / 钢联，几十万条，网页导入装不下）。"""
+    from tin.ingest.vendor_terminal import load
+
+    def show(done, total, rep):
+        print(f"  {done}/{total} 条序列…  写入 {rep.written:,}", flush=True)
+
+    with SessionLocal() as s:
+        rep = load(s, a.file, entered_by=a.by, dry_run=a.dry_run,
+                   register_new=not a.no_register, progress=None if a.dry_run else show)
+    print(("[试算] " if a.dry_run else "") + rep.line())
+    for r in rep.rejected[:10]:
+        print("  拒绝：", r)
 
 
 def cmd_enter(a):
@@ -107,6 +163,23 @@ def main():
     sp.add_argument("--days", type=int, default=10)
     sp.add_argument("--date")
     sp.set_defaults(fn=cmd_backfill)
+    sp = sub.add_parser("snap-raw", help="下载官方源原件留证（不入库）")
+    sp.add_argument("--out", default=str(ROOT / "raw"), help="留证根目录")
+    sp.add_argument("--days", type=int, default=0, help="连同前 N 个自然日一起抓，用于补漏")
+    sp.add_argument("--date")
+    sp.set_defaults(fn=cmd_snap_raw)
+    sp = sub.add_parser("import-raw", help="回放留证原件入库并计算派生值")
+    sp.add_argument("--raw", default=str(ROOT / "raw"), help="留证根目录")
+    sp.add_argument("--days", type=int, default=7)
+    sp.add_argument("--date")
+    sp.set_defaults(fn=cmd_import_raw)
+    sp = sub.add_parser("import-terminal", help="导入数据商终端导出的整本工作簿（SMM / 钢联）")
+    sp.add_argument("file", help="终端导出的 .xlsx")
+    sp.add_argument("--by", required=True, help="导入操作人，写入每条观测的录入人")
+    sp.add_argument("--dry-run", action="store_true", help="只统计不入库")
+    sp.add_argument("--no-register", action="store_true",
+                    help="拒绝库里没见过的编码，只更新已登记序列；无人值守的定时导入必须加这个")
+    sp.set_defaults(fn=cmd_import_terminal)
     sp = sub.add_parser("enter", help="人工录入一条观测")
     sp.add_argument("series_id")
     sp.add_argument("value", type=float)

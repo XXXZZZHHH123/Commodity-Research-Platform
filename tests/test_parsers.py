@@ -98,3 +98,19 @@ def test_vix_close_in_new_york_time():
     o = _by_id(b)["MACRO.VIX"]
     assert o.value == 15.44
     assert o.as_of == datetime(2026, 9, 17, 20, 15, tzinfo=timezone.utc)  # 16:15 EDT
+
+
+def test_quotes_before_close_are_not_published_rather_than_broken():
+    """收盘前上期所返回 200，但收盘价是空串、年内期号未定。
+
+    这是「尚未发布」，不是故障：判成故障的话，每天早盘那次定时取数都会误报一次。
+    """
+    from tin.ingest import NotPublished
+
+    payload = json.loads((FIX / "shfe_kx_20260918.json").read_text())
+    payload["o_year_num"] = ""
+    for row in payload["o_curinstrument"]:
+        row["CLOSEPRICE"] = ""
+        row["SETTLEMENTPRICE"] = ""
+    with pytest.raises(NotPublished):
+        parse_quotes(payload)

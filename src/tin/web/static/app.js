@@ -190,11 +190,124 @@ async function importUpload(input) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "解析失败");
     importState = data;
-    importRender();
+    // SMM 终端导出走摘要确认：按指标Id 精确对齐，没有"这列对应哪个指标"可确认，
+    // 几十万行也没人逐行看得完，该判断的是批次级信息
+    if (data.mode === "vendor_terminal") smmRenderSummary(data);
+    else importRender();
   } catch (err) {
     box.innerHTML = `<div class="p-3 rounded-lg bg-[var(--alert-soft)] text-[var(--alert)]">${err.message}</div>`;
     document.getElementById("import-commit").disabled = true;
   }
+}
+
+function smmRenderSummary(d) {
+  const esc = (t) => String(t == null ? "" : t).replace(/[<>&"]/g, (c) =>
+    ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
+  const n = (v) => Number(v).toLocaleString("zh-CN");
+  const stat = (label, value, tone = "") =>
+    `<div class="flex items-baseline justify-between py-1">
+       <span class="text-[var(--text-muted)]">${label}</span>
+       <b class="tabular ${tone}">${value}</b></div>`;
+
+  const notes = (d.caliber_notes || []).concat(d.frequency_mismatches || []);
+  const reused = d.reused_indicators || [];
+  document.getElementById("import-result").innerHTML = `
+    <div class="p-3 rounded-lg bg-[var(--primary-soft)] text-xs">
+      <div class="font-semibold text-[var(--primary)] mb-1">识别为${esc(d.vendor ? " " + d.vendor : "数据商终端")}导出格式</div>
+      <div class="text-[var(--text-muted)] text-[11px]">按供应商编码精确对齐，不做名称猜测。
+        规模超出逐行预览的范围，请确认下面的批次信息。</div>
+    </div>
+    <div class="mt-3 text-xs">
+      ${stat("新登记指标", n(d.new_indicators) + " 个")}
+      ${stat("复用已登记", n(reused.length) + " 个")}
+      ${reused.length ? `<div class="pl-3 text-[11px] text-[var(--text-muted)]">${
+        reused.map((r) => esc(r.name) + " — " + esc(r.series_id)).join("；")}</div>` : ""}
+      ${stat("跳过已停用列", n(d.skipped_discontinued) + " 列")}
+      ${stat("观测点", n(d.points) + " 条")}
+      ${stat("时间范围", esc(d.first_date) + " ~ " + esc(d.last_date))}
+      ${d.future_points ? stat("其中晚于今天的点", n(d.future_points) + " 条（年/季频按期末标注，该期尚未走完）",
+                               "text-[var(--amber)]") : ""}
+      ${stat("登记与推导的差异", notes.length ? n(notes.length) + " 条（以登记为准）" : "无",
+             notes.length ? "text-[var(--amber)]" : "")}
+      ${notes.length ? `<div class="pl-3 text-[11px] text-[var(--amber)]">${
+        notes.slice(0, 6).map(esc).join("<br>")}</div>` : ""}
+      <div class="mt-2 pt-2 border-t border-[var(--line)]">
+        <div class="text-[var(--text-muted)] mb-1">新指标分类</div>
+        <div class="flex flex-wrap gap-1">${Object.entries(d.categories || {}).map(([k, v]) =>
+          `<span class="px-1.5 py-0.5 rounded bg-[var(--surface-soft)]">${esc(k)} ${v}</span>`).join("")}</div>
+      </div>
+    </div>
+    <div class="mt-3 p-2.5 rounded-md bg-[var(--amber-soft)] text-[var(--amber)] text-[11px]">
+      新指标的口径由系统从 SMM 的层级命名推导，推不出的维度留空。导入后请在「指标」页复核口径。
+    </div>
+    <div class="mt-3 flex justify-end">
+      <button type="button" onclick="smmCommit()" id="smm-commit"
+        class="px-5 py-2 rounded-md bg-[var(--primary)] text-white text-xs font-semibold hover:bg-[var(--primary-hover)] disabled:opacity-40">
+        确认导入 ${n(d.points)} 条</button>
+    </div>`;
+  const commit = document.getElementById("import-commit");
+  if (commit) commit.classList.add("hidden");  // 这条路不走逐行确认的提交按钮
+}
+
+async function smmCommit() {
+  const btn = document.getElementById("smm-commit");
+  btn.disabled = true;
+  btn.textContent = "正在提交…";
+  try {
+    const res = await fetch("/api/sn/import/terminal/commit", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: importState.token, filename: importState.filename,
+                             actor: document.getElementById("import-actor").value.trim() }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "提交失败");
+    smmPoll(data.job_id);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "确认导入";
+    showToast(err.message);
+  }
+}
+
+async function smmPoll(jobId) {
+  const box = document.getElementById("import-result");
+  const n = (v) => Number(v).toLocaleString("zh-CN");
+  const tick = async () => {
+    const res = await fetch(`/api/sn/import/jobs/${jobId}`);
+    if (!res.ok) {
+      box.innerHTML = '<div class="p-3 rounded-lg bg-[var(--alert-soft)] text-[var(--alert)]">任务已过期，请重新上传</div>';
+      return;
+    }
+    const j = await res.json();
+    if (j.state === "running") {
+      box.innerHTML = `
+        <div class="py-6 text-center text-xs">
+          <div class="font-semibold">正在入库…</div>
+          <div class="mt-3 h-2 rounded-full bg-[var(--surface-soft)] overflow-hidden">
+            <div class="h-full bg-[var(--primary)] transition-all" style="width:${j.percent}%"></div></div>
+          <div class="mt-2 text-[var(--text-muted)] tabular">
+            ${j.done}/${j.total} 条序列 · 已写入 ${n(j.written)} 条</div>
+          <div class="mt-1 text-[11px] text-[var(--text-muted)]">几十万条需要几分钟，可以离开本页，回来再看进度</div>
+        </div>`;
+      setTimeout(tick, 2000);
+      return;
+    }
+    if (j.state === "failed") {
+      box.innerHTML = `<div class="p-3 rounded-lg bg-[var(--alert-soft)] text-[var(--alert)] text-xs">
+        导入失败：${j.error}</div>`;
+      return;
+    }
+    box.innerHTML = `
+      <div class="p-3 rounded-lg bg-[var(--primary-soft)] text-xs">
+        <div class="font-semibold text-[var(--primary)]">导入完成</div>
+        <div class="mt-2 tabular">新登记指标 ${n(j.registered)} 个 ·
+          写入 ${n(j.written)} 条 · 值未变跳过 ${n(j.unchanged)} 条</div>
+        ${j.rejected.length ? `<div class="mt-2 text-[var(--alert)]">
+          ${j.rejected.length} 条被闸门拒绝：<br>${j.rejected.slice(0, 5).join("<br>")}</div>` : ""}
+      </div>`;
+    showToast(`已导入 ${n(j.written)} 条观测`);
+  };
+  tick();
 }
 
 function importRender() {

@@ -1,0 +1,10 @@
+[Unit]
+Description=Commodity Research Platform daily data ingestion
+After=commodity-research-platform.service network-online.target
+Requires=commodity-research-platform.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=@DOCKER_BIN@ exec commodity-research-platform python -m tin.jobs daily
+TimeoutStartSec=30min

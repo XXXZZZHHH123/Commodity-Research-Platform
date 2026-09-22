@@ -1,0 +1,25 @@
+[Unit]
+Description=Commodity Research Platform web service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=commodity
+Group=commodity
+WorkingDirectory=/opt/commodity-research-platform/current
+EnvironmentFile=/etc/commodity-research-platform/app.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/commodity-research-platform/current/.venv/bin/python -m uvicorn tin.web.app:app --host 127.0.0.1 --port 8765 --proxy-headers
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+UMask=0002
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/commodity-research-platform
+
+[Install]
+WantedBy=multi-user.target

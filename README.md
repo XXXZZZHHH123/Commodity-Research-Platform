@@ -24,12 +24,51 @@ uvicorn tin.web.app:app --host 0.0.0.0 --port 8765
 pytest
 ```
 
-## 定时任务（内网服务器 crontab）
+数据商终端（SMM / 钢联）导出的整本工作簿走整体导入（几十万条，逐行预览装不下）：
+
+```bash
+python -m tin.jobs import-terminal /path/to/tin.xlsx --by 张三 --dry-run  # 先试算
+python -m tin.jobs import-terminal /path/to/tin.xlsx --by 张三            # 再入库，可重复执行
+```
+
+按各家的供应商编码精确对齐，不做名称猜测。也可以直接把整本工作簿拖进 `/sn/entry` 的批量导入框：
+系统识别出终端格式后会改走**批次摘要确认**（新指标数、观测点、时间范围、口径冲突预检），
+确认后转后台任务并显示进度。方案见 [`docs/数据进出方案.md`](docs/数据进出方案.md)。
+
+服务器直连不到的数据源，走离线搬运（见「数据源」一节）：
+
+```bash
+python -m tin.jobs snap-raw  --out raw --days 3   # 在能上网的机器上下载原件，不碰数据库
+python -m tin.jobs import-raw --raw raw --days 7  # 把 raw/ 拷到服务器后回放入库，可重复执行
+```
+
+## 定时取数
+
+取数跑在服务器自己身上，由 systemd timer 调度（工作日 08:00 与 16:30，见
+`deploy/container/systemd/`）。16:30 那次取当日行情与仓单，08:00 那次主要补隔夜的
+FRED 与 VIX——当天的上期所文件那会儿还没挂出来，属正常「未发布」。
+
+不走部署脚本的机器用 crontab 等价：
 
 ```cron
 30 16 * * 1-5  cd /path/to/tin_display && /path/to/envs/tin/bin/python -m tin.jobs daily >> logs/daily.log 2>&1
 0  8  * * 1-5  cd /path/to/tin_display && /path/to/envs/tin/bin/python -m tin.jobs daily >> logs/daily.log 2>&1
 ```
+
+取数不依赖 GitHub Actions：服务器连不上 GitHub，这条路走不通，理由与推演见
+[`docs/数据进出方案.md`](docs/数据进出方案.md) §13.1。
+
+## GitHub CI/CD 与内网部署
+
+仓库提供 GitHub Actions + 内网 self-hosted runner 的部署方案。推送到 `main` 或 `cicd` 后先在
+GitHub 托管 runner 上执行测试，成功后由公司 Linux 主机上的 runner 主动领取部署任务；
+不需要向公网开放 SSH、数据库或应用端口。首次安装与运维步骤见
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)。
+
+如果内网主机无法访问 GitHub，流水线会生成包含 Python 3.12、全部依赖和应用代码的
+离线容器包。服务器只需 Docker，无需安装 Python 或运行 GitHub runner；Nginx 在宿主机
+一次性安装，后续应用产物不重复携带，见
+[`docs/OFFLINE_DEPLOYMENT.md`](docs/OFFLINE_DEPLOYMENT.md)。
 
 ## 数据源
 
@@ -41,6 +80,10 @@ pytest
 | VIX | CBOE 官方 CSV | 自动 |
 | 美债、实际利率、美元、SPX、SOX、信用、流动性、商品与美国周期 | FRED CSV | 自动 |
 | SMM 现货、社库、TC、开工率、LME、ICDX、SOX、SPX、海关 | 订阅 / 授权 / 月度 | **人工录入**（页面「指标 → 人工录入」） |
+
+服务器所在内网若访问不到境外源（FRED、CBOE 占库内观测的绝大多数），用 `snap-raw` /
+`import-raw` 离线搬运：在能上网的机器上抓原件，拷进服务器回放入库。回放走与在线采集
+完全相同的 `record()` 闸门，已由 `tests/test_raw_replay.py` 断言两者逐行一致。
 
 订阅与授权数据一期不写任何抓取代码（00 §7.1）。
 

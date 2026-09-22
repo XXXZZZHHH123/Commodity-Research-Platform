@@ -8,6 +8,7 @@ import pandas as pd
 
 from tin.caliber.dictionary import ContractKind, PriceType, StockScope, TimeType
 from tin.config import SHANGHAI
+from tin.ingest import NotPublished
 from tin.schemas.caliber import Caliber
 from tin.schemas.observation import IndicatorSpec, ObservationIn
 
@@ -63,6 +64,10 @@ def parse_quotes(payload: dict, variety: str = "SN") -> Batch:
             if r.get("PRODUCTID") == product_id and str(r.get("DELIVERYMONTH", "")).isdigit()]
     if not rows:
         raise ParseError(f"{d} 行情中没有 {variety} 合约")
+    # 收盘前上期所照样返回 200，但收盘价与结算价都是空串、年内期号 o_year_num 也还没定。
+    # 这是「尚未发布」而不是故障——当成故障的话，每天早盘那次定时取数都会误报。
+    if not str(payload.get("o_year_num", "")).strip() or not any(str(r.get("CLOSEPRICE", "")).strip() for r in rows):
+        raise NotPublished(f"{d} 行情尚未收盘发布")
 
     batch = Batch(trading_day=(d, int(payload["o_year_num"])))
     for r in rows:

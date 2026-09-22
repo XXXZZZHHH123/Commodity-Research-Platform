@@ -1,0 +1,19 @@
+[Unit]
+Description=Commodity Research Platform container
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=-@DOCKER_BIN@ rm -f commodity-research-platform
+ExecStart=@DOCKER_BIN@ run --rm --name commodity-research-platform --env-file /etc/commodity-research-platform/app.env --volume /var/lib/commodity-research-platform:/var/lib/commodity-research-platform:Z --publish 127.0.0.1:8765:8765 --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m --security-opt no-new-privileges --cap-drop ALL commodity-research-platform:current
+ExecStop=@DOCKER_BIN@ stop --time 20 commodity-research-platform
+ExecStopPost=-@DOCKER_BIN@ rm -f commodity-research-platform
+Restart=always
+RestartSec=3
+TimeoutStartSec=0
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

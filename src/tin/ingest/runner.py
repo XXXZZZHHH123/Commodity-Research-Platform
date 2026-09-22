@@ -10,17 +10,13 @@ import httpx
 from sqlalchemy.orm import Session
 
 from tin.config import settings
-from tin.ingest import cboe, cfets, fred, shfe
+from tin.ingest import NotPublished, cboe, cfets, fred, shfe
 from tin.ingest.record import ensure_indicator, record
 from tin.ingest.shfe import Batch
 from tin.models import FetchRun, TradingDay
 
 log = logging.getLogger(__name__)
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36"}
-
-
-class NotPublished(Exception):
-    """目标日数据尚未发布或当日非交易日。不是故障，不重试。"""
 
 
 def _get(client: httpx.Client, url: str, method: str = "GET") -> httpx.Response:
@@ -72,6 +68,7 @@ def _fred(c, d):
     def fetch_one(spec):
         url = fred.url_for(spec, d)
         # 独立连接避免代理环境下共享连接池在线程间阻塞。
+        # 并且不要带上 UA：FRED 对带浏览器 UA 的并发请求会挂住不响应，直到读超时。
         response = httpx.get(url, timeout=15, follow_redirects=True)
         response.raise_for_status()
         return fred.parse_series(response.text, spec, through=d, source_url=url)
