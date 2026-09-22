@@ -5,7 +5,7 @@ from datetime import date, datetime, time
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
-from fastapi import BackgroundTasks, Body, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -26,6 +26,7 @@ from tin.export.board import (
     judgment_block,
     macro_featured,
     macro_groups,
+    macro_history,
     snapshot,
     source_catalog,
     threshold_radar,
@@ -446,3 +447,13 @@ def export_excel(body: dict = Body(...)):
 def api_snapshot(date: str | None = None):
     with SessionLocal() as s:
         return JSONResponse(snapshot(s, V, _board_date(s, date)))
+
+
+@app.get("/api/sn/series/{series_id}/history")
+def api_series_history(series_id: str, date: str | None = None,
+                       limit: int = Query(900, ge=2, le=2000)):
+    with SessionLocal() as s:
+        payload = macro_history(s, series_id, _board_date(s, date), limit)
+        if payload is None:
+            raise HTTPException(404, "该指标不支持历史图表")
+        return JSONResponse(payload)

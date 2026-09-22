@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from tin.compute.engine import contracts_on, day_end, latest_derived, latest_obs
 from tin.compute.formulas import REGISTRY
 from tin.config import NEW_YORK, SHANGHAI, settings
-from tin.ingest.fred import FEATURED_SERIES, FRED_SERIES, SOURCE_CATALOG, MacroSeries
+from tin.ingest.fred import FEATURED_SERIES, FRED_SERIES, SERIES_BY_ID, SOURCE_CATALOG, MacroSeries
 from tin.judgments.service import current as current_judgment
 from tin.judgments.service import to_payload
 from tin.judgments.validate import activation_blockers
@@ -221,6 +221,34 @@ def macro_cards(session: Session, d: date, series_ids: tuple[str, ...] | None = 
                     item["change"] = f"{delta:+,.{spec.decimals}f}"
         out.append(item)
     return out
+
+
+def macro_history(session: Session, series_id: str, d: date, limit: int = 900) -> dict | None:
+    """Detailed macro history for the interactive chart; values use the card's display scale."""
+    spec = SERIES_BY_ID.get(series_id)
+    if spec is None:
+        return None
+    rows = _series_history(session, series_id, d, limit)
+    return {
+        "series_id": series_id,
+        "name": spec.name,
+        "unit": spec.display_unit or spec.unit,
+        "raw_unit": spec.unit,
+        "frequency": spec.frequency,
+        "provider": spec.provider,
+        "publisher": spec.publisher,
+        "source_level": spec.source_level,
+        "decimals": spec.decimals,
+        "through": d.isoformat(),
+        "source_url": rows[-1].source_url if rows else None,
+        "points": [
+            {
+                "date": _source_date(row, spec).isoformat(),
+                "value": row.value / spec.scale,
+            }
+            for row in rows
+        ],
+    }
 
 
 def macro_groups(session: Session, d: date) -> list[dict]:

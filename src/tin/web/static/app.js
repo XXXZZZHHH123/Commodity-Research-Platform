@@ -143,6 +143,288 @@ function initMacroFilters() {
   update();
 }
 
+// ---------- 宏观历史图表 ----------
+
+const seriesChartState = {
+  data: null,
+  range: "1y",
+  rendered: [],
+  controller: null,
+  returnFocus: null,
+};
+
+function chartNumber(value, decimals) {
+  if (!Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat("zh-CN", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(value).replace(/-/g, "−");
+}
+
+function chartDate(value) {
+  const parts = String(value || "").split("-");
+  return parts.length === 3 ? `${parts[0]}/${parts[1]}/${parts[2]}` : value;
+}
+
+function chartChange(points, index) {
+  if (index <= 0) return { text: "首个观测点", color: "var(--text-muted)" };
+  const value = points[index].value;
+  const previous = points[index - 1].value;
+  const delta = value - previous;
+  const sign = delta > 0 ? "+" : "";
+  let text;
+  if (seriesChartState.data.raw_unit === "%") {
+    text = `较前值 ${sign}${chartNumber(delta * 100, 0)} bp`;
+  } else {
+    const pct = previous === 0 ? null : delta / Math.abs(previous) * 100;
+    text = `较前值 ${sign}${chartNumber(delta, seriesChartState.data.decimals)}`;
+    if (pct !== null) text += ` (${pct > 0 ? "+" : ""}${chartNumber(pct, 2)}%)`;
+  }
+  return {
+    text,
+    color: delta > 0 ? "var(--up)" : delta < 0 ? "var(--down)" : "var(--text-muted)",
+  };
+}
+
+function updateSeriesChartReadout(index) {
+  const points = seriesChartState.rendered;
+  const point = points[index];
+  if (!point) return;
+  const change = chartChange(points, index);
+  document.getElementById("series-chart-readout-date").textContent = chartDate(point.date);
+  document.getElementById("series-chart-readout-value").textContent =
+    chartNumber(point.value, seriesChartState.data.decimals);
+  document.getElementById("series-chart-readout-unit").textContent = seriesChartState.data.unit;
+  const changeEl = document.getElementById("series-chart-readout-change");
+  changeEl.textContent = change.text;
+  changeEl.style.color = change.color;
+}
+
+function chartRangePoints() {
+  const points = (seriesChartState.data?.points || []).map((point) => ({
+    ...point,
+    time: Date.parse(`${point.date}T00:00:00Z`),
+  })).filter((point) => Number.isFinite(point.value) && Number.isFinite(point.time));
+  if (!points.length || seriesChartState.range === "all") return points;
+  const days = { "1m": 31, "3m": 93, "1y": 366 }[seriesChartState.range];
+  const cutoff = points[points.length - 1].time - days * 86400000;
+  const filtered = points.filter((point) => point.time >= cutoff);
+  if (filtered.length >= 2 || points.length < 2) return filtered;
+  return points.slice(-2);
+}
+
+function renderSeriesChart() {
+  const points = chartRangePoints();
+  seriesChartState.rendered = points;
+  const svg = document.getElementById("series-chart-svg");
+  if (!points.length) {
+    svg.innerHTML = "";
+    document.getElementById("series-chart-content").classList.add("hidden");
+    const error = document.getElementById("series-chart-error");
+    error.textContent = "当前区间没有可用观测";
+    error.classList.remove("hidden");
+    return;
+  }
+
+  const width = 1000;
+  const height = 440;
+  const margin = { left: 82, right: 24, top: 26, bottom: 46 };
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const values = points.map((point) => point.value);
+  const minimum = Math.min(...values);
+  const maximum = Math.max(...values);
+  const valueSpan = maximum - minimum;
+  const padding = valueSpan === 0 ? Math.max(Math.abs(maximum) * 0.04, 1) : valueSpan * 0.08;
+  const low = minimum - padding;
+  const high = maximum + padding;
+  const firstTime = points[0].time;
+  const lastTime = points[points.length - 1].time;
+  const timeSpan = Math.max(lastTime - firstTime, 1);
+  const xOf = (point) => margin.left + (point.time - firstTime) / timeSpan * plotWidth;
+  const yOf = (point) => margin.top + (high - point.value) / (high - low) * plotHeight;
+
+  points.forEach((point) => {
+    point.x = points.length === 1 ? margin.left + plotWidth / 2 : xOf(point);
+    point.y = yOf(point);
+  });
+
+  const line = points.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
+  const area = points.length > 1
+    ? `${line} L${points[points.length - 1].x.toFixed(2)},${(margin.top + plotHeight).toFixed(2)} `
+      + `L${points[0].x.toFixed(2)},${(margin.top + plotHeight).toFixed(2)} Z`
+    : "";
+
+  const yTicks = Array.from({ length: 5 }, (_, index) => {
+    const ratio = index / 4;
+    const y = margin.top + ratio * plotHeight;
+    const value = high - ratio * (high - low);
+    return `<line x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}" stroke="var(--line)" stroke-width="1" vector-effect="non-scaling-stroke"/>`
+      + `<text x="${margin.left - 12}" y="${y + 4}" text-anchor="end" fill="var(--text-muted)" font-size="12">${chartNumber(value, seriesChartState.data.decimals)}</text>`;
+  }).join("");
+
+  const tickIndexes = [...new Set([0, 0.25, 0.5, 0.75, 1]
+    .map((ratio) => Math.round((points.length - 1) * ratio)))];
+  const xTicks = tickIndexes.map((index) => {
+    const point = points[index];
+    return `<line x1="${point.x}" y1="${margin.top}" x2="${point.x}" y2="${margin.top + plotHeight}" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 5" vector-effect="non-scaling-stroke"/>`
+      + `<text x="${point.x}" y="${height - 16}" text-anchor="middle" fill="var(--text-muted)" font-size="12">${chartDate(point.date)}</text>`;
+  }).join("");
+
+  const latest = points[points.length - 1];
+  svg.innerHTML = `
+    <defs><clipPath id="series-chart-clip"><rect x="${margin.left}" y="${margin.top}" width="${plotWidth}" height="${plotHeight}"/></clipPath></defs>
+    <g>${yTicks}${xTicks}</g>
+    <g clip-path="url(#series-chart-clip)">
+      ${area ? `<path d="${area}" fill="var(--primary-soft)" opacity="0.72"/>` : ""}
+      <path d="${line}" fill="none" stroke="var(--primary)" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+      <circle cx="${latest.x}" cy="${latest.y}" r="4" fill="var(--surface)" stroke="var(--primary)" stroke-width="2" vector-effect="non-scaling-stroke"/>
+      <g id="series-chart-crosshair" visibility="hidden">
+        <line id="series-chart-cross-x" y1="${margin.top}" y2="${margin.top + plotHeight}" stroke="var(--text-muted)" stroke-width="1" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>
+        <line id="series-chart-cross-y" x1="${margin.left}" x2="${width - margin.right}" stroke="var(--text-muted)" stroke-width="1" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>
+        <circle id="series-chart-cross-point" r="5" fill="var(--surface)" stroke="var(--primary)" stroke-width="2.5" vector-effect="non-scaling-stroke"/>
+      </g>
+    </g>
+    <rect x="${margin.left}" y="${margin.top}" width="${plotWidth}" height="${plotHeight}" fill="transparent"/>
+  `;
+
+  svg.dataset.plotLeft = String(margin.left);
+  svg.dataset.plotRight = String(width - margin.right);
+  svg.onpointermove = moveSeriesChartCrosshair;
+  svg.onpointerleave = hideSeriesChartCrosshair;
+
+  document.getElementById("series-chart-stat-latest").textContent =
+    `${chartNumber(latest.value, seriesChartState.data.decimals)} ${seriesChartState.data.unit}`;
+  document.getElementById("series-chart-stat-high").textContent =
+    `${chartNumber(maximum, seriesChartState.data.decimals)} ${seriesChartState.data.unit}`;
+  document.getElementById("series-chart-stat-low").textContent =
+    `${chartNumber(minimum, seriesChartState.data.decimals)} ${seriesChartState.data.unit}`;
+  document.getElementById("series-chart-stat-count").textContent = `${points.length} 条`;
+  updateSeriesChartReadout(points.length - 1);
+}
+
+function moveSeriesChartCrosshair(event) {
+  const svg = event.currentTarget;
+  const bounds = svg.getBoundingClientRect();
+  const x = (event.clientX - bounds.left) / bounds.width * 1000;
+  const left = Number(svg.dataset.plotLeft);
+  const right = Number(svg.dataset.plotRight);
+  if (x < left || x > right || !seriesChartState.rendered.length) {
+    hideSeriesChartCrosshair();
+    return;
+  }
+  let nearest = 0;
+  let distance = Infinity;
+  seriesChartState.rendered.forEach((point, index) => {
+    const next = Math.abs(point.x - x);
+    if (next < distance) {
+      nearest = index;
+      distance = next;
+    }
+  });
+  const point = seriesChartState.rendered[nearest];
+  const crosshair = document.getElementById("series-chart-crosshair");
+  const xLine = document.getElementById("series-chart-cross-x");
+  const yLine = document.getElementById("series-chart-cross-y");
+  const dot = document.getElementById("series-chart-cross-point");
+  xLine.setAttribute("x1", point.x);
+  xLine.setAttribute("x2", point.x);
+  yLine.setAttribute("y1", point.y);
+  yLine.setAttribute("y2", point.y);
+  dot.setAttribute("cx", point.x);
+  dot.setAttribute("cy", point.y);
+  crosshair.setAttribute("visibility", "visible");
+  updateSeriesChartReadout(nearest);
+}
+
+function hideSeriesChartCrosshair() {
+  const crosshair = document.getElementById("series-chart-crosshair");
+  if (crosshair) crosshair.setAttribute("visibility", "hidden");
+  if (seriesChartState.rendered.length) updateSeriesChartReadout(seriesChartState.rendered.length - 1);
+}
+
+function setSeriesChartRange(range) {
+  seriesChartState.range = range;
+  document.querySelectorAll("[data-chart-range]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.chartRange === range);
+  });
+  if (seriesChartState.data) renderSeriesChart();
+}
+
+async function openSeriesChart(trigger) {
+  const modal = document.getElementById("series-chart-modal");
+  const seriesId = trigger.dataset.seriesChart;
+  const selectedDate = trigger.dataset.chartDate;
+  seriesChartState.returnFocus = trigger;
+  seriesChartState.data = null;
+  setSeriesChartRange("1y");
+  modal.classList.remove("hidden");
+  modal.setAttribute("aria-hidden", "false");
+  document.body.classList.add("overflow-hidden");
+  document.getElementById("series-chart-title").textContent = "历史走势";
+  document.getElementById("series-chart-id").textContent = seriesId;
+  document.getElementById("series-chart-provider").textContent = "载入中";
+  document.getElementById("series-chart-loading").classList.remove("hidden");
+  document.getElementById("series-chart-error").classList.add("hidden");
+  document.getElementById("series-chart-content").classList.add("hidden");
+  document.getElementById("series-chart-source").classList.add("hidden");
+  modal.querySelector(".series-chart-close").focus();
+
+  if (seriesChartState.controller) seriesChartState.controller.abort();
+  seriesChartState.controller = new AbortController();
+  try {
+    const params = new URLSearchParams({ limit: "2000" });
+    if (selectedDate) params.set("date", selectedDate);
+    const response = await fetch(`/api/sn/series/${encodeURIComponent(seriesId)}/history?${params}`, {
+      signal: seriesChartState.controller.signal,
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "历史数据载入失败");
+    seriesChartState.data = data;
+    document.getElementById("series-chart-title").textContent = data.name;
+    document.getElementById("series-chart-id").textContent = data.series_id;
+    document.getElementById("series-chart-provider").textContent = `${data.provider} · ${data.source_level}`;
+    const source = document.getElementById("series-chart-source");
+    if (data.source_url) {
+      source.href = data.source_url;
+      source.classList.remove("hidden");
+    }
+    document.getElementById("series-chart-loading").classList.add("hidden");
+    document.getElementById("series-chart-content").classList.remove("hidden");
+    renderSeriesChart();
+  } catch (error) {
+    if (error.name === "AbortError") return;
+    document.getElementById("series-chart-loading").classList.add("hidden");
+    const errorEl = document.getElementById("series-chart-error");
+    errorEl.textContent = error.message;
+    errorEl.classList.remove("hidden");
+  }
+}
+
+function closeSeriesChart() {
+  const modal = document.getElementById("series-chart-modal");
+  if (!modal || modal.classList.contains("hidden")) return;
+  if (seriesChartState.controller) seriesChartState.controller.abort();
+  modal.classList.add("hidden");
+  modal.setAttribute("aria-hidden", "true");
+  const drawerOpen = [...document.querySelectorAll("[data-drawer]")]
+    .some((drawer) => !drawer.classList.contains("translate-x-full"));
+  if (!drawerOpen) document.body.classList.remove("overflow-hidden");
+  if (seriesChartState.returnFocus) seriesChartState.returnFocus.focus();
+}
+
+function initSeriesCharts() {
+  document.querySelectorAll("[data-series-chart]").forEach((trigger) => {
+    trigger.addEventListener("click", () => openSeriesChart(trigger));
+  });
+  document.querySelectorAll("[data-chart-close]").forEach((button) => {
+    button.addEventListener("click", closeSeriesChart);
+  });
+  document.querySelectorAll("[data-chart-range]").forEach((button) => {
+    button.addEventListener("click", () => setSeriesChartRange(button.dataset.chartRange));
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   const params = new URLSearchParams(window.location.search);
   if (params.get("msg")) showToast(params.get("msg"));
@@ -150,8 +432,12 @@ document.addEventListener("DOMContentLoaded", () => {
   if (asOf) asOf.addEventListener("input", () => { asOf.dataset.touched = "1"; });
   syncDrawerUnit();
   initMacroFilters();
+  initSeriesCharts();
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeDrawers();
+    if (e.key === "Escape") {
+      closeSeriesChart();
+      closeDrawers();
+    }
   });
 });
 

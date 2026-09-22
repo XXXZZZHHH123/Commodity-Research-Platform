@@ -4,6 +4,8 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from tin.ingest.fred import SERIES_BY_ID, parse_series
+from tin.ingest.runner import store
 from tin.web.app import _board_date, _shell, app
 
 
@@ -29,6 +31,34 @@ def test_shell_exposes_calendar_bounds(loaded):
     ctx = _shell(loaded, "variety", date(2026, 9, 18))
     assert ctx["min_date"] == "2026-09-17"
     assert ctx["max_date"] == "2026-09-18"
+
+
+def test_series_history_api_returns_scaled_points_through_board_date(loaded, monkeypatch):
+    spec = SERIES_BY_ID["FRED.DGS10"]
+    store(loaded, parse_series(
+        "observation_date,DGS10\n2026-09-16,4.90\n2026-09-18,4.94\n2026-09-19,5.01\n",
+        spec,
+        source_url="https://fred.test/DGS10",
+    ))
+    monkeypatch.setattr("tin.web.app.SessionLocal", lambda: loaded)
+
+    response = TestClient(app).get("/api/sn/series/FRED.DGS10/history?date=2026-09-18&limit=30")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["name"] == "美国国债 10Y"
+    assert payload["unit"] == "%"
+    assert payload["source_url"] == "https://fred.test/DGS10"
+    assert payload["points"] == [
+        {"date": "2026-09-16", "value": 4.9},
+        {"date": "2026-09-18", "value": 4.94},
+    ]
+
+
+def test_series_history_api_rejects_unknown_series(loaded, monkeypatch):
+    monkeypatch.setattr("tin.web.app.SessionLocal", lambda: loaded)
+    response = TestClient(app).get("/api/sn/series/NOT.REAL/history?date=2026-09-18")
+    assert response.status_code == 404
 
 
 def test_static_assets_carry_a_version_fingerprint(tmp_path, monkeypatch):
@@ -81,6 +111,18 @@ def test_every_inline_handler_resolves_to_a_real_function():
             if name not in defined and name not in builtin:
                 missing.add(f"{where}: {name}()")
     assert not missing, f"事件绑定指向不存在的函数：{sorted(missing)}"
+
+
+def test_macro_cards_have_history_chart_dialog():
+    from tin.web import app as web
+
+    card = (web.HERE / "templates" / "_card.html").read_text(encoding="utf-8")
+    base = (web.HERE / "templates" / "base.html").read_text(encoding="utf-8")
+    js = (web.HERE / "static" / "app.js").read_text(encoding="utf-8")
+    assert "data-series-chart" in card
+    assert 'id="series-chart-modal"' in base
+    assert 'id="series-chart-svg"' in base
+    assert "function moveSeriesChartCrosshair" in js
 
 
 def test_export_validation_is_inline_not_a_floating_toast():

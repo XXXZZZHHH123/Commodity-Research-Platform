@@ -174,3 +174,149 @@ html { scroll-behavior: smooth; }
 
 /* 抽屉打开时 toast 挪到左下，否则正好压在抽屉右下角的主操作按钮上 */
 body.drawer-open #toast { right: auto; left: 1.5rem; }
+
+/* 宏观小图展开与历史图表弹窗。 */
+.macro-trend-card {
+  min-height: 132px;
+  transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+.macro-trend-card.is-interactive:hover,
+.macro-trend-card.is-interactive:focus-within {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+.macro-chart-trigger {
+  background: transparent;
+  cursor: zoom-in;
+  outline: 0;
+}
+.macro-chart-trigger:focus-visible { box-shadow: inset 0 0 0 2px var(--primary); }
+.macro-expand-icon {
+  width: 0.85rem;
+  height: 0.85rem;
+  color: var(--text-muted);
+  opacity: 0.55;
+  transition: color 150ms ease, opacity 150ms ease;
+}
+.macro-trend-card.is-interactive:hover .macro-expand-icon,
+.macro-trend-card.is-interactive:focus-within .macro-expand-icon {
+  color: var(--primary);
+  opacity: 1;
+}
+
+.series-chart-modal { z-index: 70; }
+.series-chart-backdrop {
+  background: rgba(4, 12, 8, 0.48);
+  backdrop-filter: blur(5px);
+  cursor: default;
+}
+.series-chart-surface {
+  z-index: 1;
+  width: min(72rem, calc(100vw - 1.5rem));
+  max-height: calc(100vh - 2rem);
+  border: 1px solid color-mix(in srgb, var(--line-strong) 82%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 91%, transparent);
+  box-shadow: 0 24px 70px rgba(5, 14, 9, 0.26);
+  backdrop-filter: blur(18px) saturate(125%);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.series-chart-header,
+.series-chart-toolbar { background: color-mix(in srgb, var(--surface) 76%, transparent); }
+.series-chart-close {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 1.5rem;
+  line-height: 1;
+}
+.series-chart-close:hover { color: var(--text); background: var(--surface-soft); }
+.series-chart-ranges {
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-soft);
+}
+.series-chart-ranges button {
+  min-width: 2.75rem;
+  height: 1.75rem;
+  padding: 0 0.55rem;
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 650;
+}
+.series-chart-ranges button:hover { color: var(--text); }
+.series-chart-ranges button.active {
+  background: var(--surface);
+  color: var(--primary);
+  box-shadow: var(--shadow-sm);
+}
+.series-chart-state {
+  display: grid;
+  min-height: min(28rem, 58vh);
+  place-items: center;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+.series-chart-plot {
+  width: 100%;
+  height: clamp(19rem, 52vh, 31rem);
+  min-height: 19rem;
+  overflow: hidden;
+}
+.series-chart-plot svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  touch-action: none;
+}
+.series-chart-readout {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.7rem;
+  min-width: 9.5rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+.series-chart-stats > div {
+  min-width: 0;
+  padding: 0.7rem 0.8rem;
+  border-right: 1px solid var(--line);
+}
+.series-chart-stats > div:last-child { border-right: 0; }
+.series-chart-stats span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.65rem;
+}
+.series-chart-stats strong {
+  display: block;
+  margin-top: 0.15rem;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .series-chart-surface { max-height: calc(100vh - 1rem); }
+  .series-chart-header { padding: 0.8rem 1rem; }
+  .series-chart-toolbar { padding: 0.55rem 1rem; }
+  .series-chart-body { padding-top: 0.5rem; }
+  .series-chart-plot { height: clamp(16rem, 48vh, 22rem); min-height: 16rem; }
+  .series-chart-readout { min-width: 8.2rem; }
+  .series-chart-stats > div:nth-child(2) { border-right: 0; }
+  .series-chart-stats > div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+}
