@@ -1,6 +1,8 @@
 # 大宗商品研究工作台 · 一期（锡）
 
-研究员的判断 + 自动取得的数据 → 每日比对。需求见 `PRD/`，开发计划与进度见 `docs/开发计划_一期.md`。
+研究员的判断 + 自动取得的数据 → 每日比对。
+
+> **`PRD/`、`docs/`、`.claude/` 三个目录不上传仓库**，只在本机保留（见下方「本地资料」）。
 
 ## 环境
 
@@ -33,7 +35,7 @@ python -m tin.jobs import-terminal /path/to/tin.xlsx --by 张三            # �
 
 按各家的供应商编码精确对齐，不做名称猜测。也可以直接把整本工作簿拖进 `/sn/entry` 的批量导入框：
 系统识别出终端格式后会改走**批次摘要确认**（新指标数、观测点、时间范围、口径冲突预检），
-确认后转后台任务并显示进度。方案见 [`docs/数据进出方案.md`](docs/数据进出方案.md)。
+确认后转后台任务并显示进度。方案见本地的 `docs/数据进出方案.md`。
 
 服务器直连不到的数据源，走离线搬运（见「数据源」一节）：
 
@@ -56,19 +58,19 @@ FRED 与 VIX——当天的上期所文件那会儿还没挂出来，属正常�
 ```
 
 取数不依赖 GitHub Actions：服务器连不上 GitHub，这条路走不通，理由与推演见
-[`docs/数据进出方案.md`](docs/数据进出方案.md) §13.1。
+本地的 `docs/数据进出方案.md` §13.1。
 
 ## GitHub CI/CD 与内网部署
 
 仓库提供 GitHub Actions + 内网 self-hosted runner 的部署方案。推送到 `main` 或 `cicd` 后先在
 GitHub 托管 runner 上执行测试，成功后由公司 Linux 主机上的 runner 主动领取部署任务；
 不需要向公网开放 SSH、数据库或应用端口。首次安装与运维步骤见
-[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)。
+本地的 `docs/DEPLOYMENT.md`。
 
 如果内网主机无法访问 GitHub，流水线会生成包含 Python 3.12、全部依赖和应用代码的
 离线容器包。服务器只需 Docker，无需安装 Python 或运行 GitHub runner；Nginx 在宿主机
 一次性安装，后续应用产物不重复携带，见
-[`docs/OFFLINE_DEPLOYMENT.md`](docs/OFFLINE_DEPLOYMENT.md)。
+本地的 `docs/OFFLINE_DEPLOYMENT.md`。
 
 ## 数据源
 
@@ -87,14 +89,24 @@ GitHub 托管 runner 上执行测试，成功后由公司 Linux 主机上的 run
 
 订阅与授权数据一期不写任何抓取代码（00 §7.1）。
 
+## 本地资料（不在仓库里）
+
+以下三个目录已加入 `.gitignore`，**不会上传到 GitHub**，只在各自机器上保留：
+
+| 目录 | 内容 | 影响 |
+|---|---|---|
+| `PRD/` | 需求文档 00–04 与参考资料 | 新同事 clone 后看不到需求，需要另行传阅 |
+| `docs/` | 开发计划与进度、数据进出方案、**部署与离线交付手册** | **部署步骤不再随代码走**，装新服务器前需要单独拿到 `DEPLOYMENT.md` / `OFFLINE_DEPLOYMENT.md` |
+| `.claude/` | 助手的协作约定 | 仅本机生效 |
+
+README 里对这些文档的引用都写成「本地的 xxx」，不做仓库内链接——链接会指向不存在的文件。
+
 宏观页 `/sn/macro` 展示趋势、最新值、变化与来源台账。`DATA_SOURCES_AND_PROCESSING.md`
 中需要密钥或专有插件的数据源会明确标记为「需凭证」，不会以占位数据冒充已接入。
 
 ## 目录
 
 ```
-PRD/            需求文档（00–04）与参考资料
-docs/           开发计划与进度
 seeds/          指标登记表、锡判断 v1 种子
 src/tin/        caliber 口径字典 · ingest 取数 · compute 派生与守卫 · judgments 判断
                 export 看板与快照 · web 页面 · jobs 命令行
