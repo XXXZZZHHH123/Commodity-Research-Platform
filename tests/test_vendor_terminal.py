@@ -1,4 +1,4 @@
-"""数据商终端导出工作簿的整体导入（docs/数据商终端整体导入方案.md）。"""
+"""数据商终端导出工作簿的整体导入（docs/数据进出方案.md §3）。"""
 
 import io
 from datetime import date, datetime, time
