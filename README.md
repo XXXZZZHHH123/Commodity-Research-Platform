@@ -24,6 +24,15 @@ uvicorn tin.web.app:app --host 0.0.0.0 --port 8765
 pytest
 ```
 
+SMM 终端导出的整本工作簿走命令行整体导入（几十万条，网页导入装不下）：
+
+```bash
+python -m tin.jobs import-smm /path/to/tin.xlsx --by 张三 --dry-run  # 先试算
+python -m tin.jobs import-smm /path/to/tin.xlsx --by 张三            # 再入库，可重复执行
+```
+
+按 SMM 的「指标Id」精确对齐，不做名称猜测；方案见 `docs/SMM终端整体导入方案.md`。
+
 服务器直连不到的数据源，走离线搬运（见「数据源」一节）：
 
 ```bash

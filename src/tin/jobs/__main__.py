@@ -118,6 +118,20 @@ def cmd_import_raw(a):
                 compute_day(s, d)
 
 
+def cmd_import_smm(a):
+    """把 SMM 终端导出的整本工作簿入库（几十万条，网页导入装不下）。"""
+    from tin.ingest.smm_terminal import load
+
+    def show(done, total, rep):
+        print(f"  {done}/{total} 条序列…  写入 {rep.written:,}", flush=True)
+
+    with SessionLocal() as s:
+        rep = load(s, a.file, entered_by=a.by, dry_run=a.dry_run, progress=None if a.dry_run else show)
+    print(("[试算] " if a.dry_run else "") + rep.line())
+    for r in rep.rejected[:10]:
+        print("  拒绝：", r)
+
+
 def cmd_enter(a):
     with SessionLocal() as s:
         ind = s.get(Indicator, a.series_id)
@@ -158,6 +172,11 @@ def main():
     sp.add_argument("--days", type=int, default=7)
     sp.add_argument("--date")
     sp.set_defaults(fn=cmd_import_raw)
+    sp = sub.add_parser("import-smm", help="导入 SMM 终端导出的整本工作簿")
+    sp.add_argument("file", help="SMM 终端导出的 .xlsx")
+    sp.add_argument("--by", required=True, help="导入操作人，写入每条观测的录入人")
+    sp.add_argument("--dry-run", action="store_true", help="只统计不入库")
+    sp.set_defaults(fn=cmd_import_smm)
     sp = sub.add_parser("enter", help="人工录入一条观测")
     sp.add_argument("series_id")
     sp.add_argument("value", type=float)
