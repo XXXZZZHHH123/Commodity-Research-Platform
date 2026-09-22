@@ -560,3 +560,20 @@ def test_auto_registered_indicators_are_marked_unverified(session):
     assert session.get(Indicator, "SMM.a00000001").owner == vt.UNVERIFIED
     # 已登记的指标不会被这个标记覆盖
     assert session.get(Indicator, "SMM.SN.spot.1").owner != vt.UNVERIFIED
+
+
+def test_catalog_only_registers_without_writing_observations(session):
+    """冷启动建目录：终端按目录整批只导一天，文件很小但带着全部编码与元数据。
+
+    编码无法从我们这边反推，只能由终端吐出来——所以要有一条"只要目录不要数据"的路。
+    """
+    report = vt.load(session, make_workbook(SAMPLE), entered_by="测试", catalog_only=True)
+    assert report.registered == 5
+    assert report.written == 0
+    ind = session.get(Indicator, "SMM.a1001")
+    assert ind is not None and ind.vendor_code == "a1001"
+    assert session.scalars(select(Observation).where(Observation.series_id == "SMM.a1001")).all() == []
+
+    # 目录建好之后，无人值守的数据导入就不再需要新建指标
+    data = vt.load(session, make_workbook(SAMPLE), entered_by="定时任务", register_new=False)
+    assert data.registered == 0 and data.written == 10 and data.rejected == []
