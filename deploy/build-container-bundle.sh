@@ -37,6 +37,7 @@ command -v sha256sum >/dev/null || { echo "sha256sum is required" >&2; exit 1; }
 [[ "$(uname -m)" == "x86_64" ]] || { echo "container bundle must be built on x86_64" >&2; exit 1; }
 
 mkdir -p "$OUTPUT_DIR" "$BUNDLE_DIR"
+install -m 0755 "$ROOT/deploy/deploy-offline-release.sh" "$OUTPUT_DIR/deploy-release.sh"
 
 docker build \
   --platform linux/amd64 \

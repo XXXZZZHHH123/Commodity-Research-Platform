@@ -110,5 +110,6 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.sha256
+            dist/deploy-release.sh
           if-no-files-found: error
           retention-days: 30

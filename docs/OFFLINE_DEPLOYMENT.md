@@ -31,32 +31,41 @@ Artifact 人工传入内网。应用镜像包含 Python 3.12、全部 Python 依
 ```text
 commodity-research-container-linux-amd64-<commit>.tar.gz
 commodity-research-container-linux-amd64-<commit>.tar.gz.sha256
+deploy-release.sh
 ```
 
-从 GitHub Actions 的 Artifacts 下载外层 zip，解压后将上述两个文件复制到服务器，例如：
+从 GitHub Actions 的 Artifacts 下载外层 zip，解压后将三个文件复制到服务器，例如：
 
 ```bash
-scp commodity-research-container-linux-amd64-*.tar.gz* root@INTERNAL_SERVER:/opt/delivery/
+scp commodity-research-container-linux-amd64-*.tar.gz* deploy-release.sh \
+  root@INTERNAL_SERVER:/opt/delivery/
 ```
 
-## 2. 校验与解压
+## 2. 部署或升级
 
 在服务器执行：
 
 ```bash
 cd /opt/delivery
-sha256sum -c commodity-research-container-linux-amd64-*.tar.gz.sha256
-tar -xzf commodity-research-container-linux-amd64-*.tar.gz
-cd commodity-research-container-linux-amd64-*
+bash deploy-release.sh
 ```
 
-校验必须显示 `OK`。
-
-## 3. 首次安装或升级
+脚本自动选择当前目录中最新的容器包。也可以显式指定版本：
 
 ```bash
-bash install.sh
+bash deploy-release.sh commodity-research-container-linux-amd64-<commit>.tar.gz
 ```
+
+部署流程会依次完成 SHA256 校验、SQLite 在线备份、临时解压、镜像导入、数据库迁移、
+应用与 timer 健康检查。任何一步失败都不会清理旧产物；安装阶段失败时会恢复
+`previous` 镜像。全部成功后：
+
+- `/opt/delivery` 只保留当前版本的压缩包与校验文件，临时解压目录和旧版本交付物被删除；
+- Docker 只保留 `commodity-research-platform:current` 和 `:previous` 对应的最多两个镜像；
+- 不执行全局 `docker system prune`，不会碰其他项目的镜像；
+- 数据库与配置备份保存在 `/var/lib/commodity-research-platform/backups`，各保留最近 3 份。
+
+## 3. 配置
 
 第一次执行会创建默认配置。当前默认 SQLite 配置可以直接运行：
 
