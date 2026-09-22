@@ -429,3 +429,82 @@ def test_mysteel_load_writes_through_the_same_gate(session):
         select(Observation).where(Observation.series_id == "MYSTEEL.SN.TC.YN40")).all()
     assert {r.value for r in rows} == {17500.0, 17300.0}
     assert rows[0].caliber_snapshot["tc_grade"] == "40度"
+
+
+# ---------- 编码归属 ----------
+
+def test_unknown_vendor_code_registers_a_new_indicator(session):
+    """库里没见过的编码 → 自动登记新指标并入库，不需要改代码。"""
+    sheets = {"S": [
+        ["指标名称", "SMM: 锡: 某个全新指标: 日度"],
+        ["指标Id", "a99999001"],
+        ["单位", "元/吨"],
+        ["频率", "日"],
+        [datetime(2026, 9, 21), 12345],
+    ]}
+    report = vt.load(session, make_workbook(sheets), entered_by="测试")
+    assert (report.registered, report.written, report.rejected) == (1, 1, [])
+    ind = session.get(Indicator, "SMM.a99999001")
+    assert ind.vendor_code == "a99999001" and ind.fetch_mode == "manual"
+
+
+def test_db_binding_beats_the_hardcoded_override_table(session):
+    """研究员在库里把编码登记到可读 series_id 上之后，导入必须归到那里。
+
+    只查代码里的 OVERRIDES 的话，会另建一个 MYSTEEL.<编码>，同一条序列无声裂成两个。
+    """
+    from datetime import time as _t
+
+    session.add(Indicator(
+        series_id="MYSTEEL.SN.newthing", name="某新指标", variety="SN", category="需求",
+        caliber={"time_type": "发布时点"}, unit="%", source="Mysteel", frequency="月",
+        fetch_mode="manual", phase="P1", vendor_code="ID09999001", default_entry_time=_t(15, 0)))
+    session.flush()
+
+    sheets = {"S": [
+        ["钢联数据"], ["指标名称", "锡：某新指标：中国（月）"], ["单位", "%"],
+        ["指标编码", "ID09999001"], ["频度", "月"], ["指标描述", "·"],
+        [datetime(2026, 8, 31), 62.5],
+    ]}
+    report = vt.load(session, make_workbook(sheets), entered_by="测试")
+    assert report.registered == 0 and report.reused == 1
+    assert session.get(Indicator, "MYSTEEL.ID09999001") is None, "不该另建一份"
+    rows = session.scalars(
+        select(Observation).where(Observation.series_id == "MYSTEEL.SN.newthing")).all()
+    assert [r.value for r in rows] == [62.5]
+
+
+def test_one_code_bound_to_two_indicators_is_reported_not_guessed(session):
+    """同一编码被登记到两个指标上，不替人选，报出来让人先合并。"""
+    from datetime import time as _t
+
+    for sid in ("MYSTEEL.SN.dupA", "MYSTEEL.SN.dupB"):
+        session.add(Indicator(
+            series_id=sid, name=sid, variety="SN", category="需求",
+            caliber={"time_type": "发布时点"}, unit="%", source="Mysteel", frequency="月",
+            fetch_mode="manual", phase="P1", vendor_code="ID09999002", default_entry_time=_t(15, 0)))
+    session.flush()
+
+    sheets = {"S": [
+        ["钢联数据"], ["指标名称", "锡：重复编码：中国（月）"], ["单位", "%"],
+        ["指标编码", "ID09999002"], ["频度", "月"], ["指标描述", "·"],
+        [datetime(2026, 8, 31), 1.0],
+    ]}
+    summary = vt.summarize(session, make_workbook(sheets))
+    assert any("同时登记在" in c for c in summary["code_conflicts"])
+
+
+def test_plain_table_will_not_register_anything_new(session):
+    """逐行通道不会自动登记：未登记的代码或名称一律归入异常，不静默造指标。"""
+    from tin.ingest.excel_importer import build_preview
+
+    tagged = make_workbook({"S": [["日期", "某新指标 [SMM.a88888]"], ["2026-09-21", 999]]})
+    pv = build_preview(session, tagged.getvalue(), "t.xlsx", actor="测试", variety="SN")
+    assert pv["ready_count"] == 0
+    assert "未在指标登记表中找到" in pv["columns"][0]["error"]
+
+    named = make_workbook({"S": [["日期", "某个从没登记过的指标"], ["2026-09-21", 999]]})
+    pv = build_preview(session, named.getvalue(), "t.xlsx", actor="测试", variety="SN")
+    assert pv["ready_count"] == 0
+    assert pv["columns"][0]["error"] == "系统未登记该指标"
+    assert session.get(Indicator, "SMM.a88888") is None

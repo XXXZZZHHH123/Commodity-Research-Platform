@@ -35,6 +35,8 @@ from tin.caliber.dictionary import (
     TimeType,
     WeightBasis,
 )
+from sqlalchemy import select
+
 from tin.config import SHANGHAI
 from tin.schemas.caliber import Caliber
 from tin.schemas.observation import IndicatorSpec, ObservationIn
@@ -174,6 +176,37 @@ def detect(data: bytes) -> Vendor | None:
         return None
     finally:
         wb.close()
+
+
+def resolve_ids(session, series_list: list[Series]) -> tuple[dict[str, str], list[str]]:
+    """编码 → series_id。**库里的 `vendor_code` 绑定优先于代码里的 `OVERRIDES`。**
+
+    只查 `OVERRIDES` 的话，研究员在库里把某个编码登记到一个可读的 series_id 上之后，
+    导入仍会另建一个 `SMM.<编码>`，同一条序列无声裂成两个——而且没有任何提示。
+    人在库里做的绑定是权威的，代码里的 `OVERRIDES` 只是尚未登记时的引导。
+
+    返回 (映射, 冲突说明)。同一编码被登记到多个指标时不替人选，报出来。
+    """
+    from tin.models import Indicator
+
+    codes = {s.code for s in series_list}
+    rows = session.scalars(select(Indicator).where(Indicator.vendor_code.in_(codes))).all()
+    by_code: dict[str, list[str]] = {}
+    for row in rows:
+        by_code.setdefault(row.vendor_code, []).append(row.series_id)
+
+    mapping, conflicts = {}, []
+    for series in series_list:
+        vendor = vendor_of(series)
+        bound = by_code.get(series.code, [])
+        if len(bound) > 1:
+            conflicts.append(f"编码 {series.code} 同时登记在 {'、'.join(sorted(bound))}，请先合并")
+            mapping[series.code] = sorted(bound)[0]
+        elif bound:
+            mapping[series.code] = bound[0]
+        else:
+            mapping[series.code] = vendor.series_id(series.code)
+    return mapping, conflicts
 
 
 def vendor_of(series: Series) -> Vendor:
@@ -364,10 +397,10 @@ def entry_time_for(series: Series, registered=None) -> time:
     return vendor.entry_time.get(vendor.publisher(series.name), time(15, 0))
 
 
-def derive_spec(series: Series, variety: str = "SN") -> IndicatorSpec:
+def derive_spec(series: Series, variety: str = "SN", series_id: str | None = None) -> IndicatorSpec:
     vendor = vendor_of(series)
     return IndicatorSpec(
-        series_id=vendor.series_id(series.code),
+        series_id=series_id or vendor.series_id(series.code),
         name=series.name[:120], variety=variety,
         category=derive_category(series.name),
         caliber=vendor.caliber(series),
@@ -379,7 +412,7 @@ def derive_spec(series: Series, variety: str = "SN") -> IndicatorSpec:
 
 
 def observations(series: Series, entered_by: str, registered=None,
-                 variety: str = "SN") -> list[ObservationIn]:
+                 variety: str = "SN", series_id: str | None = None) -> list[ObservationIn]:
     """把一条序列的所有点转成待入库观测。
 
     日期单元格只有日期没有时刻，按发布方的常规发布时刻补齐，并在 note 里写明补齐规则——
@@ -390,8 +423,9 @@ def observations(series: Series, entered_by: str, registered=None,
     at = entry_time_for(series, registered)
     note = (f"{vendor.label}导出 {series.code}；"
             f"时刻按 {vendor.publisher(series.name)} 常规发布时刻 {at:%H:%M} 补齐")
+    sid = series_id or vendor.series_id(series.code)
     return [
-        ObservationIn(series_id=vendor.series_id(series.code), value=value,
+        ObservationIn(series_id=sid, value=value,
                       as_of=datetime.combine(day, at, SHANGHAI), caliber=caliber,
                       source=vendor.label, source_url=vendor.source_url,
                       entered_by=entered_by, note=note)
@@ -414,9 +448,10 @@ def summarize(session, data_or_path, variety: str = "SN") -> dict:
     everything = read_workbook(data_or_path)
     active = [s for s in everything if not discontinued(s)]
 
+    ids, id_conflicts = resolve_ids(session, active)
     new, reused, notes, mismatched = [], [], [], []
     for series in active:
-        spec = derive_spec(series, variety)
+        spec = derive_spec(series, variety, series_id=ids[series.code])
         existing = session.get(Indicator, spec.series_id)
         if existing is None:
             new.append(spec)
@@ -454,6 +489,7 @@ def summarize(session, data_or_path, variety: str = "SN") -> dict:
         "categories": dict(Counter(spec.category for spec in new).most_common()),
         # 以登记为准，这里只是把差异摆出来给人看，不阻断
         "future_points": future,
+        "code_conflicts": id_conflicts,
         "caliber_notes": notes,
         "frequency_mismatches": mismatched,
     }
@@ -484,9 +520,10 @@ def load(session, data_or_path, *, entered_by: str, variety: str = "SN",
     wanted = [s for s in everything if not discontinued(s)]
     report.skipped_series = len(everything) - len(wanted)
 
+    ids, _ = resolve_ids(session, wanted)
     registered: dict[str, object] = {}
     for series in wanted:
-        spec = derive_spec(series, variety)
+        spec = derive_spec(series, variety, series_id=ids[series.code])
         existing = session.get(Indicator, spec.series_id)
         if existing is None:
             report.registered += 1
@@ -510,13 +547,14 @@ def load(session, data_or_path, *, entered_by: str, variety: str = "SN",
         report.written = sum(len(s.points) for s in wanted)
         return report
 
-    cache = latest_index(session, [vendor_of(s).series_id(s.code) for s in wanted])
+    cache = latest_index(session, [ids[s.code] for s in wanted])
     for n, series in enumerate(wanted, 1):
-        for obs in observations(series, entered_by, registered.get(series.code), variety):
+        for obs in observations(series, entered_by, registered.get(series.code), variety,
+                                series_id=ids[series.code]):
             try:
                 row = record(session, obs, cache=cache)
             except RecordError as exc:
-                report.rejected.append(f"{vendor_of(series).series_id(series.code)}: {exc}")
+                report.rejected.append(f"{ids[series.code]}: {exc}")
                 break  # 同一序列后续点必然同样被拒，不必刷屏
             report.written += row is not None
             report.unchanged += row is None
