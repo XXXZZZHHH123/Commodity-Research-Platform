@@ -545,12 +545,17 @@ class LoadReport:
 
 
 def load(session, data_or_path, *, entered_by: str, variety: str = "SN",
-         dry_run: bool = False, progress=None, register_new: bool = True) -> LoadReport:
+         dry_run: bool = False, progress=None, register_new: bool = True,
+         catalog_only: bool = False) -> LoadReport:
     """整本入库。所有观测仍逐条走 `record()` 闸门，只是共用一份预取的最新值索引。
 
     `register_new=False` 时拒绝库里没见过的编码，只更新已登记序列。**无人值守的自动导入
     必须用这个模式**：有人把编码敲错一位、或凭空编一个，自动登记会让一条查无实据的序列
     混进事实层，而没有人在确认页看过它。有人盯着的手工导入才用默认的 True。
+
+    `catalog_only=True` 只登记指标、不写任何观测。用于冷启动建目录：在终端里按目录整批
+    选中、**只导一天**，文件很小但带着全部编码、名称、单位、频率。导完平台就知道有哪些
+    序列了，之后的数据工作簿直接从平台取编码，不必在终端界面里一个个找。
     """
     from tin.ingest.record import RecordError, latest_index, record
     from tin.models import Indicator
@@ -594,6 +599,9 @@ def load(session, data_or_path, *, entered_by: str, variety: str = "SN",
         session.flush()
     if dry_run:
         report.written = sum(len(s.points) for s in wanted)
+        return report
+    if catalog_only:
+        session.commit()
         return report
 
     wanted = [s for s in wanted if s.code in known]

@@ -127,7 +127,8 @@ def cmd_import_terminal(a):
 
     with SessionLocal() as s:
         rep = load(s, a.file, entered_by=a.by, dry_run=a.dry_run,
-                   register_new=not a.no_register, progress=None if a.dry_run else show)
+                   register_new=not a.no_register, catalog_only=a.catalog_only,
+                   progress=None if a.dry_run else show)
     print(("[试算] " if a.dry_run else "") + rep.line())
     for r in rep.rejected[:10]:
         print("  拒绝：", r)
@@ -177,6 +178,8 @@ def main():
     sp.add_argument("file", help="终端导出的 .xlsx")
     sp.add_argument("--by", required=True, help="导入操作人，写入每条观测的录入人")
     sp.add_argument("--dry-run", action="store_true", help="只统计不入库")
+    sp.add_argument("--catalog-only", action="store_true",
+                    help="只登记指标不写观测：冷启动建目录用，终端按目录整批只导一天即可")
     sp.add_argument("--no-register", action="store_true",
                     help="拒绝库里没见过的编码，只更新已登记序列；无人值守的定时导入必须加这个")
     sp.set_defaults(fn=cmd_import_terminal)
