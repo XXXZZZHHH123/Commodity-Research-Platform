@@ -7,6 +7,7 @@ SMM 终端整本工作簿入库要跑几分钟，撑不住一个同步 HTTP 请�
 但因为 `record()` 幂等，重跑一次即可，不会写重。
 """
 
+import hashlib
 import re
 import threading
 import uuid
@@ -112,6 +113,9 @@ def execute(job_id: str) -> None:
     if job is None:
         return
     path = staging_path(job.token)
+    blob = path.read_bytes() if path.exists() else b""
+    digest, size = hashlib.sha256(blob).hexdigest(), len(blob)
+    del blob
 
     def progress(done, total, report):
         with _LOCK:
@@ -125,8 +129,11 @@ def execute(job_id: str) -> None:
             session.add(AuditLog(
                 at=datetime.now(timezone.utc), actor=job.actor, action="导入",
                 target_type="vendor_terminal", target_id=job.filename[:80],
+                # 记下文件指纹：日后追一个可疑数字时，能确定它出自哪一份文件，
+                # 而不是只知道"某次导入写了 13 万条"
                 detail={"registered": report.registered, "written": report.written,
-                        "unchanged": report.unchanged, "rejected": len(report.rejected)}))
+                        "unchanged": report.unchanged, "rejected": len(report.rejected),
+                        "sha256": digest, "bytes": size}))
             session.commit()
         with _LOCK:
             job.registered, job.written = report.registered, report.written

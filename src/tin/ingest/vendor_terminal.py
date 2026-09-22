@@ -58,6 +58,10 @@ class VendorFormatError(ValueError):
     pass
 
 
+# 自动登记但无人复核过口径的指标，`owner` 标成这个值
+UNVERIFIED = "自动登记·未核验"
+
+
 @dataclass(frozen=True)
 class Vendor:
     key: str
@@ -153,7 +157,38 @@ def read_workbook(data_or_path) -> list[Series]:
         wb.close()
     if not out:
         raise VendorFormatError(f"{getattr(data_or_path, 'name', '文件')} 里没有可识别的数据商终端格式工作表")
+    if not any(s.points for s in out):
+        _explain_empty(src, len(out))
     return out
+
+
+def _explain_empty(src, series_count: int) -> None:
+    """一条数据都没读出来时，先弄清是不是公式没算过，再报错。
+
+    Excel 插件（数据终端的自动更新加载项）写进单元格的是公式，公式的**计算结果**只有
+    被 Excel 打开并保存过才会缓存进文件。openpyxl 不算公式，读到的就是 None——
+    于是整本文件会被当成"全是缺失值"静默导入 0 条。这种失败必须吵，不能安静。
+    """
+    from openpyxl import load_workbook
+
+    if hasattr(src, "seek"):
+        src.seek(0)
+    wb = load_workbook(src, read_only=True, data_only=False)
+    try:
+        formulas = sum(
+            1 for sheet in wb.sheetnames
+            for row in wb[sheet].iter_rows(max_row=200, values_only=True)
+            for c in row
+            if isinstance(c, str) and c.startswith("=") and not c.startswith("=NA(")
+        )
+    finally:
+        wb.close()
+    if formulas:
+        raise VendorFormatError(
+            f"识别出 {series_count} 条序列但一个数据点都没有，文件里有 {formulas} 处公式尚未计算。"
+            "数据终端的 Excel 插件写入的是公式，计算结果要用 Excel 打开并保存后才会存进文件。"
+            "请在 Excel 里刷新并保存一次再上传。")
+    raise VendorFormatError(f"识别出 {series_count} 条序列，但一个数据点都没有——请确认文件内容非空")
 
 
 def detect(data: bytes) -> Vendor | None:
@@ -510,8 +545,13 @@ class LoadReport:
 
 
 def load(session, data_or_path, *, entered_by: str, variety: str = "SN",
-         dry_run: bool = False, progress=None) -> LoadReport:
-    """整本入库。所有观测仍逐条走 `record()` 闸门，只是共用一份预取的最新值索引。"""
+         dry_run: bool = False, progress=None, register_new: bool = True) -> LoadReport:
+    """整本入库。所有观测仍逐条走 `record()` 闸门，只是共用一份预取的最新值索引。
+
+    `register_new=False` 时拒绝库里没见过的编码，只更新已登记序列。**无人值守的自动导入
+    必须用这个模式**：有人把编码敲错一位、或凭空编一个，自动登记会让一条查无实据的序列
+    混进事实层，而没有人在确认页看过它。有人盯着的手工导入才用默认的 True。
+    """
     from tin.ingest.record import RecordError, latest_index, record
     from tin.models import Indicator
 
@@ -522,9 +562,14 @@ def load(session, data_or_path, *, entered_by: str, variety: str = "SN",
 
     ids, _ = resolve_ids(session, wanted)
     registered: dict[str, object] = {}
+    known = set()
     for series in wanted:
         spec = derive_spec(series, variety, series_id=ids[series.code])
         existing = session.get(Indicator, spec.series_id)
+        if existing is None and not register_new:
+            report.rejected.append(
+                f"{series.code}: 编码未登记，自动导入模式不新建指标（名称「{series.name[:30]}」）")
+            continue
         if existing is None:
             report.registered += 1
             if not dry_run:
@@ -534,6 +579,9 @@ def load(session, data_or_path, *, entered_by: str, variety: str = "SN",
                     source=spec.source, source_url=spec.source_url, frequency=spec.frequency,
                     fetch_mode=spec.fetch_mode, phase="P1", vendor_code=series.code,
                     default_entry_time=entry_time_for(series),
+                    # 没有人为这条指标的口径背书过：它是照着文件里的名称自动推出来的。
+                    # 研究员复核后把 owner 改成自己，就算认领了。
+                    owner=UNVERIFIED,
                 )
                 session.add(existing)
         else:
@@ -541,12 +589,14 @@ def load(session, data_or_path, *, entered_by: str, variety: str = "SN",
             if not dry_run and not existing.vendor_code:
                 existing.vendor_code = series.code
         registered[series.code] = existing
+        known.add(series.code)
     if not dry_run:
         session.flush()
     if dry_run:
         report.written = sum(len(s.points) for s in wanted)
         return report
 
+    wanted = [s for s in wanted if s.code in known]
     cache = latest_index(session, [ids[s.code] for s in wanted])
     for n, series in enumerate(wanted, 1):
         for obs in observations(series, entered_by, registered.get(series.code), variety,

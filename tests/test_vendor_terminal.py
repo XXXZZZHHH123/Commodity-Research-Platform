@@ -508,3 +508,55 @@ def test_plain_table_will_not_register_anything_new(session):
     assert pv["ready_count"] == 0
     assert pv["columns"][0]["error"] == "系统未登记该指标"
     assert session.get(Indicator, "SMM.a88888") is None
+
+
+# ---------- 数据可信性 ----------
+
+def test_uncalculated_plugin_formulas_fail_loudly(tmp_path):
+    """数据终端的 Excel 插件写入的是公式，结果要 Excel 保存过才缓存进文件。
+
+    openpyxl 不算公式，读到 None——整本文件会被当成"全是缺失值"静默导入 0 条。
+    这种失败必须吵：安静地导入 0 条，比报错危险得多。
+    """
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["指标名称", "某插件序列"])
+    ws.append(["指标Id", "a12345"])
+    ws.append(["单位", "元/吨"])
+    ws.append(["频率", "日"])
+    ws.append([datetime(2026, 9, 22), '=MSD("a12345",TODAY())'])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    with pytest.raises(vt.VendorFormatError, match="公式尚未计算"):
+        vt.read_workbook(buf.getvalue())
+
+
+def test_unattended_mode_refuses_unknown_codes(session):
+    """无人值守的自动导入不能自动登记：敲错一位或凭空编一个编码，
+    会让一条查无实据的序列混进事实层，而没有人在确认页看过它。"""
+    sheets = {"S": [
+        ["指标名称", "SMM: 锡: 查无此项: 日度"],
+        ["指标Id", "a00000000"],
+        ["单位", "元/吨"],
+        ["频率", "日"],
+        [datetime(2026, 9, 21), 1],
+    ]}
+    report = vt.load(session, make_workbook(sheets), entered_by="定时任务", register_new=False)
+    assert report.registered == 0 and report.written == 0
+    assert any("自动导入模式不新建指标" in r for r in report.rejected)
+    assert session.get(Indicator, "SMM.a00000000") is None
+
+
+def test_auto_registered_indicators_are_marked_unverified(session):
+    """自动登记的指标没有人为它的口径背书，要标出来等人认领。"""
+    sheets = {"S": [
+        ["指标名称", "SMM: 锡: 全新序列: 日度"], ["指标Id", "a00000001"],
+        ["单位", "元/吨"], ["频率", "日"], [datetime(2026, 9, 21), 1],
+    ]}
+    vt.load(session, make_workbook(sheets), entered_by="测试")
+    assert session.get(Indicator, "SMM.a00000001").owner == vt.UNVERIFIED
+    # 已登记的指标不会被这个标记覆盖
+    assert session.get(Indicator, "SMM.SN.spot.1").owner != vt.UNVERIFIED
