@@ -46,6 +46,7 @@ from tin.schemas.caliber import Caliber
 from tin.schemas.judgment import TONES
 from tin.schemas.observation import ObservationIn
 from tin.web import home
+from tin.web.strategy import build_router as build_strategy_router
 
 HERE = Path(__file__).parent
 app = FastAPI(title="大宗商品研究工作台")
@@ -82,6 +83,10 @@ def static_version() -> str:
 templates.env.globals["static_version"] = static_version
 templates.env.filters["num"] = _num
 templates.env.filters["local"] = lambda dt: dt.astimezone(SHANGHAI).strftime("%Y-%m-%d %H:%M") if dt else ""
+
+# Resolve SessionLocal at request time, preserving the app's test/deployment overrides.
+app.include_router(build_strategy_router(lambda: SessionLocal(), templates,
+                                         lambda *args, **kwargs: _shell(*args, **kwargs)))
 
 
 def _redirect(path: str, **params) -> RedirectResponse:
