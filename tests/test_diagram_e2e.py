@@ -264,3 +264,70 @@ def test_indicator_page_says_whether_anything_depends_on_it(client, session):
     a_series(session, "E.ORPHAN", "没人用的指标")
     body = client.get("/sn/indicators/E.ORPHAN").text
     assert "没有任何产业图节点绑定它" in body
+
+
+# ---------- 种子布局的形状约束 ----------
+
+def test_seed_layout_is_compact_and_wired_through_groups():
+    """节点只放「名称/数值/差值/时点」，所以框可以小；结构由分类框之间的连线承担。
+
+    第一版是二十来条节点两两连线，互相穿插，反而看不出谁流向谁——产业链上的流向
+    本来就是**环节之间**的事，不是某两个具体指标之间的事。
+    """
+    import json
+
+    from tin.config import ROOT
+
+    layout = json.loads((ROOT / "seeds" / "diagram_sn.json").read_text(encoding="utf-8"))
+    nodes = layout["nodes"]
+    by = {n["id"]: n for n in nodes}
+    plain = [n for n in nodes if n.get("kind") != "group"]
+
+    assert all(n["w"] <= 170 and n["h"] <= 76 for n in plain), "节点该是紧凑尺寸"
+
+    edges = layout["edges"]
+    group_edges = [e for e in edges if by[e["from"]].get("kind") == "group"]
+    assert len(group_edges) >= 4, "主链路要由分类框串起来"
+    assert all(by[e["to"]].get("kind") == "group" for e in group_edges), "分组只连分组"
+
+    # 剩下的节点级连线必须是真正的包含关系，不能是复原出来的物料流
+    node_edges = [e for e in edges if by[e["from"]].get("kind") != "group"]
+    assert len(node_edges) <= 2, f"节点级连线应当很少，现在有 {len(node_edges)} 条"
+
+    w = max(n["x"] + n["w"] for n in nodes)
+    h = max(n["y"] + n["h"] for n in nodes)
+    assert w / h >= 2.5, f"要横向铺开给宽屏看，现在 {w}×{h}"
+
+
+def test_seed_layout_has_no_parent_cycle():
+    """归属成环会让层级标签渲染成「供给端 › 矿端 › 供给端」，整个层级失去意义。"""
+    import json
+
+    from tin.config import ROOT
+
+    nodes = json.loads((ROOT / "seeds" / "diagram_sn.json").read_text(encoding="utf-8"))["nodes"]
+    by = {n["id"]: n for n in nodes}
+    for n in nodes:
+        seen, cur = {n["id"]}, n
+        while cur.get("parent"):
+            assert cur["parent"] not in seen, f"{n['id']} 的归属链成环"
+            seen.add(cur["parent"])
+            cur = by[cur["parent"]]
+
+
+def test_group_edges_survive_a_markdown_round_trip(client, session):
+    """分组之间的连线不能在导出大纲时被悄悄丢掉。"""
+    layout = {"nodes": [
+        {"id": "g1", "kind": "group", "label": "供给端", "x": 0, "y": 0, "w": 200, "h": 200,
+         "binding": {"kind": "none"}, "statics": []},
+        {"id": "g2", "kind": "group", "label": "精锡", "x": 260, "y": 0, "w": 200, "h": 200,
+         "binding": {"kind": "none"}, "statics": []},
+        {"id": "n1", "label": "国产矿", "parent": "g1", "x": 14, "y": 30, "w": 170, "h": 76,
+         "binding": {"kind": "none"}, "statics": []},
+        {"id": "n2", "label": "精锡产量", "parent": "g2", "x": 274, "y": 30, "w": 170, "h": 76,
+         "binding": {"kind": "none"}, "statics": []},
+    ], "edges": [{"from": "g1", "to": "g2"}]}
+    r = client.post("/api/sn/diagram/templates", json={"name": "带分组连线", "layout": layout})
+    assert r.status_code == 200, r.text
+    saved = diagram.list_templates(session, "SN")[0]["layout"]
+    assert {"from": "g1", "to": "g2"} in saved["edges"]

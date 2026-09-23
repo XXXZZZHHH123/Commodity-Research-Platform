@@ -63,14 +63,34 @@ async function dgLoad() {
   // 按**前端此刻的布局**取值，而不是按 template_id 让服务端去库里读。
   // 新增的节点、刚改的绑定在保存前库里并不存在，走 template_id 就永远查不到值——
   // 表现出来就是「绑了指标但方框不显示数据」。
+  //
+  // 但这一条请求失败不能把整张图清空。之前失败即 return，dg.values 停在空对象，
+  // 于是**每个方框都渲染成「未绑定」**——看上去像是绑定全丢了，实际只是取值没回来。
+  // 服务端没重启（POST 这个路由是新加的，旧进程上是 405）就会正好撞上。
   if (!dg.layout) return;
-  const res = await fetch("/api/sn/diagram/values", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ date: window.DG_DATE || null,
-                           layout: { nodes: dg.layout.nodes, edges: dg.layout.edges } }),
-  });
-  if (!res.ok) { showToast("取值失败"); return; }
-  const data = await res.json();
+  const body = JSON.stringify({ date: window.DG_DATE || null,
+                                layout: { nodes: dg.layout.nodes, edges: dg.layout.edges } });
+  let data = null, why = "";
+  try {
+    const res = await fetch("/api/sn/diagram/values", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body });
+    if (res.ok) data = await res.json();
+    else why = `HTTP ${res.status}`;
+  } catch (e) { why = e.message; }
+
+  if (!data) {
+    // 退回按已保存的布局取值：拿不到未保存的改动，但至少不是一张全灰的图
+    try {
+      const res = await fetch(`/api/sn/diagram/values?template_id=${dg.layout.__id}${
+        window.DG_DATE ? `&date=${window.DG_DATE}` : ""}`);
+      if (res.ok) {
+        data = await res.json();
+        showToast(`实时取值不可用（${why}），显示的是已保存版本 —— 服务端可能没重启`);
+      }
+    } catch (e) { /* 两条都不通，下面统一报 */ }
+  }
+  if (!data) { showToast(`取值失败（${why}）—— 方框显示的不是真实状态`); return; }
+
   dg.values = Object.fromEntries(data.nodes.map((n) => [n.node_id, n]));
   dg.judgment = data.judgment || {};
   const asOf = document.getElementById("dg-asof");
@@ -117,14 +137,31 @@ function dgRender() {
   const by = Object.fromEntries(dg.layout.nodes.map((n) => [n.id, n]));
   edges.innerHTML = (dg.layout.edges || []).map((e) => {
     const a = by[e.from], b = by[e.to];
-    if (!a || !b || dgIsGroup(a) || dgIsGroup(b)) return "";
-    const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2;
-    const mid = (x1 + x2) / 2;
-    // 连线原来 1.2px / 0.55 透明度，压在分组底色上基本看不见。物料流向是这张图的
-    // 主要结构信息，不该比分组边框还淡。
-    return `<path d="M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}"
-      fill="none" stroke="var(--text-muted)" stroke-width="2" opacity="0.85"
-      stroke-linecap="round" marker-end="url(#dg-arrow)"/>`;
+    if (!a || !b) return "";
+    // 分组之间的连线原来被直接跳过，所以「结构」只能靠节点两两连，
+    // 二十来条线互相穿插，谁流向谁反而看不出来。现在分组也能连——
+    // 物料流向本来就是环节之间的事，不是某个具体指标之间的事。
+    const group = dgIsGroup(a) && dgIsGroup(b);
+    // 锚点按相对位置选：同一列上下堆叠的两个框，用左右锚点会画出一条倒着绕回去的线。
+    const stacked = a.x < b.x + b.w && b.x < a.x + a.w;
+    let d;
+    if (stacked) {
+      // 上下堆叠的两个框之间只有十几像素，一小段竖线等于看不见。画成**肘形**：
+      // 从父框左下角下来，拐进子框左边——树状图的通用画法，表达的是「包含」，
+      // 而不是物料从上流到下。（这是画出来的图形，不是标签里的 └ 符号。）
+      const x = a.x + 12;
+      d = `M ${x} ${a.y + a.h} L ${x} ${b.y + b.h / 2} L ${b.x} ${b.y + b.h / 2}`;
+    } else {
+      const back = b.x + b.w < a.x;                 // 反向（右往左）时从左边出
+      const x1 = back ? a.x : a.x + a.w, x2 = back ? b.x + b.w : b.x;
+      const y1 = a.y + a.h / 2, y2 = b.y + b.h / 2, m = (x1 + x2) / 2;
+      d = `M ${x1} ${y1} C ${m} ${y1}, ${m} ${y2}, ${x2} ${y2}`;
+    }
+    return `<path d="${d}"
+      fill="none" stroke="var(--text-muted)" stroke-width="${group ? 3 : 1.6}"
+      opacity="${group ? 0.9 : 0.5}" stroke-linecap="round"
+      ${group ? "" : 'stroke-dasharray="5 4"'}
+      marker-end="url(#dg-arrow${group ? "" : "-thin"})"/>`;
   }).join("");
 
   nodes.innerHTML = dg.layout.nodes.filter((n) => !dgIsGroup(n)).map((n) => dgNode(n)).join("");
@@ -159,14 +196,50 @@ function dgTrail(id) {
   return trail.join(" › ");
 }
 
+function dgIsAncestor(maybeAncestor, id) {
+  let cur = dg.layout.nodes.find((n) => n.id === id);
+  const seen = new Set();
+  while (cur && cur.parent && !seen.has(cur.parent)) {
+    if (cur.parent === maybeAncestor) return true;
+    seen.add(cur.parent);
+    cur = dg.layout.nodes.find((n) => n.id === cur.parent);
+  }
+  return false;
+}
+
 function dgGroupAt(node) {
   // 拖动结束后按中心点落在哪个分组里决定归属；嵌套时取最深的那个。
+  //
+  // 必须排除自己的**后代**，不只是自己：把「供给端」拖进它自己的子分组「矿端」，
+  // 归属就成了 供给端→矿端→供给端 的环，标签渲染成「供给端 › 矿端 › 供给端」，
+  // 整个层级关系失去意义。
   const cx = node.x + node.w / 2, cy = node.y + node.h / 2;
   const hit = dg.layout.nodes.filter((g) =>
-    dgIsGroup(g) && g.id !== node.id &&
+    dgIsGroup(g) && g.id !== node.id && !dgIsAncestor(node.id, g.id) &&
     g.x <= cx && cx <= g.x + g.w && g.y <= cy && cy <= g.y + g.h);
   if (!hit.length) return null;
   return hit.sort((a, b) => dgDepth(b.id) - dgDepth(a.id))[0].id;
+}
+
+function dgHealCycles() {
+  // 已经存成环的布局要能自己修好——否则打开就是一张层级全乱的图，还不知道为什么。
+  const by = Object.fromEntries(dg.layout.nodes.map((n) => [n.id, n]));
+  const broken = [];
+  for (const n of dg.layout.nodes) {
+    const seen = new Set([n.id]);
+    let cur = n;
+    while (cur && cur.parent) {
+      if (seen.has(cur.parent)) { broken.push(n); break; }
+      seen.add(cur.parent);
+      cur = by[cur.parent];
+    }
+  }
+  for (const n of broken) n.parent = null;
+  if (broken.length) {
+    dg.dirty = true;
+    showToast(`检测到 ${broken.length} 处分组归属成环（父框被拖进了自己的子框），已解除归属，请重新拖入并保存`);
+  }
+  return broken.length;
 }
 
 function dgHandle(n) {
@@ -187,64 +260,76 @@ function dgDir(v) {
 function dgNode(n) {
   const v = dg.values[n.id] || { state: "unbound", label: n.label };
   const st = DG_STATE[v.state] || DG_STATE.unbound;
-  const statics = (n.statics || []).slice(0, 3);
   const proxy = v.proxy;
   const roles = v.roles || [];
   const dim = dg.judgmentView && !roles.length;
+  const hasValue = v.state === "ok" || v.state === "stale";
   // 左侧色条只表示涨跌方向；边框仍然表示数据状态，两者不能混为一谈
-  const dirColor = (v.state === "ok" || v.state === "stale")
-    ? dgDir(v.delta != null ? v.delta : v.mom).color : null;
+  const dirColor = hasValue ? dgDir(v.delta != null ? v.delta : v.mom).color : null;
 
-  // 值区：阻断与无数据一律不显示数字——显示一个数就等于在说"算出来了"
+  // 一个节点只绑一个指标，方框要说的就一件事：这个数现在多少、在往哪走、什么时候的。
+  // 同比、静态系数这些挪进详情抽屉——挤在方框里会把框撑大，二十几个框摆不下一屏。
   let main = "";
-  if (v.state === "ok" || v.state === "stale") {
+  if (hasValue) {
     const d = dgDir(v.delta != null ? v.delta : v.mom);
     const parts = [];
     if (v.delta != null) parts.push(dgNum(v.delta, "").replace(/^-/, "−"));
-    if (dgPct(v.mom) != null) parts.push(`${dgPct(v.mom)}`);
-    const move = parts.length
-      ? `<span class="${d.cls} font-semibold tabular">${d.mark} ${parts.join("　")}</span>` : "";
-    const yoy = dgPct(v.yoy) != null
-      ? `<span class="${dgDir(v.yoy).cls} tabular">同比 ${dgPct(v.yoy)}</span>` : "";
-    // 数值与变化分两行：210px 宽的框里挤一行会把单位甩到下一行去
+    if (dgPct(v.mom) != null) parts.push(dgPct(v.mom));
     main = `
-      <div class="text-[15px] font-bold tabular leading-tight truncate">${dgEsc(dgNum(v.value, v.unit))}</div>
-      ${move ? `<div class="text-[11px] tabular leading-tight">${move}</div>` : ""}
-      <div class="text-[10px] text-[var(--text-muted)] tabular mt-0.5 truncate">
-        ${dgEsc(v.frequency)}频 · ${dgEsc(v.as_of || "")}${yoy ? " · " : ""}${yoy}</div>`;
+      <div class="text-[14px] font-bold tabular leading-none mt-1 truncate">${dgEsc(dgNum(v.value, v.unit))}</div>
+      ${parts.length ? `<div class="${d.cls} text-[10px] font-semibold tabular leading-none mt-1 truncate">
+        ${d.mark} ${parts.join("　")}</div>` : ""}
+      <div class="text-[9px] text-[var(--text-muted)] tabular leading-none mt-1 truncate">
+        ${dgEsc(v.frequency || "")} · ${dgEsc((v.as_of || "").slice(2))}</div>`;
   } else if (v.state === "blocked" || v.state === "missing_input") {
     // 两者都留空，但要说清楚是"补数据就能算"还是"口径对不上，补也没用"
-    const title = v.state === "blocked" ? "阻断不出数" : "缺少输入";
-    main = `<div class="text-[11px] font-semibold">${title}</div>
-            <div class="text-[10px] mt-0.5 leading-snug">${dgEsc((v.note || "").slice(0, 46))}</div>`;
+    main = `<div class="text-[10px] font-semibold mt-1">${
+      v.state === "blocked" ? "阻断不出数" : "缺少输入"}</div>
+      <div class="text-[9px] mt-0.5 leading-snug">${dgEsc((v.note || "").slice(0, 24))}</div>`;
   } else if (v.state === "no_data" || v.state === "retired") {
-    main = `<div class="text-[11px] font-semibold">${v.state === "retired" ? "指标已停用" : "尚无数据"}</div>`;
-  }
-  if (v.state === "stale" && v.note) {
-    main += `<div class="text-[10px] mt-0.5">${dgEsc(v.note)}</div>`;
+    main = `<div class="text-[10px] font-semibold mt-1">${
+      v.state === "retired" ? "指标已停用" : "尚无数据"}</div>`;
   }
 
-  const staticRows = statics.map((s) =>
-    `<div class="text-[10px] text-[var(--text-muted)] truncate">［静］${dgEsc(s.label)} ${dgEsc(s.value)}</div>`
-  ).join("");
+  // 静态系数只在没有数值时占位——否则那个框就真空了（纯调研节点本来就靠它说话）。
+  // 有数值时缩成右下角一个角标：多一行文字就把 76px 的框撑破，底部会被裁掉。
+  const statics = (n.statics || []);
+  const staticRows = hasValue ? "" : statics.slice(0, 2).map((s) =>
+    `<div class="text-[9px] text-[var(--text-muted)] leading-tight truncate">［静］${
+      dgEsc(s.label)} ${dgEsc(s.value)}</div>`).join("");
+  const staticMark = (hasValue && statics.length)
+    ? `<text x="${n.w - 6}" y="${n.h - 5}" text-anchor="end" font-size="8"
+             fill="var(--text-muted)" opacity="0.75">静${statics.length}<title>${
+        dgEsc(statics.map((s) => `${s.label} ${s.value}`).join("　"))}</title></text>` : "";
+
+  // 角色只在判断视角下展开成文字；平时缩成一个点，不跟标题抢那一行
+  const roleMark = roles.length
+    ? (dg.judgmentView
+        ? `<g transform="translate(${n.w - 6},5)">
+             <rect x="${-roles[0].length * 9 - 8}" y="0" width="${roles[0].length * 9 + 8}"
+                   height="13" rx="6.5" fill="var(--primary)" opacity="0.16"/>
+             <text x="-4" y="9.8" text-anchor="end" font-size="8.5" font-weight="700"
+                   fill="var(--primary)">${dgEsc(roles[0])}</text></g>`
+        : `<circle cx="${n.w - 8}" cy="8" r="3" fill="var(--primary)" opacity="0.7"><title>${
+             dgEsc(roles.join("·"))}</title></circle>`)
+    : "";
 
   return `
   <g class="dg-node" data-node="${dgEsc(n.id)}" transform="translate(${n.x},${n.y})"
      opacity="${dim ? 0.22 : 1}" style="cursor:${dg.edit ? "grab" : "pointer"}">
-    <rect width="${n.w}" height="${n.h}" rx="8" fill="${st.fill}" stroke="${st.stroke}"
+    <rect width="${n.w}" height="${n.h}" rx="6" fill="${st.fill}" stroke="${st.stroke}"
           stroke-width="${proxy ? 1.4 : 1.6}" ${st.dash ? `stroke-dasharray="${st.dash}"` : ""}/>
-    ${proxy ? `<rect width="${n.w}" height="${n.h}" rx="8" fill="url(#dg-hatch)" opacity="0.5"/>` : ""}
-    ${dirColor ? `<path d="M 0 8 A 8 8 0 0 1 8 0 L 5 0 L 5 ${n.h} L 8 ${n.h} A 8 8 0 0 1 0 ${n.h - 8} Z"
-        fill="${dirColor}" opacity="0.85"/>` : ""}
-    ${roles.length ? `<g transform="translate(${n.w - 8},6)">
-        <rect x="${-roles.join("·").length * 7 - 8}" y="0" width="${roles.join("·").length * 7 + 8}"
-              height="14" rx="7" fill="var(--primary)" opacity="0.14"/>
-        <text x="-4" y="10.5" text-anchor="end" font-size="9" font-weight="700"
-              fill="var(--primary)">${dgEsc(roles.join("·"))}</text></g>` : ""}
+    ${proxy ? `<rect width="${n.w}" height="${n.h}" rx="6" fill="url(#dg-hatch)" opacity="0.5"/>` : ""}
+    ${dirColor ? `<path d="M 0 6 A 6 6 0 0 1 6 0 L 4 0 L 4 ${n.h} L 6 ${n.h} A 6 6 0 0 1 0 ${n.h - 6} Z"
+        fill="${dirColor}" opacity="0.9"/>` : ""}
+    ${roleMark}
+    ${staticMark}
     ${dg.edit ? dgHandle(n) : ""}
-    <foreignObject x="${dirColor ? 15 : 10}" y="8" width="${n.w - (dirColor ? 25 : 20)}" height="${n.h - 16}">
+    <foreignObject x="${dirColor ? 11 : 8}" y="6" width="${n.w - (dirColor ? 20 : 16)}" height="${n.h - 10}">
       <div xmlns="http://www.w3.org/1999/xhtml" class="${st.tone}" style="font-family:inherit">
-        <div class="text-[11px] font-bold truncate">${dgEsc(n.label)}${proxy ? " ◍" : ""}</div>
+        <div class="text-[10.5px] font-bold leading-none truncate"
+             style="${roles.length && !dg.judgmentView ? "padding-right:8px" : ""}">${
+          dgEsc(n.label)}${proxy ? " ◍" : ""}</div>
         ${main}
         ${staticRows}
       </div>
@@ -567,6 +652,7 @@ function dgInit() {
   dg.layout = { ...tpl.layout, __id: tpl.id, __name: tpl.name };
   dg.layout.nodes = dg.layout.nodes || [];
   dg.layout.edges = dg.layout.edges || [];
+  dgHealCycles();
   dgBindCanvas();
   dgRender();
   dgFit();
@@ -597,7 +683,7 @@ function dgAdd(kind) {
   const y = Math.round((-dg.pan.y / dg.zoom + 40) / 10) * 10;
   const node = kind === "group"
     ? { id: dgNextId("g"), kind: "group", label: "新分组", x, y, w: 420, h: 260, binding: { kind: "none" }, statics: [] }
-    : { id: dgNextId("n"), label: "新节点", x, y, w: 210, h: 104, binding: { kind: "none" }, statics: [] };
+    : { id: dgNextId("n"), label: "新节点", x, y, w: 170, h: 76, binding: { kind: "none" }, statics: [] };
   dg.layout.nodes.push(node);
   dg.dirty = true;
   dgSyncSave();
@@ -834,8 +920,17 @@ async function dgOpenDetail(nodeId) {
   toggleDrawer("dg-detail-drawer", true);
 
   if (!v.series_id) {
-    box.innerHTML = `<div class="py-8 text-center text-[var(--text-muted)] text-xs">
-      这个方框还没有绑定指标。${dg.edit ? "" : "进入「编辑布局」后点它即可绑定。"}</div>`;
+    // 未绑定不代表这个框是空的：纯调研节点全靠静态系数说话，方框上只放得下两条
+    const st = (node.statics || []);
+    box.innerHTML = `
+      <div class="py-6 text-center text-[var(--text-muted)] text-xs">
+        这个方框还没有绑定指标。${dg.edit ? "" : "进入「编辑布局」后点它即可绑定。"}</div>
+      ${st.length ? `<div class="py-3 border-t border-[var(--line)] text-[11px]">
+        <div class="text-[10px] font-semibold text-[var(--text-muted)] mb-1">
+          静态标注 —— 调研得来的结构系数，<b>不是实测序列</b></div>
+        ${st.map((s) => `<div class="flex gap-2 py-0.5">
+          <span class="w-20 shrink-0 text-[var(--text-muted)]">${dgEsc(s.label)}</span>
+          <span class="flex-1">${dgEsc(s.value)}</span></div>`).join("")}</div>` : ""}`;
     return;
   }
   box.innerHTML = '<div class="py-8 text-center text-[var(--text-muted)] text-xs">加载中…</div>';
@@ -864,7 +959,17 @@ async function dgOpenDetail(nodeId) {
         ${v.proxy ? ' · <b class="text-[var(--amber)]">代理指标，非本环节实测</b>' : ""}
       </div>
       ${v.note ? `<div class="mt-1.5 text-[11px] text-[var(--amber)]">${dgEsc(v.note)}</div>` : ""}
+      ${v.yoy != null ? `<div class="mt-1 text-[11px] tabular">
+        同比 <span class="${dgDir(v.yoy).cls} font-semibold">${dgPct(v.yoy)}</span></div>` : ""}
     </div>
+
+    ${(node.statics || []).length ? `<div class="py-3 border-b border-[var(--line)] text-[11px]">
+      <div class="text-[10px] font-semibold text-[var(--text-muted)] mb-1">
+        静态标注 —— 调研得来的结构系数，<b>不是实测序列</b>，一年动一次</div>
+      ${node.statics.map((s) => `<div class="flex gap-2 py-0.5">
+        <span class="w-20 shrink-0 text-[var(--text-muted)]">${dgEsc(s.label)}</span>
+        <span class="flex-1">${dgEsc(s.value)}</span></div>`).join("")}
+    </div>` : ""}
 
     ${d.history.length > 1 ? `<div class="py-3 border-b border-[var(--line)]">
       <div class="text-[10px] font-semibold text-[var(--text-muted)] mb-1">

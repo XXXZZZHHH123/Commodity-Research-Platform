@@ -56,9 +56,12 @@
      style="height: calc(100vh - 260px); min-height: 520px;">
   <svg id="dg-canvas" class="w-full h-full select-none" style="touch-action:none">
     <defs>
-      <!-- 箭头跟着连线一起加重：物料流向是这张图的主要结构信息 -->
-      <marker id="dg-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <!-- 主流向（分组之间）用粗箭头；节点之间的细连线是补充说明，刻意画淡 -->
+      <marker id="dg-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
         <path d="M0,0.5 L8,4 L0,7.5 z" fill="var(--text-muted)" opacity="0.9"/>
+      </marker>
+      <marker id="dg-arrow-thin" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto">
+        <path d="M0,1 L8,4 L0,7 z" fill="var(--text-muted)" opacity="0.5"/>
       </marker>
       <!-- 代理指标的斜纹底：一眼看出这格不是本环节的实测值 -->
       <pattern id="dg-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
