@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}策略 · 锡研究工作台{% endblock %}
+{% block main %}
+<link rel="stylesheet" href="/static/strategy.css?v={{ static_version() }}">
+<section class="strategy-head">
+  <div><p class="eyebrow">RESEARCH → DECISION → REVIEW</p><h1>交易策略</h1>
+    <p>把产业判断转成可证伪的入场、目标与止损；发布后记录真实成交，不把行情触价当作盈利。</p></div>
+  <div class="strategy-counts"><span><b>{{ summary.active }}</b> 跟踪中</span><span><b>{{ summary.drafts }}</b> 待审阅</span></div>
+</section>
+<section class="strategy-grid">
+  <div class="strategy-main">
+    <div class="strategy-toolbar"><div class="strategy-filters">
+      {% for key,label in [('all','全部'),('draft','草稿'),('watching','等待入场'),('open','跟踪中'),('closed','已退出'),('cancelled','已作废')] %}
+      <a class="{{ 'selected' if selected_status == key else '' }}" href="/sn/strategies?status={{ key }}">{{ label }}</a>{% endfor %}
+    </div>
+    <button class="button-primary" id="generate-strategies">基于研究生成草稿</button></div>
+    <div id="strategy-notice" class="strategy-notice" role="status"></div>
+    <div class="strategy-list">
+    {% for s in strategies %}
+      <a class="strategy-card" href="/sn/strategies/{{ s.id }}">
+        <div class="strategy-card-top"><span class="status-chip status-{{ s.status }}">{{ status_labels[s.status] }}</span>
+          <span>{{ kind_labels[s.kind] }} · {{ mode_labels[s.mode] }}</span></div>
+        <h2>{{ s.title }}</h2><p>{{ s.plan.thesis }}</p>
+        <div class="strategy-card-meta">{% for leg in s.plan.legs %}<span>{{ '多' if leg.side == 'buy' else '空' }} {{ leg.contract }} × {{ leg.ratio }}</span>{% endfor %}
+          <span>研究时点 {{ s.plan.as_of[:16].replace('T',' ') }}</span></div>
+      </a>
+    {% else %}<div class="empty-state"><strong>这里还没有策略</strong><p>先建立并生效一条研究判断、录入具体合约行情和产业证据，再生成可审阅的策略草稿。</p></div>{% endfor %}
+    </div>
+  </div>
+  <aside class="strategy-aside"><p class="eyebrow">产品边界</p><h2>建议不是订单</h2>
+    <p>系统先提出有证据、能被推翻的模拟策略。研究员审阅发布后进入等待；只有登记了完整腿的实际成交，才会进入持仓跟踪。</p>
+    <p>跨期价差统一按「近月 − 远月」报价。已实现盈亏只根据逐腿开平仓成交与费用计算。</p>
+    <div class="strategy-caution">AI 生成失败或证据不足时会明确列出缺口，不会凑出买卖价位。</div>
+  </aside>
+</section>
+<script src="/static/strategy.js?v={{ static_version() }}"></script>
+{% endblock %}
