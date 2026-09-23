@@ -175,6 +175,25 @@ html { scroll-behavior: smooth; }
 /* 抽屉打开时 toast 挪到左下，否则正好压在抽屉右下角的主操作按钮上 */
 body.drawer-open #toast { right: auto; left: 1.5rem; }
 
+/* 未通过证据校验的论断：显著标灰。这是质量警报（SPEC §4.1），不能藏也不能长得像正经论断——
+   它跟旁边那几条同样是 LLM 写的，只有视觉上拉开差距，研究员才不会顺手当结论用。 */
+.unverified {
+  color: var(--text-muted);
+  background: repeating-linear-gradient(
+    135deg,
+    transparent,
+    transparent 7px,
+    color-mix(in srgb, var(--text-muted) 7%, transparent) 7px,
+    color-mix(in srgb, var(--text-muted) 7%, transparent) 14px
+  );
+  filter: grayscale(1);
+  opacity: 0.85;
+}
+
+/* 首屏数据墙默认折叠：summary 是 flex，默认三角会消失，这里自己画 */
+#home-wall > summary { list-style: none; }
+#home-wall > summary::-webkit-details-marker { display: none; }
+
 /* 宏观小图展开与历史图表弹窗。 */
 .macro-trend-card {
   min-height: 132px;
