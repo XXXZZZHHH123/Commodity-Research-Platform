@@ -313,6 +313,12 @@ def diagram_from_markdown(body: dict = Body(...)):
                 "templates": diagram_api.list_templates(s, V)}
 
 
+@app.get("/api/sn/diagram/crosscheck")
+def diagram_crosscheck(date: str | None = None):
+    with SessionLocal() as s:
+        return {"checks": diagram_api.crosscheck(s, V, _board_date(s, date))}
+
+
 @app.get("/api/sn/diagram/detail")
 def diagram_detail(series_id: str, date: str | None = None):
     with SessionLocal() as s:

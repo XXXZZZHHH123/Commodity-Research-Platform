@@ -458,3 +458,70 @@ def test_detail_of_a_derived_node_explains_the_formula(session):
 def test_detail_of_unknown_series_fails_clearly(session):
     with pytest.raises(diagram.DiagramError, match="指标不存在"):
         diagram.detail(session, "T.NOPE", TODAY)
+
+
+# ---------- 跨来源交叉校验 ----------
+
+def test_crosscheck_compares_two_sources_of_the_same_fact(session):
+    """有价值的校验是跨来源的。
+
+    实测：SMM 平衡表内部「产量+进口−出口−表观消费 = 库存变化」**恒等于 0**——
+    因为表观消费本就是倒算的，校验它是同义反复，永远抓不到任何问题。
+    而同一事实的两家来源实测差 −5.3% ~ +8.8%，那才是信号。
+    """
+    for sid in ("SMM.a10167090", "MYSTEEL.ID01517452"):
+        add_series(session, sid, frequency="月", unit="吨")
+    add_points(session, "SMM.a10167090", [15290, 15430], step_days=30)
+    add_points(session, "MYSTEEL.ID01517452", [16152, 15703], step_days=30)
+
+    out = {c["id"]: c for c in diagram.crosscheck(session, "SN", TODAY)}
+    prod = out["prod_cn"]
+    assert prod["state"] == diagram.STALE, "两家差 5% 以上，超出 ±3% 容差"
+    assert "超出容差" in prod["summary"]
+    assert prod["points"][0]["rel"] == pytest.approx(-5.34, abs=0.1)
+
+
+def test_crosscheck_flags_identical_sources_as_redundant(session):
+    """两家完全一致说明转载同一来源，值得指出——不必双边维护。"""
+    for sid in ("SMM.a10005167", "MYSTEEL.CM0000138665"):
+        add_series(session, sid, frequency="月", unit="吨")
+    add_points(session, "SMM.a10005167", [17431, 16831], step_days=30)
+    add_points(session, "MYSTEEL.CM0000138665", [17431, 16831], step_days=30)
+
+    out = {c["id"]: c for c in diagram.crosscheck(session, "SN", TODAY)}
+    assert out["mine_import"]["state"] == diagram.OK
+    assert "同一来源" in out["mine_import"]["summary"]
+
+
+def test_crosscheck_without_overlapping_dates_says_so(session):
+    out = {c["id"]: c for c in diagram.crosscheck(session, "SN", TODAY)}
+    assert out["social_stock"]["state"] == diagram.NO_DATA
+    assert "无法比较" in out["social_stock"]["summary"]
+
+
+# ---------- 判断依赖 ----------
+
+def test_nodes_carry_their_role_in_the_current_judgment(session):
+    """回答"我这个判断靠产业链上哪几个环节"——角色要跟着节点到前端。"""
+    from tin.jobs.seed import seed_judgment
+    from tin.models import JudgmentSeriesRef
+
+    add_series(session, "T.STOCK")
+    add_series(session, "T.VIX")
+    j = seed_judgment(session)
+    session.add_all([
+        JudgmentSeriesRef(judgment_id=j.id, ref_type="falsifier", ref_id="f1", series_id="T.STOCK"),
+        JudgmentSeriesRef(judgment_id=j.id, ref_type="threshold", ref_id="t1", series_id="T.VIX"),
+    ])
+    session.flush()
+
+    roles = diagram.judgment_roles(session)
+    assert "证伪条件" in roles["T.STOCK"]
+    assert "阈值" in roles["T.VIX"]
+
+    out = diagram.resolve(session, {"nodes": [
+        node("n1", series="T.VIX"), node("n2", series="T.STOCK")]}, TODAY)
+    assert "阈值" in out[0]["roles"]
+
+    out2 = diagram.resolve(session, {"nodes": [node("n3", series="T.OTHER")]}, TODAY)
+    assert out2[0]["roles"] == [], "没被判断引用的节点角色为空，而不是缺字段"

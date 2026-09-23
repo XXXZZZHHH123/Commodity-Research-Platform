@@ -17,6 +17,10 @@
       <option value="{{ t.id }}" {{ 'selected' if t.id == template.id }}>{{ t.name }}{{ '（默认）' if t.is_default }}</option>
       {% endfor %}
     </select>
+    <button type="button" onclick="dgToggleJudgment()" id="dg-judge-btn"
+      class="px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)] font-semibold">判断视角</button>
+    <button type="button" onclick="dgOpenCrosscheck()"
+      class="px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)] font-semibold">交叉校验</button>
     <button type="button" onclick="dgOpenMarkdown()"
       class="px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)] font-semibold">Markdown</button>
     <button type="button" onclick="dgToggleEdit()" id="dg-edit-btn"
@@ -116,6 +120,33 @@
     <button onclick="toggleDrawer('dg-detail-drawer', false)" class="text-xl leading-none text-[var(--text-muted)] hover:text-[var(--text)]">&times;</button>
   </div>
   <div id="dg-detail-body" class="mt-2 flex-1 overflow-y-auto"></div>
+</aside>
+
+<!-- 跨来源交叉校验 -->
+<aside id="dg-check-drawer" data-drawer
+  class="fixed right-0 top-0 bottom-0 z-50 w-full max-w-lg bg-[var(--surface)] border-l border-[var(--line)] shadow-2xl p-6 flex flex-col translate-x-full transition-transform duration-300 ease-in-out">
+  <div class="flex items-start justify-between gap-4 pb-3 border-b border-[var(--line)]">
+    <div>
+      <h2 class="text-lg font-bold">跨来源交叉校验</h2>
+      <p class="text-[11px] text-[var(--text-muted)] mt-0.5">
+        同一个事实由两家分别给出时，对不对得上</p>
+    </div>
+    <button onclick="toggleDrawer('dg-check-drawer', false)" class="text-xl leading-none text-[var(--text-muted)] hover:text-[var(--text)]">&times;</button>
+  </div>
+  <div id="dg-check-body" class="mt-2 flex-1 overflow-y-auto"></div>
+</aside>
+
+<!-- 多序列对比 -->
+<aside id="dg-compare-drawer" data-drawer
+  class="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-[var(--surface)] border-l border-[var(--line)] shadow-2xl p-6 flex flex-col translate-x-full transition-transform duration-300 ease-in-out">
+  <div class="flex items-start justify-between gap-4 pb-3 border-b border-[var(--line)]">
+    <div>
+      <h2 class="text-lg font-bold">趋势对比</h2>
+      <p class="text-[11px] text-[var(--text-muted)] mt-0.5">最多 4 条 ｜ 归一化后只比趋势，不比大小</p>
+    </div>
+    <button onclick="toggleDrawer('dg-compare-drawer', false)" class="text-xl leading-none text-[var(--text-muted)] hover:text-[var(--text)]">&times;</button>
+  </div>
+  <div id="dg-compare-body" class="mt-3 flex-1 overflow-y-auto"></div>
 </aside>
 
 <!-- Markdown 双向通道 -->

@@ -78,8 +78,10 @@ function dgRender() {
             fill-opacity="${0.6 - d * 0.18}" stroke="var(--line-strong)"
             stroke-width="${1.6 - d * 0.3}" stroke-dasharray="${d ? "4 3" : "8 4"}"
             opacity="${1 - d * 0.18}"/>
-      <text x="${12 + d * 4}" y="${19 + d * 2}" font-size="${12.5 - d}" font-weight="700"
-            fill="var(--text-muted)" opacity="${1 - d * 0.15}">${d ? "└ " : ""}${dgEsc(g.label)}</text>
+      ${d ? `<rect x="10" y="7" width="3" height="13" rx="1.5" fill="var(--primary)" opacity="0.5"/>` : ""}
+      <text x="${d ? 19 : 12}" y="${19 + d}" font-size="${12.5 - d * 0.8}" font-weight="700"
+            fill="var(--text-muted)" opacity="${1 - d * 0.1}">${
+        d ? `<tspan opacity="0.55">${dgEsc(dgTrail(g.id))} › </tspan>` : ""}${dgEsc(g.label)}</text>
       ${dg.edit ? dgHandle(g) : ""}
     </g>`).join("");
 
@@ -106,6 +108,19 @@ function dgDepth(id, seen) {
   const s = seen || new Set();
   s.add(id);
   return 1 + dgDepth(n.parent, s);
+}
+
+function dgTrail(id) {
+  // 面包屑：「供给端 › 矿端」。层级靠文字说清楚，不指望所有人都懂 Markdown 的缩进符号。
+  const trail = [];
+  let cur = dg.layout.nodes.find((n) => n.id === id);
+  const seen = new Set();
+  while (cur && cur.parent && !seen.has(cur.parent)) {
+    seen.add(cur.parent);
+    cur = dg.layout.nodes.find((n) => n.id === cur.parent);
+    if (cur) trail.unshift(cur.label);
+  }
+  return trail.join(" › ");
 }
 
 function dgGroupAt(node) {
@@ -138,6 +153,8 @@ function dgNode(n) {
   const st = DG_STATE[v.state] || DG_STATE.unbound;
   const statics = (n.statics || []).slice(0, 3);
   const proxy = v.proxy;
+  const roles = v.roles || [];
+  const dim = dg.judgmentView && !roles.length;
   // 左侧色条只表示涨跌方向；边框仍然表示数据状态，两者不能混为一谈
   const dirColor = (v.state === "ok" || v.state === "stale")
     ? dgDir(v.delta != null ? v.delta : v.mom).color : null;
@@ -177,12 +194,17 @@ function dgNode(n) {
 
   return `
   <g class="dg-node" data-node="${dgEsc(n.id)}" transform="translate(${n.x},${n.y})"
-     style="cursor:${dg.edit ? "grab" : "pointer"}">
+     opacity="${dim ? 0.22 : 1}" style="cursor:${dg.edit ? "grab" : "pointer"}">
     <rect width="${n.w}" height="${n.h}" rx="8" fill="${st.fill}" stroke="${st.stroke}"
           stroke-width="${proxy ? 1.4 : 1.6}" ${st.dash ? `stroke-dasharray="${st.dash}"` : ""}/>
     ${proxy ? `<rect width="${n.w}" height="${n.h}" rx="8" fill="url(#dg-hatch)" opacity="0.5"/>` : ""}
     ${dirColor ? `<path d="M 0 8 A 8 8 0 0 1 8 0 L 5 0 L 5 ${n.h} L 8 ${n.h} A 8 8 0 0 1 0 ${n.h - 8} Z"
         fill="${dirColor}" opacity="0.85"/>` : ""}
+    ${roles.length ? `<g transform="translate(${n.w - 8},6)">
+        <rect x="${-roles.join("·").length * 7 - 8}" y="0" width="${roles.join("·").length * 7 + 8}"
+              height="14" rx="7" fill="var(--primary)" opacity="0.14"/>
+        <text x="-4" y="10.5" text-anchor="end" font-size="9" font-weight="700"
+              fill="var(--primary)">${dgEsc(roles.join("·"))}</text></g>` : ""}
     ${dg.edit ? dgHandle(n) : ""}
     <foreignObject x="${dirColor ? 15 : 10}" y="8" width="${n.w - (dirColor ? 25 : 20)}" height="${n.h - 16}">
       <div xmlns="http://www.w3.org/1999/xhtml" class="${st.tone}" style="font-family:inherit">
@@ -582,20 +604,81 @@ function dgTidyGroups() {
 
 /* ---------- 节点详情（看图模式点击） ---------- */
 
-function dgLine(points, w, h) {
+function dgFmt(v) {
+  const a = Math.abs(v);
+  return v.toLocaleString("zh-CN", { maximumFractionDigits: a >= 1000 ? 0 : a >= 10 ? 1 : 2 });
+}
+
+function dgChart(points, unit, w = 420, h = 180) {
+  // 带坐标轴的走势图。只画一条序列——单位与量级不同的序列叠在一张图上会互相淹没，
+  // 而双轴是明令禁用的（01 §4.6）。要比趋势走「对比」视图的归一化。
   if (!points || points.length < 2) return "";
+  const PAD = { l: 58, r: 12, t: 12, b: 26 };
+  const iw = w - PAD.l - PAD.r, ih = h - PAD.t - PAD.b;
   const vals = points.map((p) => p.value);
-  const lo = Math.min(...vals), hi = Math.max(...vals);
-  const span = hi - lo || 1;
-  const step = w / (points.length - 1);
-  const xy = points.map((p, i) => [i * step, h - ((p.value - lo) / span) * h]);
-  const d = xy.map(([x, y], i) => `${i ? "L" : "M"} ${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const pad = (hi - lo) * 0.08;
+  lo -= pad; hi += pad;
+  const X = (i) => PAD.l + (i / (points.length - 1)) * iw;
+  const Y = (v) => PAD.t + ih - ((v - lo) / (hi - lo)) * ih;
+  const d = points.map((p, i) => `${i ? "L" : "M"} ${X(i).toFixed(1)} ${Y(p.value).toFixed(1)}`).join(" ");
   const rising = vals[vals.length - 1] >= vals[0];
   const color = rising ? "var(--up)" : "var(--down)";
-  return `<svg viewBox="0 0 ${w} ${h}" class="w-full" style="height:${h}px">
-    <path d="${d} L ${w} ${h} L 0 ${h} Z" fill="${color}" opacity="0.08"/>
-    <path d="${d}" fill="none" stroke="${color}" stroke-width="1.6"/>
+
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => lo + (hi - lo) * f);
+  const grid = ticks.map((v) => `
+    <line x1="${PAD.l}" y1="${Y(v).toFixed(1)}" x2="${w - PAD.r}" y2="${Y(v).toFixed(1)}"
+          stroke="var(--line)" stroke-width="0.8" opacity="0.7"/>
+    <text x="${PAD.l - 6}" y="${(Y(v) + 3).toFixed(1)}" text-anchor="end" font-size="9"
+          fill="var(--text-muted)" class="tabular">${dgEsc(dgFmt(v))}</text>`).join("");
+
+  const every = Math.max(1, Math.ceil(points.length / 5));
+  const xlab = points.map((p, i) => (i % every === 0 || i === points.length - 1)
+    ? `<text x="${X(i).toFixed(1)}" y="${h - 8}" text-anchor="middle" font-size="9"
+             fill="var(--text-muted)" class="tabular">${dgEsc(p.as_of.slice(5))}</text>` : "").join("");
+
+  // 每个数据点都可悬停读数——图上看出"在动"，鼠标指上去看清"动到多少"
+  const dots = points.map((p, i) => `
+    <circle cx="${X(i).toFixed(1)}" cy="${Y(p.value).toFixed(1)}" r="7" fill="transparent"
+            class="dg-dot" data-x="${X(i).toFixed(1)}" data-y="${Y(p.value).toFixed(1)}"
+            data-label="${dgEsc(p.as_of)}　${dgEsc(dgFmt(p.value))}${dgEsc(unit || "")}"/>`).join("");
+  const last = points[points.length - 1];
+
+  return `<svg viewBox="0 0 ${w} ${h}" class="w-full" style="height:${h}px" id="dg-chart-svg">
+    ${grid}${xlab}
+    <line x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + ih}" stroke="var(--line-strong)" stroke-width="1"/>
+    <line x1="${PAD.l}" y1="${PAD.t + ih}" x2="${w - PAD.r}" y2="${PAD.t + ih}" stroke="var(--line-strong)" stroke-width="1"/>
+    <path d="${d} L ${X(points.length - 1).toFixed(1)} ${PAD.t + ih} L ${PAD.l} ${PAD.t + ih} Z"
+          fill="${color}" opacity="0.08"/>
+    <path d="${d}" fill="none" stroke="${color}" stroke-width="1.8"/>
+    <circle cx="${X(points.length - 1).toFixed(1)}" cy="${Y(last.value).toFixed(1)}" r="3" fill="${color}"/>
+    ${dots}
+    <g id="dg-chart-tip" style="display:none">
+      <rect rx="3" fill="var(--text)" opacity="0.92"/>
+      <text font-size="10" fill="var(--surface)" class="tabular"></text>
+    </g>
   </svg>`;
+}
+
+function dgBindChartHover() {
+  const svg = document.getElementById("dg-chart-svg");
+  if (!svg) return;
+  const tip = svg.querySelector("#dg-chart-tip");
+  const box = tip.querySelector("rect"), label = tip.querySelector("text");
+  svg.querySelectorAll(".dg-dot").forEach((dot) => {
+    dot.addEventListener("mouseenter", () => {
+      const x = +dot.dataset.x, y = +dot.dataset.y;
+      label.textContent = dot.dataset.label;
+      const w = dot.dataset.label.length * 6.4 + 12;
+      const left = Math.max(2, Math.min(x - w / 2, 420 - w - 2));
+      box.setAttribute("x", left); box.setAttribute("y", y - 26);
+      box.setAttribute("width", w); box.setAttribute("height", 17);
+      label.setAttribute("x", left + 6); label.setAttribute("y", y - 14);
+      tip.style.display = "";
+    });
+    dot.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+  });
 }
 
 async function dgOpenDetail(nodeId) {
@@ -614,6 +697,7 @@ async function dgOpenDetail(nodeId) {
   const res = await fetch(`/api/sn/diagram/detail?series_id=${encodeURIComponent(v.series_id)}`);
   if (!res.ok) { box.innerHTML = '<div class="py-8 text-center text-[var(--alert)] text-xs">读取失败</div>'; return; }
   const d = await res.json();
+  dg.lastDetail = d;
 
   const row = (k, val) => val
     ? `<div class="flex gap-2 py-0.5"><span class="w-20 shrink-0 text-[var(--text-muted)]">${dgEsc(k)}</span>
@@ -640,7 +724,7 @@ async function dgOpenDetail(nodeId) {
     ${d.history.length > 1 ? `<div class="py-3 border-b border-[var(--line)]">
       <div class="text-[10px] font-semibold text-[var(--text-muted)] mb-1">
         近 ${d.history.length} 期走势（${dgEsc(d.history[0].as_of)} ~ ${dgEsc(d.history[d.history.length - 1].as_of)}）</div>
-      ${dgLine(d.history, 360, 68)}</div>` : ""}
+      ${dgChart(d.history, d.unit, 420, 180)}</div>` : ""}
 
     <div class="py-3 border-b border-[var(--line)] text-[11px]">
       <div class="text-[10px] font-semibold text-[var(--text-muted)] mb-1">口径</div>
@@ -678,6 +762,8 @@ async function dgOpenDetail(nodeId) {
     </div>` : ""}
 
     <div class="pt-3 flex flex-wrap gap-1.5 text-[11px]">
+      <button type="button" onclick="dgAddCompare('${dgEsc(d.series_id)}','${dgEsc(d.name)}')"
+         class="px-2.5 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)]">加入对比</button>
       <a href="/sn/indicators#${dgEsc(d.series_id)}"
          class="px-2.5 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)]">在指标页查看</a>
       ${d.fetch_mode === "manual" ? `<a href="/sn/entry"
@@ -685,8 +771,163 @@ async function dgOpenDetail(nodeId) {
       <button type="button" onclick="dgCopy('${dgEsc(d.series_id)}')"
          class="px-2.5 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)]">复制代码</button>
     </div>`;
+  dgBindChartHover();
 }
 
 function dgCopy(t) {
   navigator.clipboard.writeText(t).then(() => showToast("已复制 " + t), () => showToast("复制失败"));
+}
+
+/* ---------- 多序列对比（#2） ---------- */
+
+const DG_COMPARE_COLORS = ["var(--primary)", "var(--amber)", "var(--blue)", "var(--alert)"];
+
+function dgAddCompare(seriesId, name) {
+  dg.compare = dg.compare || [];
+  if (dg.compare.some((c) => c.series_id === seriesId)) {
+    showToast("已在对比里");
+    return;
+  }
+  if (dg.compare.length >= 4) {
+    showToast("最多对比 4 条，先移除一条");
+    return;
+  }
+  dg.compare.push({ series_id: seriesId, name });
+  dgRenderCompare();
+  toggleDrawer("dg-compare-drawer", true);
+}
+
+function dgDropCompare(seriesId) {
+  dg.compare = (dg.compare || []).filter((c) => c.series_id !== seriesId);
+  dgRenderCompare();
+}
+
+async function dgRenderCompare() {
+  const box = document.getElementById("dg-compare-body");
+  const list = dg.compare || [];
+  if (!list.length) {
+    box.innerHTML = `<div class="py-8 text-center text-xs text-[var(--text-muted)]">
+      还没有加入任何序列。点开某个方框，选「加入对比」。</div>`;
+    return;
+  }
+  box.innerHTML = '<div class="py-8 text-center text-xs text-[var(--text-muted)]">加载中…</div>';
+  const loaded = [];
+  for (const c of list) {
+    const res = await fetch(`/api/sn/diagram/detail?series_id=${encodeURIComponent(c.series_id)}`);
+    if (res.ok) {
+      const d = await res.json();
+      if (d.history.length > 1) loaded.push({ ...c, unit: d.unit, history: d.history });
+    }
+  }
+  if (!loaded.length) { box.innerHTML = '<div class="py-8 text-center text-xs">没有可比较的数据</div>'; return; }
+
+  // 取共同时点，再按各自起点归一化到 100。
+  // 不叠原值：单位与量级不同的序列画在一张图上会互相淹没，而双轴是明令禁用的（01 §4.6）。
+  const common = loaded.map((s) => new Set(s.history.map((p) => p.as_of)))
+    .reduce((a, b) => new Set([...a].filter((x) => b.has(x))));
+  const days = [...common].sort();
+  if (days.length < 2) {
+    box.innerHTML = `<div class="py-6 px-3 text-xs text-[var(--amber)]">
+      这几条序列没有足够的共同时点（频率不同时常见）——无法在同一时间轴上比较。</div>`;
+    return;
+  }
+  const series = loaded.map((s, i) => {
+    const byDay = Object.fromEntries(s.history.map((p) => [p.as_of, p.value]));
+    const base = byDay[days[0]] || 1;
+    return { ...s, color: DG_COMPARE_COLORS[i % 4],
+             pts: days.map((d) => ({ as_of: d, value: (byDay[d] / base) * 100 })) };
+  });
+
+  const w = 420, h = 200, PAD = { l: 44, r: 12, t: 12, b: 26 };
+  const iw = w - PAD.l - PAD.r, ih = h - PAD.t - PAD.b;
+  const all = series.flatMap((s) => s.pts.map((p) => p.value));
+  let lo = Math.min(...all), hi = Math.max(...all);
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const X = (i) => PAD.l + (i / (days.length - 1)) * iw;
+  const Y = (v) => PAD.t + ih - ((v - lo) / (hi - lo)) * ih;
+  const grid = [0, 0.5, 1].map((f) => {
+    const v = lo + (hi - lo) * f;
+    return `<line x1="${PAD.l}" y1="${Y(v).toFixed(1)}" x2="${w - PAD.r}" y2="${Y(v).toFixed(1)}"
+      stroke="var(--line)" stroke-width="0.8"/>
+      <text x="${PAD.l - 5}" y="${(Y(v) + 3).toFixed(1)}" text-anchor="end" font-size="9"
+        fill="var(--text-muted)" class="tabular">${v.toFixed(0)}</text>`;
+  }).join("");
+  const every = Math.max(1, Math.ceil(days.length / 4));
+  const xlab = days.map((d, i) => (i % every === 0 || i === days.length - 1)
+    ? `<text x="${X(i).toFixed(1)}" y="${h - 8}" text-anchor="middle" font-size="9"
+        fill="var(--text-muted)" class="tabular">${dgEsc(d.slice(5))}</text>` : "").join("");
+  const lines = series.map((s) => `<path d="${s.pts.map((p, i) =>
+    `${i ? "L" : "M"} ${X(i).toFixed(1)} ${Y(p.value).toFixed(1)}`).join(" ")}"
+    fill="none" stroke="${s.color}" stroke-width="1.8"/>`).join("");
+
+  box.innerHTML = `
+    <div class="px-1 pb-2 text-[11px] text-[var(--amber)]">
+      已归一化：各序列以 ${dgEsc(days[0])} 为 100。<b>纵轴不是绝对值</b>，只能比趋势，不能比大小。</div>
+    <svg viewBox="0 0 ${w} ${h}" class="w-full" style="height:${h}px">${grid}${xlab}
+      <line x1="${PAD.l}" y1="${PAD.t + ih}" x2="${w - PAD.r}" y2="${PAD.t + ih}"
+            stroke="var(--line-strong)" stroke-width="1"/>${lines}</svg>
+    <div class="mt-2 space-y-1 text-[11px]">
+      ${series.map((s) => {
+        const last = s.pts[s.pts.length - 1].value;
+        const d = dgDir(last - 100);
+        return `<div class="flex items-center gap-2">
+          <i style="width:10px;height:3px;background:${s.color};display:inline-block"></i>
+          <span class="flex-1 truncate">${dgEsc(s.name)}<span class="text-[var(--text-muted)]">（${dgEsc(s.unit)}）</span></span>
+          <span class="${d.cls} tabular font-semibold">${d.mark}${(last - 100).toFixed(1)}%</span>
+          <button type="button" onclick="dgDropCompare('${dgEsc(s.series_id)}')"
+            class="text-[var(--text-muted)] hover:text-[var(--alert)]">&times;</button></div>`;
+      }).join("")}
+    </div>
+    <div class="mt-2 text-[10px] text-[var(--text-muted)]">
+      共同时点 ${days.length} 个（${dgEsc(days[0])} ~ ${dgEsc(days[days.length - 1])}）</div>`;
+}
+
+/* ---------- 判断视角与交叉校验（#5 #6） ---------- */
+
+function dgToggleJudgment() {
+  dg.judgmentView = !dg.judgmentView;
+  const btn = document.getElementById("dg-judge-btn");
+  btn.classList.toggle("bg-[var(--primary-soft)]", dg.judgmentView);
+  btn.classList.toggle("text-[var(--primary)]", dg.judgmentView);
+  const n = Object.values(dg.values).filter((v) => (v.roles || []).length).length;
+  dgRender();
+  showToast(dg.judgmentView
+    ? `判断视角：${n} 个环节被当前判断引用，其余淡出`
+    : "已回到全图");
+}
+
+async function dgOpenCrosscheck() {
+  const box = document.getElementById("dg-check-body");
+  box.innerHTML = '<div class="py-8 text-center text-xs text-[var(--text-muted)]">正在核对…</div>';
+  toggleDrawer("dg-check-drawer", true);
+  const res = await fetch("/api/sn/diagram/crosscheck");
+  const data = res.ok ? await res.json() : { checks: [] };
+  if (!data.checks.length) {
+    box.innerHTML = '<div class="py-8 text-center text-xs text-[var(--text-muted)]">还没有配置校验项</div>';
+    return;
+  }
+  box.innerHTML = data.checks.map((c) => {
+    const bad = c.state !== "ok";
+    return `
+    <div class="py-3 border-b border-[var(--line)]">
+      <div class="flex items-baseline gap-2">
+        <b class="text-xs">${dgEsc(c.label)}</b>
+        <span class="text-[10px] px-1.5 py-0.5 rounded ${bad
+          ? "bg-[var(--amber-soft)] text-[var(--amber)]" : "bg-[var(--primary-soft)] text-[var(--primary)]"}">
+          ${bad ? "超出容差" : "一致"}</span>
+      </div>
+      <div class="text-[11px] mt-1 ${bad ? "text-[var(--amber)]" : "text-[var(--text-muted)]"}">${dgEsc(c.summary)}</div>
+      ${c.note ? `<div class="text-[10px] text-[var(--text-muted)] mt-0.5">${dgEsc(c.note)}</div>` : ""}
+      ${(c.points || []).length ? `<table class="mt-1.5 w-full text-[10px] tabular">
+        <tr class="text-[var(--text-muted)]"><td>时点</td><td class="text-right">${dgEsc(c.a_name)}</td>
+          <td class="text-right">${dgEsc(c.b_name)}</td><td class="text-right">相对差</td></tr>
+        ${c.points.slice(0, 6).map((p) => `<tr>
+          <td>${dgEsc(p.as_of)}</td><td class="text-right">${dgFmt(p.a)}</td>
+          <td class="text-right">${dgFmt(p.b)}</td>
+          <td class="text-right ${Math.abs(p.rel) > (c.tolerance_pct || 5)
+            ? "text-[var(--amber)] font-semibold" : ""}">${p.rel == null ? "—" : p.rel.toFixed(1) + "%"}</td>
+        </tr>`).join("")}</table>` : ""}
+    </div>`;
+  }).join("") + `<div class="pt-3 text-[10px] text-[var(--text-muted)]">
+      差异本身不是错误——两家口径不同很正常。要盯的是<b>差异突然变化</b>，那说明有一方改过数或换了口径。</div>`;
 }

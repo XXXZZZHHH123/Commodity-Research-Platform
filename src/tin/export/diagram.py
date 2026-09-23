@@ -51,13 +51,14 @@ class NodeValue:
     note: str | None = None
     proxy: bool = False               # 代理指标：不是本环节的实测值
     series_id: str | None = None
+    roles: list[str] | None = None    # 在当前判断里扮演的角色（阈值 / 证伪 / 证据…）
 
     def dump(self) -> dict:
         d = {"node_id": self.node_id, "state": self.state, "label": self.label,
              "value": self.value, "unit": self.unit, "frequency": self.frequency,
              "as_of": self.as_of, "mom": self.mom, "yoy": self.yoy, "delta": self.delta,
              "note": self.note, "proxy": self.proxy,
-             "series_id": self.series_id}
+             "series_id": self.series_id, "roles": self.roles or []}
         return d
 
 
@@ -159,8 +160,29 @@ def _derived_node(session: Session, node: dict, formula_id: str, through: date) 
                      note=row.note, series_id=formula_id)
 
 
+_ROLE_LABEL = {"threshold": "阈值", "falsifier": "证伪条件", "evidence": "证据",
+               "marginal_focus": "边际关注", "whitelist": "白名单"}
+
+
+def judgment_roles(session: Session) -> dict[str, list[str]]:
+    """每个指标在当前判断里扮演什么角色。
+
+    回答研究员每天都要问的问题：我这个判断，靠的是产业链上哪几个环节？
+    """
+    rows = session.execute(text(
+        "select series_id, ref_type from judgment_series_refs")).all()
+    out: dict[str, list[str]] = {}
+    for series_id, ref_type in rows:
+        label = _ROLE_LABEL.get(ref_type, ref_type)
+        out.setdefault(series_id, [])
+        if label not in out[series_id]:
+            out[series_id].append(label)
+    return out
+
+
 def resolve(session: Session, layout: dict, through: date) -> list[dict]:
     """按布局取出每个节点当前该显示什么。"""
+    roles = judgment_roles(session)
     out = []
     for node in layout.get("nodes", []):
         binding = node.get("binding") or {}
@@ -172,7 +194,9 @@ def resolve(session: Session, layout: dict, through: date) -> list[dict]:
         else:
             # 没绑指标不是错误：结构分组框、纯静态标注框本来就不该有值
             value = NodeValue(node["id"], UNBOUND, node.get("label", ""))
-        out.append(value.dump())
+        item = value.dump()
+        item["roles"] = roles.get(item["series_id"] or "", [])
+        out.append(item)
     return out
 
 
@@ -392,3 +416,66 @@ def detail(session: Session, series_id: str, through: date, limit: int = 60) -> 
         "latest_note": history[0].note if history else None,
         "entered_by": history[0].entered_by if history else None,
     }
+
+
+# ---------- 跨来源交叉校验（方案 08 §11.5.2） ----------
+
+def crosscheck(session: Session, variety: str, through: date, periods: int = 6) -> list[dict]:
+    """同一个事实由两家分别给出时，对不对得上。
+
+    **不做 SMM 平衡表内部的恒等式校验**：表观消费本就是「产量+进口−出口−库存变化」
+    倒算出来的，校验它恒等于 0，是同义反复，永远抓不到任何问题。有价值的是跨来源——
+    实测精锡月产量两家差 −5.3% ~ +8.8%，而锡矿进口两家完全一致（说明转载同一份海关数据）。
+
+    差异本身不是错误：两家口径不同很正常。这个功能要回答的是「差多少、是不是一直这么差、
+    最近有没有突然变化」——突然变化才是信号。
+    """
+    import json
+
+    from tin.config import ROOT
+
+    path = ROOT / "seeds" / f"crosscheck_{variety.lower()}.json"
+    if not path.exists():
+        return []
+    checks = json.loads(path.read_text(encoding="utf-8")).get("checks", [])
+
+    def series(series_id: str) -> dict[str, float]:
+        rows = session.scalars(
+            select(Observation).where(Observation.series_id == series_id)
+            .order_by(Observation.as_of.desc(), Observation.revision.desc())).all()
+        out: dict[str, float] = {}
+        for r in rows:
+            day = r.as_of.astimezone(SHANGHAI).date()
+            if day > through:
+                continue
+            out.setdefault(day.isoformat(), r.value)
+        return out
+
+    results = []
+    for chk in checks:
+        a, b = series(chk["a"]), series(chk["b"])
+        shared = sorted(set(a) & set(b), reverse=True)[:periods]
+        if not shared:
+            results.append({**chk, "state": NO_DATA, "points": [],
+                            "summary": "两个序列没有重叠的时点，无法比较"})
+            continue
+        pts = []
+        for day in shared:
+            diff = a[day] - b[day]
+            rel = (diff / b[day] * 100) if b[day] else None
+            pts.append({"as_of": day, "a": a[day], "b": b[day], "diff": diff, "rel": rel})
+        rels = [abs(p["rel"]) for p in pts if p["rel"] is not None]
+        worst = max(rels) if rels else 0
+        latest = pts[0]["rel"]
+        tol = chk.get("tolerance_pct", 5)
+        state = OK if worst <= tol else STALE
+        if worst <= 0.01:
+            summary = "两家完全一致——很可能转载同一来源，不必双边维护"
+        elif state == OK:
+            summary = f"最近 {len(pts)} 期差异都在 ±{tol}% 内（最大 {worst:.1f}%）"
+        else:
+            summary = (f"最近 {len(pts)} 期最大差异 {worst:.1f}%，超出容差 ±{tol}%；"
+                       f"最新一期 {latest:+.1f}%")
+        results.append({**chk, "state": state, "points": pts, "worst": worst,
+                        "latest_rel": latest, "summary": summary})
+    return results
