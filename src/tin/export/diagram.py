@@ -317,3 +317,78 @@ def suggest(session: Session, variety: str, label: str, bound: set[str] | None =
                            + ("" if count else "，但尚无数据")})
     out.sort(key=lambda r: -r["score"])
     return out[:limit]
+
+
+# ---------- 节点详情（方案 08 §10） ----------
+
+def detail(session: Session, series_id: str, through: date, limit: int = 60) -> dict:
+    """点开一个节点要看到什么。
+
+    重点不是再报一遍数值——图上已经有了。重点是**这个数字凭什么可信**：
+    口径的每一个维度、来源与凭证、有没有被修订过、离上次更新多久。
+    这些散在指标页与导出批注里，看图的人不该为了查一个数在三个页面之间跳。
+    """
+    from tin.caliber.dictionary import DIMENSIONS
+    from tin.compute.formulas import REGISTRY
+
+    if series_id in REGISTRY:
+        spec = REGISTRY[series_id]
+        rows = session.scalars(
+            select(Derived).where(Derived.formula_id == series_id,
+                                  Derived.trade_date <= through.isoformat())
+            .order_by(Derived.trade_date.desc()).limit(limit)).all()
+        latest = rows[0] if rows else None
+        return {
+            "kind": "derived", "series_id": series_id, "name": spec.name,
+            "unit": spec.unit, "frequency": "日",
+            "expression": spec.expression, "tolerance": spec.tolerance,
+            "caliber": [], "source": "本平台计算", "source_url": None,
+            "history": [{"as_of": r.trade_date, "value": r.value, "status": r.status}
+                        for r in reversed(rows) if r.value is not None],
+            "inputs": latest.inputs if latest else [],
+            "status_note": (latest.note if latest else None),
+            "revisions": [],
+        }
+
+    ind = session.get(Indicator, series_id)
+    if ind is None:
+        raise DiagramError(f"指标不存在：{series_id}")
+
+    obs = session.scalars(
+        select(Observation).where(Observation.series_id == series_id)
+        .order_by(Observation.as_of.desc(), Observation.revision.desc())).all()
+    obs = [o for o in obs if o.as_of.astimezone(SHANGHAI).date() <= through]
+
+    seen, history = set(), []
+    for o in obs:
+        if o.as_of in seen:
+            continue
+        seen.add(o.as_of)
+        history.append(o)
+        if len(history) >= limit:
+            break
+
+    labels = {d.key: d.label for d in DIMENSIONS}
+    caliber = [{"key": k, "label": labels.get(k, k), "value": v}
+               for k, v in (ind.caliber or {}).items() if v and k != "note"]
+    if (ind.caliber or {}).get("note"):
+        caliber.append({"key": "note", "label": "备注", "value": ind.caliber["note"]})
+
+    # 修订过的时点：同一 as_of 有多个修订号，说明数据商回溯改过数
+    revised = [o for o in obs if o.revision > 0][:10]
+
+    return {
+        "kind": "series", "series_id": series_id, "name": ind.name,
+        "unit": ind.unit, "frequency": ind.frequency, "category": ind.category,
+        "source": ind.source, "source_url": ind.source_url,
+        "vendor_code": ind.vendor_code, "fetch_mode": ind.fetch_mode,
+        "owner": ind.owner, "status": ind.status,
+        "caliber": caliber,
+        "history": [{"as_of": o.as_of.astimezone(SHANGHAI).date().isoformat(),
+                     "value": o.value} for o in reversed(history)],
+        "revisions": [{"as_of": o.as_of.astimezone(SHANGHAI).date().isoformat(),
+                       "value": o.value, "revision": o.revision,
+                       "entered_by": o.entered_by, "note": o.note} for o in revised],
+        "latest_note": history[0].note if history else None,
+        "entered_by": history[0].entered_by if history else None,
+    }

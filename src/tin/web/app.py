@@ -313,6 +313,15 @@ def diagram_from_markdown(body: dict = Body(...)):
                 "templates": diagram_api.list_templates(s, V)}
 
 
+@app.get("/api/sn/diagram/detail")
+def diagram_detail(series_id: str, date: str | None = None):
+    with SessionLocal() as s:
+        try:
+            return diagram_api.detail(s, series_id, _board_date(s, date))
+        except diagram_api.DiagramError as e:
+            raise HTTPException(404, str(e)) from None
+
+
 @app.get("/api/sn/diagram/suggest")
 def diagram_suggest(label: str, exclude: str | None = None):
     """给某个节点推荐候选指标。给不出就明说，不拿"有数据的热门指标"凑数。"""

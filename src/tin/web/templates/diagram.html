@@ -66,11 +66,13 @@
        bg-[var(--surface)] rounded-md border border-[var(--line)] px-1 py-0.5 shadow-sm">
     <button type="button" onclick="dgAdd('node')" class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">+ 节点</button>
     <button type="button" onclick="dgAdd('group')" class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">+ 分组</button>
+    <span class="w-px h-4 bg-[var(--line)]"></span>
+    <button type="button" onclick="dgTidyGroups()" class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">整理分组</button>
   </div>
 
   <div id="dg-hint" class="absolute right-3 bottom-3 hidden text-[11px] px-2.5 py-1.5 rounded-md
        bg-[var(--amber-soft)] text-[var(--amber)] border border-[var(--amber)]/30">
-    编辑模式：拖动调位置 ｜ 右下角把手改大小 ｜ 点方框绑定指标 ｜ 改完记得保存
+    编辑模式：拖动调位置（拖进分组即归属）｜ 右下角把手改大小 ｜ 点方框绑定指标 ｜ 改完记得保存
   </div>
 </div>
 
@@ -96,8 +98,24 @@
     <button type="button" onclick="dgDeleteActive()" class="px-2 py-1 rounded text-[var(--alert)] hover:bg-[var(--alert-soft)]">删除节点</button>
   </div>
   <div id="dg-suggest" class="mt-2 text-xs shrink-0"></div>
-  <div class="mt-2 pt-2 border-t border-[var(--line)] text-[10px] font-semibold text-[var(--text-muted)]">全部指标</div>
+  <div class="mt-2 pt-2 border-t border-[var(--line)] flex items-baseline gap-2">
+    <span class="text-[10px] font-semibold text-[var(--text-muted)]">全部指标</span>
+    <span id="dg-pool-count" class="text-[10px] text-[var(--text-muted)]"></span>
+  </div>
   <div id="dg-pool" class="mt-1 flex-1 overflow-y-auto text-xs"></div>
+</aside>
+
+<!-- 节点详情：看图模式点方框即开 -->
+<aside id="dg-detail-drawer" data-drawer
+  class="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-[var(--surface)] border-l border-[var(--line)] shadow-2xl p-6 flex flex-col translate-x-full transition-transform duration-300 ease-in-out">
+  <div class="flex items-start justify-between gap-4 pb-3 border-b border-[var(--line)]">
+    <div>
+      <h2 id="dg-detail-title" class="text-lg font-bold"></h2>
+      <p class="text-[11px] text-[var(--text-muted)] mt-0.5">这个数字凭什么可信 —— 口径、来源、修订与走势</p>
+    </div>
+    <button onclick="toggleDrawer('dg-detail-drawer', false)" class="text-xl leading-none text-[var(--text-muted)] hover:text-[var(--text)]">&times;</button>
+  </div>
+  <div id="dg-detail-body" class="mt-2 flex-1 overflow-y-auto"></div>
 </aside>
 
 <!-- Markdown 双向通道 -->

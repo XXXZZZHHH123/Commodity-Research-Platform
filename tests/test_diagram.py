@@ -36,14 +36,14 @@ def add_series(session, series_id, frequency="日", unit="吨", status="可用")
     session.flush()
 
 
-def add_points(session, series_id, points, step_days=1):
-    """points 为从新到旧的数值列表。"""
+def add_points(session, series_id, points, step_days=1, caliber=None):
+    """points 为从新到旧的数值列表。caliber 须与指标登记的一致，否则会被闸门拦下。"""
     for i, value in enumerate(points):
         record(session, ObservationIn(
             series_id=series_id, value=value,
             as_of=datetime.combine(TODAY - timedelta(days=i * step_days), datetime.min.time(),
                                    SHANGHAI).replace(hour=15),
-            caliber=Caliber(time_type="发布时点"), source="测试",
+            caliber=caliber or Caliber(time_type="发布时点"), source="测试",
             entered_by="测试", note="测试"))
     session.flush()
 
@@ -195,8 +195,13 @@ def test_default_layout_is_seeded_on_first_visit(session):
     bound = [n for n in nodes if n["binding"]["kind"] != "none"]
     assert len(bound) >= 15, "种子布局应当大部分已绑好指标"
     groups = [n for n in nodes if n.get("kind") == "group"]
-    assert len(groups) == 3, "供给端 / 精锡 / 需求端三个分组框"
+    tops = [g for g in groups if not g.get("parent")]
+    assert len(tops) == 3, "供给端 / 精锡 / 需求端三个顶层分组"
+    assert any(g.get("parent") for g in groups), "应当有二级分组"
     assert all(g["binding"]["kind"] == "none" for g in groups), "分组框是背景分区，不绑指标"
+    # 每个二级分组的父组必须真实存在，否则渲染时层级算不出来
+    ids = {n["id"] for n in nodes}
+    assert all(g["parent"] in ids for g in groups if g.get("parent"))
     assert diagram.ensure_default(session, "SN")["id"] == tpl["id"], "重复调用不应再建一份"
     assert len(session.scalars(select(DiagramTemplate)).all()) == 1
 
@@ -208,7 +213,8 @@ def test_layout_stores_bindings_not_values(session):
     """
     tpl = diagram.ensure_default(session, "SN")
     for n in tpl["layout"]["nodes"]:
-        assert set(n) <= {"id", "kind", "label", "layer", "x", "y", "w", "h", "binding", "statics"}
+        assert set(n) <= {"id", "kind", "label", "layer", "parent",
+                          "x", "y", "w", "h", "binding", "statics"}
         for s in n.get("statics", []):
             assert isinstance(s["value"], str), "静态标注只能是文字，数值必须来自事实层"
 
@@ -351,3 +357,104 @@ def test_change_carries_both_delta_and_percent(session):
     assert out["delta"] == 1000
     assert out["mom"] == pytest.approx(10.0)
     assert "spark" not in out, "迷你走势已去掉，节点上用差值与方向表达变化"
+
+
+# ---------- 多级分组 ----------
+
+def test_markdown_hash_depth_becomes_group_nesting():
+    """`##` 是一级分组，`###` 是它的子分组——井号数即层级，研究员不用学新语法。"""
+    from tin.export import diagram_md as md
+
+    layout = md.parse("""# 结构
+## 供给端
+### 矿端
+- 国产锡精矿 <!-- bind: T.A -->
+### 冶炼
+- 冶炼产量
+## 需求端
+- 锡焊料
+""")
+    by = {n["label"]: n for n in layout["nodes"]}
+    assert by["矿端"]["parent"] == by["供给端"]["id"]
+    assert by["冶炼"]["parent"] == by["供给端"]["id"]
+    assert by["供给端"]["parent"] is None
+    assert by["国产锡精矿"]["parent"] == by["矿端"]["id"]
+    # 纯容器组要包住它的子组，否则画布上子组会跑到框外
+    assert by["供给端"]["x"] <= by["矿端"]["x"]
+    assert by["供给端"]["y"] <= by["矿端"]["y"]
+
+
+def test_group_membership_is_explicit_not_geometric():
+    """归属靠 parent 字段，不靠坐标包含。
+
+    几何判定下把节点拖出框就悄悄脱组了，而且没有任何提示——归属变化必须是显式的。
+    """
+    from tin.export import diagram_md as md
+
+    layout = md.parse("# 结构\n## 甲\n- 节点A <!-- bind: T.A -->\n")
+    node = next(n for n in layout["nodes"] if n["label"] == "节点A")
+    group = next(n for n in layout["nodes"] if n["label"] == "甲")
+    node["x"], node["y"] = 9999, 9999          # 拖到天边去
+    out = md.dump(layout, "结构")
+    assert "## 甲" in out and "- 节点A" in out, "坐标变了不影响归属"
+    assert node["parent"] == group["id"]
+
+
+def test_nested_markdown_round_trip():
+    from tin.export import diagram_md as md
+
+    src = "# 结构\n## 供给端\n### 矿端\n- 甲 <!-- bind: T.A -->\n### 冶炼\n- 乙\n## 需求端\n- 丙\n"
+    first = md.parse(src)
+    again = md.parse(md.dump(first, first["name"]))
+    key = lambda L: sorted((n["label"], n.get("kind"), n["binding"]["kind"]) for n in L["nodes"])
+    assert key(first) == key(again)
+
+
+# ---------- 节点详情 ----------
+
+def test_detail_carries_caliber_source_and_history(session):
+    """详情的重点不是再报一遍数值，是这个数字凭什么可信。"""
+    session.add(Indicator(
+        series_id="T.DETAIL", name="测试指标", variety="SN", category="矿端",
+        caliber={"time_type": "发布时点", "tc_grade": "40度", "note": "测试口径"},
+        unit="元/吨", source="Mysteel", source_url="https://example.com/x",
+        frequency="周", fetch_mode="manual", phase="P1", vendor_code="ID999"))
+    session.flush()
+    add_points(session, "T.DETAIL", [110, 100], step_days=7,
+               caliber=Caliber(time_type="发布时点", tc_grade="40度"))
+
+    d = diagram.detail(session, "T.DETAIL", TODAY)
+    labels = {c["label"]: c["value"] for c in d["caliber"]}
+    assert labels["时点类型"] == "发布时点"
+    assert labels["TC 品位"] == "40度"      # 口径字典里的中文标签，不是裸 key
+    assert labels["备注"] == "测试口径"
+    assert d["vendor_code"] == "ID999" and d["source_url"].startswith("https://")
+    assert [h["value"] for h in d["history"]] == [100, 110], "走势按时间正序"
+    assert d["fetch_mode"] == "manual"
+
+
+def test_detail_lists_revisions_so_silent_restatements_are_visible(session):
+    """数据商回溯改数是"数字变了但没人告诉你"，修订记录是唯一线索。"""
+    add_series(session, "T.REV2")
+    at = datetime(2026, 9, 18, 15, tzinfo=SHANGHAI)
+    for v in (100, 120):
+        record(session, ObservationIn(series_id="T.REV2", value=v, as_of=at,
+                                      caliber=Caliber(time_type="发布时点"), source="测试",
+                                      entered_by="测试", note="测试"))
+    session.flush()
+    d = diagram.detail(session, "T.REV2", TODAY)
+    assert len(d["revisions"]) == 1
+    assert d["revisions"][0]["value"] == 120 and d["revisions"][0]["revision"] == 1
+    assert [h["value"] for h in d["history"]] == [120], "走势只用最新修订"
+
+
+def test_detail_of_a_derived_node_explains_the_formula(session):
+    d = diagram.detail(session, "BASIS", TODAY)
+    assert d["kind"] == "derived"
+    assert "现货" in d["expression"] and "结算价" in d["expression"]
+    assert "4 小时" in d["tolerance"], "容差要写出来——它正是阻断与否的依据"
+
+
+def test_detail_of_unknown_series_fails_clearly(session):
+    with pytest.raises(diagram.DiagramError, match="指标不存在"):
+        diagram.detail(session, "T.NOPE", TODAY)

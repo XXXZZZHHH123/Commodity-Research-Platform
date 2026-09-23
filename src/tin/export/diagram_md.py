@@ -27,8 +27,7 @@ import re
 BIND = re.compile(r"<!--\s*bind:\s*([A-Za-z0-9_.一-鿿-]+)\s*-->")
 STATIC = re.compile(r"\[([^\[\]]+?)\s+([^\[\]]+?)\]")
 ITEM = re.compile(r"^(\s*)[-*+]\s+(.*)$")
-HEAD2 = re.compile(r"^##\s+(.+?)\s*$")
-HEAD1 = re.compile(r"^#\s+(.+?)\s*$")
+HEAD = re.compile(r"^(#{1,4})\s+(.+?)\s*$")
 
 # 画布坐标：一列分组、组内节点按缩进分列
 COL_W, ROW_H, PAD = 240, 128, 28
@@ -50,7 +49,11 @@ def _slug(text: str, used: set[str], prefix: str) -> str:
 
 
 def parse(text: str) -> dict:
-    """Markdown 大纲 → 布局。认不出结构就明确报错，不猜。"""
+    """Markdown 大纲 → 布局。认不出结构就明确报错，不猜。
+
+    `##` 是一级分组，`###` 及以下是它的子分组——层级靠井号数表达，与 Markdown 的
+    常识一致，研究员不用学新语法。
+    """
     groups: list[dict] = []
     current: dict | None = None
     title = None
@@ -59,16 +62,17 @@ def parse(text: str) -> dict:
     for raw in text.splitlines():
         if not raw.strip():
             continue
-        if (m := HEAD2.match(raw)):
-            current = {"label": m.group(1), "items": []}
+        if (m := HEAD.match(raw)):
+            level, label = len(m.group(1)), m.group(2)
+            if level == 1 and title is None:
+                title = label
+                continue
+            current = {"label": label, "level": level, "items": []}
             groups.append(current)
             continue
-        if (m := HEAD1.match(raw)) and title is None:
-            title = m.group(1)
-            continue
         if (m := ITEM.match(raw)):
-            if current is None:  # 没有 ## 分组时给一个默认组，不因为格式不标准就整份拒收
-                current = {"label": "未分组", "items": []}
+            if current is None:  # 没有分组标题时给一个默认组，不因为格式不标准就整份拒收
+                current = {"label": "未分组", "level": 2, "items": []}
                 groups.append(current)
             indent, body = len(m.group(1).expandtabs(4)), m.group(2)
             bind = BIND.search(body)
@@ -88,15 +92,25 @@ def parse(text: str) -> dict:
     nodes: list[dict] = []
     edges: list[dict] = []
     x = PAD
+    # 父组 id 按层级维护：遇到 ### 时挂到最近的 ##
+    ancestors: dict[int, str] = {}
+    pending: list[dict] = []  # 只有标题没有列表项的分组（纯容器）
     for g in groups:
+        gid = _slug(g["label"], used, "group")
+        g["gid"] = gid
+        parent = ancestors.get(g["level"] - 1)
+        g["parent"] = parent
+        ancestors[g["level"]] = gid
+        for deeper in [k for k in ancestors if k > g["level"]]:
+            ancestors.pop(deeper)
         if not g["items"]:
+            pending.append(g)
             continue
         # 组内按缩进分列，同缩进的往下排
         levels = sorted({it["indent"] for it in g["items"]})
         level_of = {v: i for i, v in enumerate(levels)}
         rows: dict[int, int] = {}
         stack: dict[int, str] = {}
-        gid = _slug(g["label"], used, "group")
         group_nodes = []
         row_of: dict[str, int] = {}
         for item in g["items"]:
@@ -111,7 +125,7 @@ def parse(text: str) -> dict:
                 binding = ({"kind": "derived", "formula_id": item["bind"]}
                            if item["bind"].isupper() and "." not in item["bind"]
                            else {"kind": "series", "series_id": item["bind"]})
-            node = {"id": nid, "label": item["label"],
+            node = {"id": nid, "label": item["label"], "parent": gid,
                     "x": x + col * COL_W, "y": PAD + 46 + row * ROW_H,
                     "w": NODE_W, "h": NODE_H, "binding": binding, "statics": item["statics"]}
             nodes.append(node)
@@ -123,10 +137,25 @@ def parse(text: str) -> dict:
         width = (max(level_of.values()) + 1) * COL_W + PAD
         height = max(rows.values()) * ROW_H + 60
         nodes.insert(len(nodes) - len(group_nodes),
-                     {"id": gid, "kind": "group", "label": g["label"],
+                     {"id": gid, "kind": "group", "label": g["label"], "parent": g["parent"],
                       "x": x - 14, "y": PAD, "w": width, "h": height,
                       "binding": {"kind": "none"}, "statics": []})
         x += width + PAD
+
+    # 纯容器组（只有标题、下面全是子组）包住它的子组
+    boxes = {n["id"]: n for n in nodes if n.get("kind") == "group"}
+    for g in reversed(pending):
+        kids = [b for b in boxes.values() if b.get("parent") == g["gid"]]
+        if not kids:
+            continue
+        box = {"id": g["gid"], "kind": "group", "label": g["label"], "parent": g["parent"],
+               "x": min(k["x"] for k in kids) - 14,
+               "y": min(k["y"] for k in kids) - 34,
+               "w": max(k["x"] + k["w"] for k in kids) - min(k["x"] for k in kids) + 28,
+               "h": max(k["y"] + k["h"] for k in kids) - min(k["y"] for k in kids) + 48,
+               "binding": {"kind": "none"}, "statics": []}
+        nodes.insert(0, box)
+        boxes[g["gid"]] = box
 
     return {"name": title or "导入的结构图", "nodes": nodes, "edges": edges}
 
@@ -161,15 +190,28 @@ def dump(layout: dict, name: str = "产业结构") -> str:
         for cid in sorted(children.get(node["id"], []), key=lambda i: by_id[i]["y"]):
             emit(by_id[cid], level + 1)
 
+    def depth_of(g: dict) -> int:
+        d, cur, seen = 0, g, set()
+        while cur.get("parent") and cur["parent"] not in seen:
+            seen.add(cur["parent"])
+            cur = next((x for x in groups if x["id"] == cur["parent"]), {})
+            d += 1
+        return d
+
     def inside_of(g: dict) -> list[dict]:
+        """按显式 parent 归属，不靠几何包含——拖出框不该悄悄脱组。"""
+        if any("parent" in n for n in plain):
+            return [n for n in plain if n.get("parent") == g["id"]]
         return [n for n in plain
                 if g["x"] <= n["x"] < g["x"] + g["w"] and g["y"] <= n["y"] < g["y"] + g["h"]]
 
     for g in groups:
         inside = inside_of(g)
         if not inside:
+            if any(x.get("parent") == g["id"] for x in groups):
+                lines += [f"{'#' * (2 + depth_of(g))} {g['label']}"]  # 纯容器组也要出现
             continue
-        lines += [f"## {g['label']}"]
+        lines += [f"{'#' * (2 + depth_of(g))} {g['label']}"]
         ids = {n["id"] for n in inside}
         roots = [n for n in inside if parent.get(n["id"]) not in ids]
         for n in sorted(roots, key=lambda n: n["y"]):

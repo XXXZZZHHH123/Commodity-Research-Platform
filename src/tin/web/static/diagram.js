@@ -66,13 +66,20 @@ function dgRender() {
   const groups = document.getElementById("dg-groups");
   if (!nodes || !dg.layout) return;
 
-  // 分组框画在最底层：它是背景分区，不是节点，也不参与连线
-  groups.innerHTML = dg.layout.nodes.filter(dgIsGroup).map((g) => `
+  // 分组框画在最底层：它是背景分区，不是节点，也不参与连线。
+  // 按层级从浅到深排序，深的画在上面，嵌套关系才看得出来。
+  groups.innerHTML = dg.layout.nodes.filter(dgIsGroup)
+    .map((g) => ({ g, d: dgDepth(g.id) }))
+    .sort((a, b) => a.d - b.d)
+    .map(({ g, d }) => `
     <g class="dg-node dg-group" data-node="${dgEsc(g.id)}" transform="translate(${g.x},${g.y})"
        style="cursor:${dg.edit ? "grab" : "default"}">
-      <rect width="${g.w}" height="${g.h}" rx="12" fill="var(--surface)" fill-opacity="0.55"
-            stroke="var(--line-strong)" stroke-width="1.4" stroke-dasharray="7 4"/>
-      <text x="12" y="20" font-size="12" font-weight="700" fill="var(--text-muted)">${dgEsc(g.label)}</text>
+      <rect width="${g.w}" height="${g.h}" rx="${12 - d * 2}" fill="var(--surface)"
+            fill-opacity="${0.6 - d * 0.18}" stroke="var(--line-strong)"
+            stroke-width="${1.6 - d * 0.3}" stroke-dasharray="${d ? "4 3" : "8 4"}"
+            opacity="${1 - d * 0.18}"/>
+      <text x="${12 + d * 4}" y="${19 + d * 2}" font-size="${12.5 - d}" font-weight="700"
+            fill="var(--text-muted)" opacity="${1 - d * 0.15}">${d ? "└ " : ""}${dgEsc(g.label)}</text>
       ${dg.edit ? dgHandle(g) : ""}
     </g>`).join("");
 
@@ -92,6 +99,24 @@ function dgRender() {
 }
 
 const dgIsGroup = (n) => n.kind === "group";
+
+function dgDepth(id, seen) {
+  const n = dg.layout.nodes.find((x) => x.id === id);
+  if (!n || !n.parent || (seen || new Set()).has(id)) return 0;
+  const s = seen || new Set();
+  s.add(id);
+  return 1 + dgDepth(n.parent, s);
+}
+
+function dgGroupAt(node) {
+  // 拖动结束后按中心点落在哪个分组里决定归属；嵌套时取最深的那个。
+  const cx = node.x + node.w / 2, cy = node.y + node.h / 2;
+  const hit = dg.layout.nodes.filter((g) =>
+    dgIsGroup(g) && g.id !== node.id &&
+    g.x <= cx && cx <= g.x + g.w && g.y <= cy && cy <= g.y + g.h);
+  if (!hit.length) return null;
+  return hit.sort((a, b) => dgDepth(b.id) - dgDepth(a.id))[0].id;
+}
 
 function dgHandle(n) {
   // 右下角拖拽把手。只在编辑模式出现，避免看图时误拖。
@@ -152,7 +177,7 @@ function dgNode(n) {
 
   return `
   <g class="dg-node" data-node="${dgEsc(n.id)}" transform="translate(${n.x},${n.y})"
-     style="cursor:${dg.edit ? "grab" : "default"}">
+     style="cursor:${dg.edit ? "grab" : "pointer"}">
     <rect width="${n.w}" height="${n.h}" rx="8" fill="${st.fill}" stroke="${st.stroke}"
           stroke-width="${proxy ? 1.4 : 1.6}" ${st.dash ? `stroke-dasharray="${st.dash}"` : ""}/>
     ${proxy ? `<rect width="${n.w}" height="${n.h}" rx="8" fill="url(#dg-hatch)" opacity="0.5"/>` : ""}
@@ -228,6 +253,11 @@ function dgBindCanvas() {
       const node = dg.layout.nodes.find((n) => n.id === g.dataset.node);
       drag = { node, x0: e.clientX, y0: e.clientY, nx: node.x, ny: node.y, moved: false };
       svg.setPointerCapture(e.pointerId);
+    } else if (!dg.edit && g) {
+      // 看图模式：记下点的是哪个节点，但仍然允许拖动画布平移
+      const node = dg.layout.nodes.find((n) => n.id === g.dataset.node);
+      drag = { node, pan: true, x0: e.clientX, y0: e.clientY, px: dg.pan.x, py: dg.pan.y };
+      svg.setPointerCapture(e.pointerId);
     } else {
       drag = { pan: true, x0: e.clientX, y0: e.clientY, px: dg.pan.x, py: dg.pan.y };
       svg.setPointerCapture(e.pointerId);
@@ -238,6 +268,7 @@ function dgBindCanvas() {
     if (!drag) return;
     const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
     if (drag.pan) {
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
       dg.pan = { x: drag.px + dx, y: drag.py + dy };
       dgApplyTransform();
       return;
@@ -261,8 +292,22 @@ function dgBindCanvas() {
     const wasDrag = drag;
     drag = null;
     svg.releasePointerCapture?.(e.pointerId);
-    if (dg.edit && wasDrag && wasDrag.node && !wasDrag.resize && !wasDrag.moved) {
-      dgOpenPool(wasDrag.node.id);
+    if (dg.edit && wasDrag && wasDrag.node && !wasDrag.resize && wasDrag.moved) {
+      // 拖到哪个分组里就归哪个组。归属是显式字段，不靠画完之后再猜几何包含。
+      const before = wasDrag.node.parent || null;
+      const now = dgGroupAt(wasDrag.node);
+      if (before !== now) {
+        wasDrag.node.parent = now;
+        dgRender();
+        showToast(now
+          ? `「${wasDrag.node.label}」已归入「${dg.layout.nodes.find((n) => n.id === now).label}」`
+          : `「${wasDrag.node.label}」已移出分组`);
+      }
+    }
+    if (wasDrag && wasDrag.node && !wasDrag.resize && !wasDrag.moved) {
+      // 编辑模式点击是"换绑"，看图模式点击是"看清楚这个数凭什么可信"
+      if (dg.edit) dgOpenPool(wasDrag.node.id);
+      else if (!dgIsGroup(wasDrag.node)) dgOpenDetail(wasDrag.node.id);
     }
     dgSyncSave();
   });
@@ -332,15 +377,25 @@ function dgRenderPool() {
   }
   const total = Object.keys(usedBy).length + (bound ? 1 : 0);
   document.getElementById("dg-bound-count").textContent = `本图已绑 ${total} 个指标`;
-  const hits = dg.pool
+  const all = dg.pool
     .filter((f) => f.kind !== "meta")
-    .filter((f) => !q || f.label.toLowerCase().includes(q) || f.field.toLowerCase().includes(q))
-    .slice(0, 220);
+    .filter((f) => !q || f.label.toLowerCase().includes(q) || f.field.toLowerCase().includes(q));
+  // 当前已绑的那条必须置顶。池子有近 400 条、列表要截断，而自动登记的指标名排在后面——
+  // 不置顶的话，打开抽屉根本看不到这个节点绑的是什么。
+  const LIMIT = 200;
+  const pinned = all.filter((f) => f.field === bound);
+  const rest = all.filter((f) => f.field !== bound);
+  const hits = pinned.concat(rest.slice(0, LIMIT));
+  const more = rest.length - Math.min(rest.length, LIMIT);
+  document.getElementById("dg-pool-count").textContent = more
+    ? `共 ${all.length} 条，下面显示 ${hits.length} 条——请用搜索缩小范围`
+    : `共 ${all.length} 条`;
   document.getElementById("dg-pool").innerHTML = hits.length ? hits.map((f) => `
     <button type="button" onclick="dgBind('${dgEsc(f.field)}','${dgEsc(f.kind)}')"
       class="w-full text-left px-2 py-1.5 rounded hover:bg-[var(--surface-soft)] ${
         f.field === bound ? "bg-[var(--primary-soft)]" : ""}">
-      <div class="font-medium truncate">${dgEsc(f.label)}${f.unit ? `（${dgEsc(f.unit)}）` : ""}</div>
+      <div class="font-medium truncate">${f.field === bound ? "✓ " : ""}${dgEsc(f.label)}${
+        f.unit ? `（${dgEsc(f.unit)}）` : ""}</div>
       <div class="text-[10px] text-[var(--text-muted)] truncate">${dgEsc(f.group)} · ${dgEsc(f.field)}${
         usedBy[f.field] ? ` · <span class="text-[var(--primary)]">已绑于「${dgEsc(usedBy[f.field])}」</span>` : ""}</div>
     </button>`).join("")
@@ -494,4 +549,144 @@ async function dgImportMarkdown() {
 function dgCopyMarkdown() {
   navigator.clipboard.writeText(document.getElementById("dg-md-text").value).then(
     () => showToast("已复制 Markdown"), () => showToast("复制失败，请手动选择"));
+}
+
+/* ---------- 分组整理 ---------- */
+
+function dgTidyGroups() {
+  // 把每个分组框收拢到刚好包住自己的成员。拖动之后框和内容常常对不齐，
+  // 手动一个个调太笨；但也不做成自动的——自动变形会让人失去对布局的掌控。
+  const byParent = {};
+  for (const n of dg.layout.nodes) {
+    if (n.parent) (byParent[n.parent] = byParent[n.parent] || []).push(n);
+  }
+  const groups = dg.layout.nodes.filter(dgIsGroup)
+    .sort((a, b) => dgDepth(b.id) - dgDepth(a.id));  // 由深到浅，内层先定形
+  let changed = 0;
+  for (const g of groups) {
+    const kids = byParent[g.id] || [];
+    if (!kids.length) continue;
+    const pad = 16, top = 34;
+    const x = Math.min(...kids.map((k) => k.x)) - pad;
+    const y = Math.min(...kids.map((k) => k.y)) - top;
+    const w = Math.max(...kids.map((k) => k.x + k.w)) + pad - x;
+    const h = Math.max(...kids.map((k) => k.y + k.h)) + pad - y;
+    if (g.x !== x || g.y !== y || g.w !== w || g.h !== h) changed += 1;
+    Object.assign(g, { x, y, w, h });
+  }
+  dg.dirty = changed > 0;
+  dgSyncSave();
+  dgRender();
+  showToast(changed ? `已整理 ${changed} 个分组` : "分组已经是贴合的");
+}
+
+/* ---------- 节点详情（看图模式点击） ---------- */
+
+function dgLine(points, w, h) {
+  if (!points || points.length < 2) return "";
+  const vals = points.map((p) => p.value);
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const span = hi - lo || 1;
+  const step = w / (points.length - 1);
+  const xy = points.map((p, i) => [i * step, h - ((p.value - lo) / span) * h]);
+  const d = xy.map(([x, y], i) => `${i ? "L" : "M"} ${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
+  const rising = vals[vals.length - 1] >= vals[0];
+  const color = rising ? "var(--up)" : "var(--down)";
+  return `<svg viewBox="0 0 ${w} ${h}" class="w-full" style="height:${h}px">
+    <path d="${d} L ${w} ${h} L 0 ${h} Z" fill="${color}" opacity="0.08"/>
+    <path d="${d}" fill="none" stroke="${color}" stroke-width="1.6"/>
+  </svg>`;
+}
+
+async function dgOpenDetail(nodeId) {
+  const node = dg.layout.nodes.find((n) => n.id === nodeId);
+  const v = dg.values[nodeId] || {};
+  const box = document.getElementById("dg-detail-body");
+  document.getElementById("dg-detail-title").textContent = node.label;
+  toggleDrawer("dg-detail-drawer", true);
+
+  if (!v.series_id) {
+    box.innerHTML = `<div class="py-8 text-center text-[var(--text-muted)] text-xs">
+      这个方框还没有绑定指标。${dg.edit ? "" : "进入「编辑布局」后点它即可绑定。"}</div>`;
+    return;
+  }
+  box.innerHTML = '<div class="py-8 text-center text-[var(--text-muted)] text-xs">加载中…</div>';
+  const res = await fetch(`/api/sn/diagram/detail?series_id=${encodeURIComponent(v.series_id)}`);
+  if (!res.ok) { box.innerHTML = '<div class="py-8 text-center text-[var(--alert)] text-xs">读取失败</div>'; return; }
+  const d = await res.json();
+
+  const row = (k, val) => val
+    ? `<div class="flex gap-2 py-0.5"><span class="w-20 shrink-0 text-[var(--text-muted)]">${dgEsc(k)}</span>
+       <span class="flex-1 break-all">${val}</span></div>` : "";
+  const dir = dgDir(v.delta != null ? v.delta : v.mom);
+  const stateText = { ok: "正常", stale: "断更", no_data: "尚无数据", blocked: "阻断不出数",
+                      missing_input: "缺少输入", retired: "指标已停用", unbound: "未绑定" };
+
+  box.innerHTML = `
+    <div class="pb-3 border-b border-[var(--line)]">
+      <div class="flex items-baseline gap-2">
+        <span class="text-2xl font-black tabular">${dgEsc(dgNum(v.value, v.unit))}</span>
+        ${v.delta != null ? `<span class="${dir.cls} font-semibold tabular text-sm">
+          ${dir.mark} ${dgEsc(dgNum(v.delta, "").replace(/^-/, "−"))}　${dgPct(v.mom) || ""}</span>` : ""}
+      </div>
+      <div class="text-[11px] text-[var(--text-muted)] mt-1 tabular">
+        ${dgEsc(d.frequency)}频 · 数据时点 ${dgEsc(v.as_of || "—")}
+        · 状态 <b class="${v.state === "ok" ? "" : "text-[var(--amber)]"}">${stateText[v.state] || v.state}</b>
+        ${v.proxy ? ' · <b class="text-[var(--amber)]">代理指标，非本环节实测</b>' : ""}
+      </div>
+      ${v.note ? `<div class="mt-1.5 text-[11px] text-[var(--amber)]">${dgEsc(v.note)}</div>` : ""}
+    </div>
+
+    ${d.history.length > 1 ? `<div class="py-3 border-b border-[var(--line)]">
+      <div class="text-[10px] font-semibold text-[var(--text-muted)] mb-1">
+        近 ${d.history.length} 期走势（${dgEsc(d.history[0].as_of)} ~ ${dgEsc(d.history[d.history.length - 1].as_of)}）</div>
+      ${dgLine(d.history, 360, 68)}</div>` : ""}
+
+    <div class="py-3 border-b border-[var(--line)] text-[11px]">
+      <div class="text-[10px] font-semibold text-[var(--text-muted)] mb-1">口径</div>
+      ${d.caliber.length
+        ? d.caliber.map((c) => row(c.label, dgEsc(c.value))).join("")
+        : '<div class="text-[var(--text-muted)]">未标注口径维度</div>'}
+      ${d.expression ? row("计算式", dgEsc(d.expression)) : ""}
+      ${d.tolerance ? row("容差", dgEsc(d.tolerance)) : ""}
+    </div>
+
+    <div class="py-3 border-b border-[var(--line)] text-[11px]">
+      <div class="text-[10px] font-semibold text-[var(--text-muted)] mb-1">来源与凭证</div>
+      ${row("指标代码", dgEsc(d.series_id))}
+      ${row("供应商编码", dgEsc(d.vendor_code || ""))}
+      ${row("来源", dgEsc(d.source || ""))}
+      ${row("取数方式", d.fetch_mode === "auto" ? "自动采集" : "人工录入")}
+      ${row("录入人", dgEsc(d.entered_by || ""))}
+      ${d.owner ? row("负责人", `<span class="text-[var(--amber)]">${dgEsc(d.owner)}</span>`) : ""}
+      ${d.latest_note ? row("入库说明", dgEsc(d.latest_note)) : ""}
+      ${d.source_url ? row("凭证", `<a href="${dgEsc(d.source_url)}" target="_blank"
+          class="text-[var(--primary)] underline">${dgEsc(d.source_url.slice(0, 60))}</a>`) : ""}
+    </div>
+
+    ${d.revisions.length ? `<div class="py-3 border-b border-[var(--line)] text-[11px]">
+      <div class="text-[10px] font-semibold text-[var(--amber)] mb-1">
+        该序列有 ${d.revisions.length} 处修订 —— 数据商回溯改过数</div>
+      ${d.revisions.slice(0, 5).map((r) =>
+        `<div class="tabular">${dgEsc(r.as_of)} → ${r.value}（修订 ${r.revision}）</div>`).join("")}
+    </div>` : ""}
+
+    ${(d.inputs || []).length ? `<div class="py-3 border-b border-[var(--line)] text-[11px]">
+      <div class="text-[10px] font-semibold text-[var(--text-muted)] mb-1">计算输入</div>
+      ${d.inputs.map((i) => `<div class="tabular">${dgEsc(i.role)}：${dgEsc(i.series_id)} =
+        ${i.value} @ ${dgEsc((i.as_of || "").slice(0, 16).replace("T", " "))}</div>`).join("")}
+    </div>` : ""}
+
+    <div class="pt-3 flex flex-wrap gap-1.5 text-[11px]">
+      <a href="/sn/indicators#${dgEsc(d.series_id)}"
+         class="px-2.5 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)]">在指标页查看</a>
+      ${d.fetch_mode === "manual" ? `<a href="/sn/entry"
+         class="px-2.5 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)]">去录入</a>` : ""}
+      <button type="button" onclick="dgCopy('${dgEsc(d.series_id)}')"
+         class="px-2.5 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)]">复制代码</button>
+    </div>`;
+}
+
+function dgCopy(t) {
+  navigator.clipboard.writeText(t).then(() => showToast("已复制 " + t), () => showToast("复制失败"));
 }

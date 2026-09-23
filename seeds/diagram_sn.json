@@ -7,13 +7,14 @@
    "label": "供给端 · 矿 → 冶炼 → 锭",
    "layer": "supply",
    "x": 44,
-   "y": 2,
+   "y": -24,
    "w": 242,
-   "h": 928,
+   "h": 968,
    "binding": {
     "kind": "none"
    },
-   "statics": []
+   "statics": [],
+   "parent": null
   },
   {
    "id": "grp_hub",
@@ -21,13 +22,14 @@
    "label": "精锡 · 平衡与库存",
    "layer": "hub",
    "x": 384,
-   "y": 22,
+   "y": -4,
    "w": 272,
-   "h": 958,
+   "h": 998,
    "binding": {
     "kind": "none"
    },
-   "statics": []
+   "statics": [],
+   "parent": null
   },
   {
    "id": "grp_demand",
@@ -35,9 +37,80 @@
    "label": "需求端 · 四大板块",
    "layer": "demand",
    "x": 744,
-   "y": 2,
+   "y": 6,
    "w": 242,
-   "h": 900,
+   "h": 896,
+   "binding": {
+    "kind": "none"
+   },
+   "statics": [],
+   "parent": null
+  },
+  {
+   "id": "sub_mine",
+   "kind": "group",
+   "label": "矿端",
+   "parent": "grp_supply",
+   "x": 46,
+   "y": 10,
+   "w": 238,
+   "h": 528,
+   "binding": {
+    "kind": "none"
+   },
+   "statics": []
+  },
+  {
+   "id": "sub_smelt",
+   "kind": "group",
+   "label": "冶炼",
+   "parent": "grp_supply",
+   "x": 46,
+   "y": 520,
+   "w": 238,
+   "h": 278,
+   "binding": {
+    "kind": "none"
+   },
+   "statics": []
+  },
+  {
+   "id": "sub_ingot",
+   "kind": "group",
+   "label": "锭端",
+   "parent": "grp_supply",
+   "x": 46,
+   "y": 780,
+   "w": 238,
+   "h": 148,
+   "binding": {
+    "kind": "none"
+   },
+   "statics": []
+  },
+  {
+   "id": "sub_stock",
+   "kind": "group",
+   "label": "库存",
+   "parent": "grp_hub",
+   "x": 386,
+   "y": 590,
+   "w": 268,
+   "h": 388,
+   "binding": {
+    "kind": "none"
+   },
+   "statics": []
+  },
+  {
+   "id": "sub_balance",
+   "kind": "group",
+   "label": "平衡与价格",
+   "parent": "grp_hub",
+   "x": 386,
+   "y": 30,
+   "w": 268,
+   "h": 588,
    "binding": {
     "kind": "none"
    },
@@ -65,7 +138,8 @@
      "label": "年体量",
      "value": "5.8–6.5 万金属吨"
     }
-   ]
+   ],
+   "parent": "sub_mine"
   },
   {
    "id": "mine_imp",
@@ -89,7 +163,8 @@
      "label": "年体量",
      "value": "约 7.2 万金属吨"
     }
-   ]
+   ],
+   "parent": "sub_mine"
   },
   {
    "id": "mine_mm",
@@ -109,7 +184,8 @@
      "label": "占比",
      "value": "25.5%"
     }
-   ]
+   ],
+   "parent": "sub_mine"
   },
   {
    "id": "tc",
@@ -129,7 +205,8 @@
      "label": "证据",
      "value": "多头 bull1 · 矿端松紧"
     }
-   ]
+   ],
+   "parent": "sub_mine"
   },
   {
    "id": "smelt",
@@ -153,7 +230,8 @@
      "label": "云南",
      "value": "65–70%"
     }
-   ]
+   ],
+   "parent": "sub_smelt"
   },
   {
    "id": "oprate",
@@ -173,7 +251,8 @@
      "label": "样本",
      "value": "20 家，占产能 97%"
     }
-   ]
+   ],
+   "parent": "sub_smelt"
   },
   {
    "id": "ingot_imp",
@@ -197,7 +276,8 @@
      "label": "印尼",
      "value": "45–55%"
     }
-   ]
+   ],
+   "parent": "sub_ingot"
   },
   {
    "id": "refined",
@@ -225,7 +305,8 @@
      "label": "缺口",
      "value": "−0.87 万吨"
     }
-   ]
+   ],
+   "parent": "sub_balance"
   },
   {
    "id": "apparent",
@@ -240,7 +321,8 @@
     "series_id": "SMM.a10167097",
     "proxy": false
    },
-   "statics": []
+   "statics": [],
+   "parent": "sub_balance"
   },
   {
    "id": "balance_g",
@@ -260,7 +342,8 @@
      "label": "2025 全球消费",
      "value": "38.1 万吨"
     }
-   ]
+   ],
+   "parent": "sub_balance"
   },
   {
    "id": "warrant",
@@ -275,7 +358,8 @@
     "series_id": "SHFE.SN.warrant",
     "proxy": false
    },
-   "statics": []
+   "statics": [],
+   "parent": "sub_stock"
   },
   {
    "id": "social",
@@ -295,7 +379,8 @@
      "label": "证伪",
      "value": "连续两周累库"
     }
-   ]
+   ],
+   "parent": "sub_stock"
   },
   {
    "id": "lme",
@@ -310,7 +395,8 @@
     "series_id": "LME.SN.stock",
     "proxy": false
    },
-   "statics": []
+   "statics": [],
+   "parent": "sub_stock"
   },
   {
    "id": "basis",
@@ -329,7 +415,8 @@
      "label": "容差",
      "value": "同交易日 · ≤4 小时"
     }
-   ]
+   ],
+   "parent": "sub_balance"
   },
   {
    "id": "solder",
@@ -353,7 +440,8 @@
      "label": "终端",
      "value": "手机·AI服务器·半导体封装·白电·汽车"
     }
-   ]
+   ],
+   "parent": "grp_demand"
   },
   {
    "id": "sox",
@@ -373,7 +461,8 @@
      "label": "用途",
      "value": "需求侧代理，非实测"
     }
-   ]
+   ],
+   "parent": "grp_demand"
   },
   {
    "id": "chem",
@@ -397,7 +486,8 @@
      "label": "去向",
      "value": "PVC 稳定剂 · PU 催化剂"
     }
-   ]
+   ],
+   "parent": "grp_demand"
   },
   {
    "id": "tinplate",
@@ -419,7 +509,8 @@
      "label": "终端",
      "value": "食品罐 36% · 饮料罐 22%"
     }
-   ]
+   ],
+   "parent": "grp_demand"
   },
   {
    "id": "alloy",
@@ -441,7 +532,8 @@
      "label": "终端",
      "value": "轴承轴瓦 · 启动/储能电池"
     }
-   ]
+   ],
+   "parent": "grp_demand"
   },
   {
    "id": "spot",
@@ -456,7 +548,8 @@
     "series_id": "SMM.SN.spot.1",
     "proxy": false
    },
-   "statics": []
+   "statics": [],
+   "parent": "grp_demand"
   },
   {
    "id": "vix",
@@ -476,7 +569,8 @@
      "label": "风控",
      "value": "VIX>19 → 降敞口"
     }
-   ]
+   ],
+   "parent": "grp_demand"
   }
  ],
  "edges": [
