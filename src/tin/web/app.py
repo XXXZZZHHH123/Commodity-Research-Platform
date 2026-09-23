@@ -34,6 +34,7 @@ from tin.export.board import (
 )
 from tin.export import templates as export_templates
 from tin.export.excel import Column, build_export, build_import_template, field_catalog
+from tin.export import diagram as diagram_api
 from tin.ingest import excel_importer, import_jobs, vendor_terminal
 from tin.ingest.record import RecordError, record
 from tin.judgments.importer import import_text
@@ -248,6 +249,46 @@ def indicators_page(request: Request):
                 if not PER_CONTRACT.match(i.series_id)]
         return templates.TemplateResponse(request, "indicators.html", _shell(
             s, "indicators", latest_trade_date(s), rows=rows, dimensions=DIMENSIONS))
+
+
+@app.get("/sn/diagram")
+def diagram_page(request: Request):
+    with SessionLocal() as s:
+        tpl = diagram_api.ensure_default(s, V)
+        return templates.TemplateResponse(request, "diagram.html", _shell(
+            s, "diagram", latest_trade_date(s), template=tpl,
+            templates_all=diagram_api.list_templates(s, V)))
+
+
+@app.get("/api/sn/diagram/values")
+def diagram_values(template_id: int | None = None, date: str | None = None):
+    with SessionLocal() as s:
+        rows = diagram_api.list_templates(s, V)
+        tpl = next((t for t in rows if t["id"] == template_id), None) or (rows[0] if rows else None)
+        if tpl is None:
+            raise HTTPException(404, "还没有任何布局")
+        day = _board_date(s, date)
+        return {"template_id": tpl["id"], "as_of": day.isoformat(),
+                "nodes": diagram_api.resolve(s, tpl["layout"], day)}
+
+
+@app.post("/api/sn/diagram/templates")
+def diagram_save(body: dict = Body(...)):
+    with SessionLocal() as s:
+        try:
+            saved = diagram_api.save_template(s, V, body)
+        except diagram_api.DiagramError as e:
+            raise HTTPException(400, str(e)) from None
+        return {"saved": saved, "templates": diagram_api.list_templates(s, V)}
+
+
+@app.delete("/api/sn/diagram/templates/{template_id}")
+def diagram_delete(template_id: int):
+    with SessionLocal() as s:
+        try:
+            return diagram_api.delete_template(s, V, template_id)
+        except diagram_api.DiagramError as e:
+            raise HTTPException(400, str(e)) from None
 
 
 @app.get("/sn/reports")

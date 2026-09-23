@@ -52,6 +52,29 @@ class ExportTemplate(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
 
 
+class DiagramTemplate(Base):
+    """产业图布局。与导出模板同构：按品种共享，同品种只允许一个默认。
+
+    布局里只存「节点位置 + 绑定谁 + 静态标注」，不存任何数值——数值每次渲染时
+    从事实层现取，否则图就会变成又一份会过期的快照。
+    """
+
+    __tablename__ = "diagram_templates"
+    __table_args__ = (
+        Index("uq_diagram_template_default", "variety", unique=True,
+              sqlite_where=text("is_default = 1"), postgresql_where=text("is_default = TRUE")),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    variety: Mapped[str] = mapped_column(String(16), index=True)
+    name: Mapped[str] = mapped_column(String(64))
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    # {"nodes": [{id, label, layer, x, y, w, h, binding, statics}], "edges": [{from, to}]}
+    layout: Mapped[dict] = mapped_column(JSONType)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
 class ImportPreview(Base):
     """导入预览的服务端权威缓存：commit 只认 preview_id，不接收前端回传的数据行。"""
 

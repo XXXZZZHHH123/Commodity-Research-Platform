@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}动态产业图 · 锡 SN{% endblock %}
+{% block main %}
+
+<div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[var(--line-strong)]">
+  <div>
+    <div class="text-[10px] font-bold tracking-widest text-[var(--primary)] uppercase mb-1">INDUSTRY CHAIN · LIVE</div>
+    <h1 class="text-2xl font-black tracking-tight">动态产业图</h1>
+    <p class="text-xs text-[var(--text-muted)] mt-1">
+      结构来自《锡产业基础研究框架》，每个环节的数值从事实层现取 ——
+      <span class="text-[var(--amber)]">没数的环节显示「尚无数据」，不会拿旧值充数</span>
+    </p>
+  </div>
+  <div class="flex items-center gap-1.5 shrink-0 text-xs">
+    <select id="dg-template" onchange="dgSwitch(this.value)" class="px-2 py-1.5 rounded-md">
+      {% for t in templates_all %}
+      <option value="{{ t.id }}" {{ 'selected' if t.id == template.id }}>{{ t.name }}{{ '（默认）' if t.is_default }}</option>
+      {% endfor %}
+    </select>
+    <button type="button" onclick="dgToggleEdit()" id="dg-edit-btn"
+      class="px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)] font-semibold">编辑布局</button>
+    <button type="button" onclick="dgSave()" id="dg-save" disabled
+      class="px-3 py-1.5 rounded-md bg-[var(--primary)] text-white font-semibold hover:bg-[var(--primary-hover)] disabled:opacity-40">保存</button>
+  </div>
+</div>
+
+<div class="flex items-center flex-wrap gap-3 py-2 text-[11px] text-[var(--text-muted)]">
+  <span class="font-semibold text-[var(--text)]">图例</span>
+  <span class="dg-key"><i class="dg-sw" style="background:var(--primary)"></i>正常</span>
+  <span class="dg-key"><i class="dg-sw" style="background:var(--amber)"></i>断更</span>
+  <span class="dg-key"><i class="dg-sw" style="background:var(--alert)"></i>阻断（口径冲突）</span>
+  <span class="dg-key"><i class="dg-sw" style="background:var(--amber);opacity:.6"></i>缺少输入</span>
+  <span class="dg-key"><i class="dg-sw dg-sw-empty"></i>尚无数据</span>
+  <span class="dg-key"><i class="dg-sw dg-sw-proxy"></i>代理指标（非实测）</span>
+  <span class="dg-key">［静］调研系数 · 2026-08</span>
+  <span id="dg-asof" class="ml-auto tabular"></span>
+</div>
+
+<div id="dg-wrap" class="relative rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden"
+     style="height: calc(100vh - 260px); min-height: 520px;">
+  <svg id="dg-canvas" class="w-full h-full select-none" style="touch-action:none">
+    <defs>
+      <marker id="dg-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0,0 L8,4 L0,8 z" fill="var(--line-strong)" opacity="0.75"/>
+      </marker>
+      <!-- 代理指标的斜纹底：一眼看出这格不是本环节的实测值 -->
+      <pattern id="dg-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <line x1="0" y1="0" x2="0" y2="6" stroke="var(--text-muted)" stroke-width="1.2" opacity="0.25"/>
+      </pattern>
+    </defs>
+    <g id="dg-edges"></g>
+    <g id="dg-nodes"></g>
+  </svg>
+
+  <div class="absolute left-3 bottom-3 flex items-center gap-1 text-xs bg-[var(--surface)] rounded-md border border-[var(--line)] px-1 py-0.5 shadow-sm">
+    <button type="button" onclick="dgZoom(-0.1)" class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">−</button>
+    <span id="dg-zoom" class="tabular w-12 text-center text-[var(--text-muted)]">100%</span>
+    <button type="button" onclick="dgZoom(0.1)" class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">+</button>
+    <button type="button" onclick="dgFit()" class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">适应</button>
+  </div>
+
+  <div id="dg-hint" class="absolute right-3 bottom-3 hidden text-[11px] px-2.5 py-1.5 rounded-md
+       bg-[var(--amber-soft)] text-[var(--amber)] border border-[var(--amber)]/30">
+    编辑模式：拖动方框调位置 ｜ 点方框绑定指标 ｜ 改完记得保存
+  </div>
+</div>
+
+<!-- 指标池：编辑模式下点节点才打开 -->
+<aside id="dg-drawer" data-drawer
+  class="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-[var(--surface)] border-l border-[var(--line)] shadow-2xl p-6 flex flex-col translate-x-full transition-transform duration-300 ease-in-out">
+  <div class="flex items-start justify-between gap-4 pb-3 border-b border-[var(--line)]">
+    <div>
+      <h2 class="text-lg font-bold">绑定指标</h2>
+      <p class="text-[11px] text-[var(--text-muted)] mt-0.5">节点 <span id="dg-node-label" class="font-semibold"></span></p>
+    </div>
+    <button onclick="toggleDrawer('dg-drawer', false)" class="text-xl leading-none text-[var(--text-muted)] hover:text-[var(--text)]">&times;</button>
+  </div>
+  <div class="mt-3">
+    <input id="dg-search" type="text" placeholder="搜指标名称或编码…" oninput="dgRenderPool()"
+           class="w-full px-2 py-1.5 rounded-md text-xs">
+  </div>
+  <div class="mt-2 flex items-center gap-1.5 text-[11px]">
+    <label class="flex items-center gap-1"><input type="checkbox" id="dg-proxy" onchange="dgMarkProxy()"> 标为代理指标</label>
+    <button type="button" onclick="dgUnbind()" class="ml-auto px-2 py-1 rounded text-[var(--alert)] hover:bg-[var(--alert-soft)]">解除绑定</button>
+  </div>
+  <div id="dg-pool" class="mt-2 flex-1 overflow-y-auto text-xs"></div>
+</aside>
+
+<script>
+  window.DG_TEMPLATE = {{ template | tojson }};
+  window.DG_DATE = {{ (d or '') | tojson }};
+</script>
+<script src="/static/diagram.js?v={{ static_version() }}"></script>
+{% endblock %}

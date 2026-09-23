@@ -69,11 +69,13 @@ def test_static_assets_carry_a_version_fingerprint(tmp_path, monkeypatch):
     first = web.static_version()
     assert first.isdigit()
 
+    # 指纹取 static/ 下所有文件的最新 mtime，所以要把某个文件推到比全部都新
     js = web.HERE / "static" / "app.js"
     original = js.stat().st_mtime
+    newest = max(f.stat().st_mtime for f in (web.HERE / "static").glob("*"))
     try:
         import os
-        os.utime(js, (original + 10, original + 10))
+        os.utime(js, (newest + 10, newest + 10))
         assert web.static_version() != first, "静态文件变化后指纹必须随之变化"
     finally:
         os.utime(js, (original, original))
@@ -89,7 +91,8 @@ def test_every_inline_handler_resolves_to_a_real_function():
 
     from tin.web import app as web
 
-    sources = [(web.HERE / "static" / "app.js").read_text(encoding="utf-8")]
+    sources = [f.read_text(encoding="utf-8") for f in sorted((web.HERE / "static").glob("*.js"))
+               if f.name != "tailwind.min.js"]
     attrs: list[tuple[str, str]] = []
     for tpl in sorted((web.HERE / "templates").glob("*.html")):
         text = tpl.read_text(encoding="utf-8")
