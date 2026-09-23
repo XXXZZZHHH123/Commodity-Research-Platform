@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     llm_timeout: float = 120.0
     llm_max_retries: int = 2
     llm_max_tokens: int = 16000
+    # OpenAI 兼容端点的结构化输出模式，各家支持度不一致：
+    #   json_schema —— 服务端按 schema 强约束（vLLM、以及部分百炼模型支持）
+    #   json_object —— 只保证是合法 JSON，形状靠 prompt 说明 + 闸门兜底
+    #   none        —— 端点完全不支持，纯靠 prompt 要求输出 JSON
+    # 阿里云百炼：json_schema 仅限少数千问型号，通用型号要用 json_object。
+    llm_json_mode: str = "json_schema"
     # 安全分类器误伤时由服务端换模型续上，而不是把失败甩给研究员。
     # 切到内网自托管端点后这个开关没有意义，置 false。
     llm_fallback: bool = True
