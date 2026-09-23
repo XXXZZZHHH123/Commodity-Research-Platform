@@ -100,15 +100,12 @@ function dgHandle(n) {
     fill="var(--primary)" fill-opacity="0.75" style="cursor:nwse-resize"/>`;
 }
 
-function dgSpark(values, w, h) {
-  if (!values || values.length < 3) return "";
-  const lo = Math.min(...values), hi = Math.max(...values);
-  const span = hi - lo || 1;
-  const step = w / (values.length - 1);
-  const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(h - (v - lo) / span * h).toFixed(1)}`);
-  const rising = values[values.length - 1] >= values[0];
-  return `<polyline points="${pts.join(" ")}" fill="none" stroke-width="1.4"
-    stroke="${rising ? "var(--up)" : "var(--down)"}" opacity="0.85"/>`;
+function dgDir(v) {
+  // 方向色沿用行情条的约定：涨用 --up、跌用 --down。这是事实描述，不是多空判断。
+  if (v == null || v === 0) return { cls: "text-[var(--text-muted)]", mark: "", color: null };
+  return v > 0
+    ? { cls: "text-[var(--up)]", mark: "▲", color: "var(--up)" }
+    : { cls: "text-[var(--down)]", mark: "▼", color: "var(--down)" };
 }
 
 function dgNode(n) {
@@ -116,16 +113,27 @@ function dgNode(n) {
   const st = DG_STATE[v.state] || DG_STATE.unbound;
   const statics = (n.statics || []).slice(0, 3);
   const proxy = v.proxy;
+  // 左侧色条只表示涨跌方向；边框仍然表示数据状态，两者不能混为一谈
+  const dirColor = (v.state === "ok" || v.state === "stale")
+    ? dgDir(v.delta != null ? v.delta : v.mom).color : null;
 
   // 值区：阻断与无数据一律不显示数字——显示一个数就等于在说"算出来了"
   let main = "";
   if (v.state === "ok" || v.state === "stale") {
-    const chips = [dgPct(v.mom) && `环比 ${dgPct(v.mom)}`, dgPct(v.yoy) && `同比 ${dgPct(v.yoy)}`]
-      .filter(Boolean).join(" · ");
+    const d = dgDir(v.delta != null ? v.delta : v.mom);
+    const parts = [];
+    if (v.delta != null) parts.push(dgNum(v.delta, "").replace(/^-/, "−"));
+    if (dgPct(v.mom) != null) parts.push(`${dgPct(v.mom)}`);
+    const move = parts.length
+      ? `<span class="${d.cls} font-semibold tabular">${d.mark} ${parts.join("　")}</span>` : "";
+    const yoy = dgPct(v.yoy) != null
+      ? `<span class="${dgDir(v.yoy).cls} tabular">同比 ${dgPct(v.yoy)}</span>` : "";
+    // 数值与变化分两行：210px 宽的框里挤一行会把单位甩到下一行去
     main = `
-      <div class="text-[15px] font-bold tabular leading-tight">${dgEsc(dgNum(v.value, v.unit))}</div>
-      <div class="text-[10px] text-[var(--text-muted)] tabular mt-0.5">
-        ${dgEsc(v.frequency)}频 · ${dgEsc(v.as_of || "")}${chips ? " · " + dgEsc(chips) : ""}</div>`;
+      <div class="text-[15px] font-bold tabular leading-tight truncate">${dgEsc(dgNum(v.value, v.unit))}</div>
+      ${move ? `<div class="text-[11px] tabular leading-tight">${move}</div>` : ""}
+      <div class="text-[10px] text-[var(--text-muted)] tabular mt-0.5 truncate">
+        ${dgEsc(v.frequency)}频 · ${dgEsc(v.as_of || "")}${yoy ? " · " : ""}${yoy}</div>`;
   } else if (v.state === "blocked" || v.state === "missing_input") {
     // 两者都留空，但要说清楚是"补数据就能算"还是"口径对不上，补也没用"
     const title = v.state === "blocked" ? "阻断不出数" : "缺少输入";
@@ -148,10 +156,10 @@ function dgNode(n) {
     <rect width="${n.w}" height="${n.h}" rx="8" fill="${st.fill}" stroke="${st.stroke}"
           stroke-width="${proxy ? 1.4 : 1.6}" ${st.dash ? `stroke-dasharray="${st.dash}"` : ""}/>
     ${proxy ? `<rect width="${n.w}" height="${n.h}" rx="8" fill="url(#dg-hatch)" opacity="0.5"/>` : ""}
-    ${v.spark && v.spark.length >= 3 ? `<g transform="translate(${n.w - 66},${n.h - 26})">
-        ${dgSpark(v.spark, 54, 16)}</g>` : ""}
+    ${dirColor ? `<path d="M 0 8 A 8 8 0 0 1 8 0 L 5 0 L 5 ${n.h} L 8 ${n.h} A 8 8 0 0 1 0 ${n.h - 8} Z"
+        fill="${dirColor}" opacity="0.85"/>` : ""}
     ${dg.edit ? dgHandle(n) : ""}
-    <foreignObject x="10" y="8" width="${n.w - 20}" height="${n.h - 16}">
+    <foreignObject x="${dirColor ? 15 : 10}" y="8" width="${n.w - (dirColor ? 25 : 20)}" height="${n.h - 16}">
       <div xmlns="http://www.w3.org/1999/xhtml" class="${st.tone}" style="font-family:inherit">
         <div class="text-[11px] font-bold truncate">${dgEsc(n.label)}${proxy ? " ◍" : ""}</div>
         ${main}
@@ -164,7 +172,7 @@ function dgNode(n) {
 function dgApplyTransform() {
   const g = document.getElementById("dg-canvas");
   if (!g) return;
-  for (const id of ["dg-nodes", "dg-edges"]) {
+  for (const id of ["dg-groups", "dg-edges", "dg-nodes"]) {
     document.getElementById(id).setAttribute(
       "transform", `translate(${dg.pan.x},${dg.pan.y}) scale(${dg.zoom})`);
   }

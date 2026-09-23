@@ -340,3 +340,14 @@ def test_suggestion_marks_series_already_used_in_this_diagram(session):
     add_points(session, "T.社会库存", [1])
     got = diagram.suggest(session, "SN", "社会库存", bound={"T.社会库存"})
     assert got[0]["already_bound"] is True
+
+
+def test_change_carries_both_delta_and_percent(session):
+    """百分比看不出量级。库存从 100 涨到 110 与从 10000 涨到 11000 都是 +10%，
+    但研究员关心的是差了多少吨。"""
+    add_series(session, "T.DELTA", unit="吨")
+    add_points(session, "T.DELTA", [11000, 10000])
+    out = diagram.resolve(session, {"nodes": [node("n1", series="T.DELTA")]}, TODAY)[0]
+    assert out["delta"] == 1000
+    assert out["mom"] == pytest.approx(10.0)
+    assert "spark" not in out, "迷你走势已去掉，节点上用差值与方向表达变化"

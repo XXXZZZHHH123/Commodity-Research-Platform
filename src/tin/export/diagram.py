@@ -45,9 +45,9 @@ class NodeValue:
     unit: str = ""
     frequency: str = ""
     as_of: str | None = None
-    mom: float | None = None          # 环比：与上一期比
-    yoy: float | None = None          # 同比：与去年同期比
-    spark: list[float] | None = None  # 迷你走势，最近若干期
+    mom: float | None = None          # 环比百分比
+    yoy: float | None = None          # 同比百分比
+    delta: float | None = None        # 与上一期的差值（原单位）——比百分比更直观
     note: str | None = None
     proxy: bool = False               # 代理指标：不是本环节的实测值
     series_id: str | None = None
@@ -55,8 +55,8 @@ class NodeValue:
     def dump(self) -> dict:
         d = {"node_id": self.node_id, "state": self.state, "label": self.label,
              "value": self.value, "unit": self.unit, "frequency": self.frequency,
-             "as_of": self.as_of, "mom": self.mom, "yoy": self.yoy,
-             "spark": self.spark, "note": self.note, "proxy": self.proxy,
+             "as_of": self.as_of, "mom": self.mom, "yoy": self.yoy, "delta": self.delta,
+             "note": self.note, "proxy": self.proxy,
              "series_id": self.series_id}
         return d
 
@@ -123,7 +123,7 @@ def _observation_node(session: Session, node: dict, series_id: str, through: dat
         as_of=day.isoformat(),
         mom=_change(latest.value, rows[1].value if len(rows) > 1 else None),
         yoy=_change(latest.value, _same_period_last_year(rows, ind.frequency)),
-        spark=[r.value for r in reversed(rows[:12])],
+        delta=(latest.value - rows[1].value) if len(rows) > 1 else None,
         note=note, proxy=proxy, series_id=series_id,
     )
 
@@ -155,6 +155,7 @@ def _derived_node(session: Session, node: dict, formula_id: str, through: date) 
     return NodeValue(node["id"], OK, label, value=row.value, unit=spec.unit if spec else "",
                      frequency="日", as_of=row.trade_date,
                      mom=_change(row.value, prev.value if prev else None),
+                     delta=(row.value - prev.value) if prev else None,
                      note=row.note, series_id=formula_id)
 
 
