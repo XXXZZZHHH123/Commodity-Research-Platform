@@ -85,7 +85,12 @@ async function dgLoad() {
         window.DG_DATE ? `&date=${window.DG_DATE}` : ""}`);
       if (res.ok) {
         data = await res.json();
-        showToast(`实时取值不可用（${why}），显示的是已保存版本 —— 服务端可能没重启`);
+        // 405 只有一个原因：这个路由是新加的，服务端进程还是旧代码。
+        // 静态文件每次请求都从磁盘读，Python 代码是进程启动时加载的——所以会出现
+        // 「前端是新的、后端是旧的」，前端功能看着都在，一调新接口就失败。
+        showToast(why === "HTTP 405"
+          ? "服务端还在跑旧代码（新接口返回 405）—— 请重启 uvicorn。现在显示的是已保存版本，新增/改绑的节点不会出数"
+          : `实时取值不可用（${why}），显示的是已保存版本`);
       }
     } catch (e) { /* 两条都不通，下面统一报 */ }
   }
@@ -196,6 +201,45 @@ function dgTrail(id) {
   return trail.join(" › ");
 }
 
+function dgSubtree(id) {
+  // 一个分组和它里面的全部内容（含子分组）。拖动、删除都该以这个为单位。
+  const out = [];
+  const walk = (pid) => {
+    for (const n of dg.layout.nodes) {
+      if (n.parent === pid && !out.includes(n)) { out.push(n); if (dgIsGroup(n)) walk(n.id); }
+    }
+  };
+  const root = dg.layout.nodes.find((n) => n.id === id);
+  if (root) { out.push(root); walk(id); }
+  return out;
+}
+
+/* ---------- 撤销 ----------
+ * 画布编辑没有撤销，一次误拖就得靠手动摆回去——而归属变化是看不见的，
+ * 等发现时已经不知道该怎么还原了。整份布局做快照最简单也最可靠：
+ * 这份 JSON 只有几十 KB，存 30 步完全不是负担。 */
+function dgPushUndo() {
+  dg.undo = dg.undo || [];
+  dg.undo.push(JSON.stringify({ nodes: dg.layout.nodes, edges: dg.layout.edges }));
+  if (dg.undo.length > 30) dg.undo.shift();
+  const btn = document.getElementById("dg-undo");
+  if (btn) btn.disabled = false;
+}
+
+function dgUndo() {
+  if (!dg.undo || !dg.undo.length) { showToast("没有可撤销的操作"); return; }
+  const prev = JSON.parse(dg.undo.pop());
+  dg.layout.nodes = prev.nodes;
+  dg.layout.edges = prev.edges;
+  dg.dirty = true;
+  dgSyncSave();
+  dgRender();
+  dgLoad();
+  const btn = document.getElementById("dg-undo");
+  if (btn) btn.disabled = !dg.undo.length;
+  showToast(`已撤销（还可撤销 ${dg.undo.length} 步）`);
+}
+
 function dgIsAncestor(maybeAncestor, id) {
   let cur = dg.layout.nodes.find((n) => n.id === id);
   const seen = new Set();
@@ -276,11 +320,11 @@ function dgNode(n) {
     if (v.delta != null) parts.push(dgNum(v.delta, "").replace(/^-/, "−"));
     if (dgPct(v.mom) != null) parts.push(dgPct(v.mom));
     main = `
-      <div class="text-[14px] font-bold tabular leading-none mt-1 truncate">${dgEsc(dgNum(v.value, v.unit))}</div>
-      ${parts.length ? `<div class="${d.cls} text-[10px] font-semibold tabular leading-none mt-1 truncate">
-        ${d.mark} ${parts.join("　")}</div>` : ""}
-      <div class="text-[9px] text-[var(--text-muted)] tabular leading-none mt-1 truncate">
-        ${dgEsc(v.frequency || "")} · ${dgEsc((v.as_of || "").slice(2))}</div>`;
+      <div class="text-[13px] font-bold tabular leading-none mt-[3px] truncate">${dgEsc(dgNum(v.value, v.unit))}</div>
+      ${parts.length ? `<div class="${d.cls} text-[9.5px] font-semibold tabular leading-none mt-[3px] truncate">
+        ${d.mark} ${parts.join(" ")}</div>` : ""}
+      <div class="text-[8.5px] text-[var(--text-muted)] tabular leading-none mt-[3px] truncate">
+        ${dgEsc(v.frequency || "")}·${dgEsc((v.as_of || "").slice(2))}</div>`;
   } else if (v.state === "blocked" || v.state === "missing_input") {
     // 两者都留空，但要说清楚是"补数据就能算"还是"口径对不上，补也没用"
     main = `<div class="text-[10px] font-semibold mt-1">${
@@ -327,8 +371,9 @@ function dgNode(n) {
     ${dg.edit ? dgHandle(n) : ""}
     <foreignObject x="${dirColor ? 11 : 8}" y="6" width="${n.w - (dirColor ? 20 : 16)}" height="${n.h - 10}">
       <div xmlns="http://www.w3.org/1999/xhtml" class="${st.tone}" style="font-family:inherit">
-        <div class="text-[10.5px] font-bold leading-none truncate"
-             style="${roles.length && !dg.judgmentView ? "padding-right:8px" : ""}">${
+        <div class="text-[10px] font-bold" style="line-height:1.15;${
+          roles.length && !dg.judgmentView ? "padding-right:9px;" : ""
+          }display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${
           dgEsc(n.label)}${proxy ? " ◍" : ""}</div>
         ${main}
         ${staticRows}
@@ -400,10 +445,16 @@ function dgBindCanvas() {
     if (dg.edit && handle) {
       const node = dg.layout.nodes.find((n) => n.id === handle.dataset.resize);
       drag = { node, resize: true, x0: e.clientX, y0: e.clientY, w0: node.w, h0: node.h };
+      dgPushUndo();
       svg.setPointerCapture(e.pointerId);
     } else if (dg.edit && g) {
       const node = dg.layout.nodes.find((n) => n.id === g.dataset.node);
-      drag = { node, x0: e.clientX, y0: e.clientY, nx: node.x, ny: node.y, moved: false };
+      // 拖分组要把里面的东西一起带走。原来只挪框本身，框滑开、成员留在原地，
+      // 几何归属立刻全乱——这就是「手拖动极易改变分组关系」的主要来源。
+      const family = dgIsGroup(node) ? dgSubtree(node.id) : [node];
+      drag = { node, family: family.map((n) => ({ n, x: n.x, y: n.y })),
+               x0: e.clientX, y0: e.clientY, moved: false };
+      dgPushUndo();
       svg.setPointerCapture(e.pointerId);
     } else if (!dg.edit && g) {
       // 看图模式：记下点的是哪个节点，但仍然允许拖动画布平移
@@ -427,15 +478,16 @@ function dgBindCanvas() {
     }
     if (drag.resize) {
       // 下限保证框里还装得下标签与一行数值，不至于被拖成一条缝
-      drag.node.w = Math.max(120, Math.round((drag.w0 + dx / dg.zoom) / 10) * 10);
-      drag.node.h = Math.max(60, Math.round((drag.h0 + dy / dg.zoom) / 10) * 10);
+      drag.node.w = Math.max(100, Math.round((drag.w0 + dx / dg.zoom) / 10) * 10);
+      drag.node.h = Math.max(52, Math.round((drag.h0 + dy / dg.zoom) / 10) * 10);
       dg.dirty = true;
       dgRender();
       return;
     }
     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
-    drag.node.x = Math.round((drag.nx + dx / dg.zoom) / 10) * 10;  // 对齐到 10px 网格
-    drag.node.y = Math.round((drag.ny + dy / dg.zoom) / 10) * 10;
+    const ox = Math.round(dx / dg.zoom / 10) * 10;   // 对齐到 10px 网格
+    const oy = Math.round(dy / dg.zoom / 10) * 10;
+    for (const m of drag.family) { m.n.x = m.x + ox; m.n.y = m.y + oy; }
     dg.dirty = true;
     dgRender();
   });
@@ -451,9 +503,10 @@ function dgBindCanvas() {
       if (before !== now) {
         wasDrag.node.parent = now;
         dgRender();
-        showToast(now
+        // 归属变化是看不见的结构改动，必须说出来，并且当场给一条退路
+        showToast((now
           ? `「${wasDrag.node.label}」已归入「${dg.layout.nodes.find((n) => n.id === now).label}」`
-          : `「${wasDrag.node.label}」已移出分组`);
+          : `「${wasDrag.node.label}」已移出分组`) + " —— 不对就按 Ctrl+Z 撤销");
       }
     }
     if (wasDrag && wasDrag.node && !wasDrag.resize && !wasDrag.moved) {
@@ -462,6 +515,14 @@ function dgBindCanvas() {
       else if (!dgIsGroup(wasDrag.node)) dgOpenDetail(wasDrag.node.id);
     }
     dgSyncSave();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
+      if (/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || "")) return;
+      e.preventDefault();
+      dgUndo();
+    }
   });
 
   svg.addEventListener("wheel", (e) => {
@@ -532,29 +593,68 @@ function dgRenderPool() {
   const all = dg.pool
     .filter((f) => f.kind !== "meta")
     .filter((f) => !q || f.label.toLowerCase().includes(q) || f.field.toLowerCase().includes(q));
-  // 当前已绑的那条必须置顶。池子有近 400 条、列表要截断，而自动登记的指标名排在后面——
-  // 不置顶的话，打开抽屉根本看不到这个节点绑的是什么。
-  const LIMIT = 200;
-  const pinned = all.filter((f) => f.field === bound);
-  const rest = all.filter((f) => f.field !== bound);
-  const hits = pinned.concat(rest.slice(0, LIMIT));
-  const more = rest.length - Math.min(rest.length, LIMIT);
-  document.getElementById("dg-pool-count").textContent = more
-    ? `共 ${all.length} 条，下面显示 ${hits.length} 条——请用搜索缩小范围`
-    : `共 ${all.length} 条`;
-  document.getElementById("dg-pool").innerHTML = hits.length ? hits.map((f) => `
+
+  // 近 400 条拍平成一个长列表，即便能搜也看不出全貌：不知道有哪些类别、
+  // 每类有多少、自己关心的那类在哪。按类别折叠——默认全收起，只看见目录。
+  const cats = new Map();
+  for (const f of all) {
+    if (!cats.has(f.group)) cats.set(f.group, []);
+    cats.get(f.group).push(f);
+  }
+  document.getElementById("dg-pool-count").textContent =
+    `共 ${all.length} 条 · ${cats.size} 个类别${q ? "（已按搜索过滤）" : ""}`;
+
+  if (!all.length) {
+    document.getElementById("dg-pool").innerHTML =
+      '<div class="py-6 text-center text-[var(--text-muted)]">没有匹配的指标</div>';
+    return;
+  }
+
+  dg.openCats = dg.openCats || new Set();
+  // 搜索时全部展开（此时结果本来就少）；已绑的那一类也自动展开，否则看不到绑的是什么
+  const boundCat = bound ? (all.find((f) => f.field === bound) || {}).group : null;
+  const LIMIT = 60;   // 单个类别内的上限，避免一类几百条撑爆
+
+  const item = (f) => `
     <button type="button" onclick="dgBind('${dgEsc(f.field)}','${dgEsc(f.kind)}')"
-      class="w-full text-left px-2 py-1.5 rounded hover:bg-[var(--surface-soft)] ${
+      class="w-full text-left pl-4 pr-2 py-1.5 rounded hover:bg-[var(--surface-soft)] ${
         f.field === bound ? "bg-[var(--primary-soft)]" : ""}">
       <div class="font-medium truncate">${f.field === bound ? "✓ " : ""}${dgEsc(f.label)}${
         f.unit ? `（${dgEsc(f.unit)}）` : ""}</div>
-      <div class="text-[10px] text-[var(--text-muted)] truncate">${dgEsc(f.group)} · ${dgEsc(f.field)}${
+      <div class="text-[10px] text-[var(--text-muted)] truncate">${dgEsc(f.field)}${
         usedBy[f.field] ? ` · <span class="text-[var(--primary)]">已绑于「${dgEsc(usedBy[f.field])}」</span>` : ""}</div>
-    </button>`).join("")
-    : '<div class="py-6 text-center text-[var(--text-muted)]">没有匹配的指标</div>';
+    </button>`;
+
+  document.getElementById("dg-pool").innerHTML = [...cats.entries()].map(([name, fields]) => {
+    const open = !!q || dg.openCats.has(name) || name === boundCat;
+    const used = fields.filter((f) => usedBy[f.field] || f.field === bound).length;
+    const shown = open ? fields.slice(0, LIMIT) : [];
+    return `
+    <div class="border-b border-[var(--line)] last:border-0">
+      <button type="button" onclick="dgToggleCat('${dgEsc(name)}')"
+        class="w-full flex items-center gap-1.5 px-1 py-2 text-left hover:bg-[var(--surface-soft)]">
+        <span class="text-[var(--text-muted)] w-3">${open ? "▾" : "▸"}</span>
+        <span class="font-semibold flex-1 truncate">${dgEsc(name)}</span>
+        ${used ? `<span class="text-[10px] text-[var(--primary)]">已绑 ${used}</span>` : ""}
+        <span class="text-[10px] text-[var(--text-muted)] tabular">${fields.length}</span>
+      </button>
+      ${shown.map(item).join("")}
+      ${open && fields.length > LIMIT
+        ? `<div class="pl-4 py-1.5 text-[10px] text-[var(--text-muted)]">
+             这一类还有 ${fields.length - LIMIT} 条未显示 —— 用上面的搜索缩小范围</div>` : ""}
+    </div>`;
+  }).join("");
+}
+
+function dgToggleCat(name) {
+  dg.openCats = dg.openCats || new Set();
+  if (dg.openCats.has(name)) dg.openCats.delete(name);
+  else dg.openCats.add(name);
+  dgRenderPool();
 }
 
 function dgBind(field, kind) {
+  dgPushUndo();
   const node = dg.layout.nodes.find((n) => n.id === dg.active);
   if (!node) return;
   node.binding = kind === "derived"
@@ -567,6 +667,7 @@ function dgBind(field, kind) {
 }
 
 function dgUnbind() {
+  dgPushUndo();
   const node = dg.layout.nodes.find((n) => n.id === dg.active);
   if (!node) return;
   node.binding = { kind: "none" };
@@ -678,12 +779,13 @@ function dgNextId(prefix) {
 }
 
 function dgAdd(kind) {
+  dgPushUndo();
   // 新节点落在当前视口左上角附近，而不是画布原点——否则在远处看不见
   const x = Math.round((-dg.pan.x / dg.zoom + 40) / 10) * 10;
   const y = Math.round((-dg.pan.y / dg.zoom + 40) / 10) * 10;
   const node = kind === "group"
     ? { id: dgNextId("g"), kind: "group", label: "新分组", x, y, w: 420, h: 260, binding: { kind: "none" }, statics: [] }
-    : { id: dgNextId("n"), label: "新节点", x, y, w: 170, h: 76, binding: { kind: "none" }, statics: [] };
+    : { id: dgNextId("n"), label: "新节点", x, y, w: 140, h: 66, binding: { kind: "none" }, statics: [] };
   dg.layout.nodes.push(node);
   dg.dirty = true;
   dgSyncSave();
@@ -692,6 +794,7 @@ function dgAdd(kind) {
 }
 
 function dgDeleteActive() {
+  dgPushUndo();
   const node = dg.layout.nodes.find((n) => n.id === dg.active);
   if (!node) return;
   if (!confirm(`确认删除「${node.label}」吗？与它相连的连线会一并移除。`)) return;
@@ -704,6 +807,7 @@ function dgDeleteActive() {
 }
 
 function dgRenameActive() {
+  dgPushUndo();
   const node = dg.layout.nodes.find((n) => n.id === dg.active);
   if (!node) return;
   const name = (prompt("节点名称：", node.label) || "").trim();
@@ -727,17 +831,26 @@ async function dgOpenMarkdown() {
   toggleDrawer("dg-md-drawer", true);
 }
 
-async function dgImportMarkdown() {
+async function dgImportMarkdown(into) {
   const msg = document.getElementById("dg-md-msg");
+  if (into && !confirm(
+      `确认用这份 Markdown 改写「${dg.layout.__name}」吗？\n\n` +
+      "结构（分组、层级、绑定、静态标注）按文本重建，但**方框的位置和大小会重新排布**——" +
+      "手工摆过的版面会丢。不确定就先用「导入为新布局」。")) return;
+  msg.textContent = "处理中…";
   const res = await fetch("/api/sn/diagram/markdown", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ markdown: document.getElementById("dg-md-text").value,
-                           name: document.getElementById("dg-md-name").value }),
+                           name: into ? "" : document.getElementById("dg-md-name").value,
+                           into: into ? dg.layout.__id : null }),
   });
   const data = await res.json();
-  if (!res.ok) { msg.textContent = data.detail || "导入失败"; return; }
+  if (!res.ok) { msg.textContent = data.detail || "失败"; return; }
   // 导入只给框和标签，绑定要靠「建议参考」逐个补——把这件事说清楚，别让人以为导完就完了
-  msg.textContent = `已建「${data.saved.name}」，其中 ${data.unbound} 个节点尚未绑定指标，正在跳转…`;
+  msg.textContent = data.replaced
+    ? `已改写「${data.saved.name}」，其中 ${data.unbound} 个节点尚未绑定指标，正在刷新…`
+    : `已建「${data.saved.name}」，其中 ${data.unbound} 个节点尚未绑定指标，正在跳转…`;
+  dg.dirty = false;   // 服务端已是最新，别再弹"未保存"
   setTimeout(() => { window.location.href = `/sn/diagram?template=${data.saved.id}`; }, 900);
 }
 
@@ -749,6 +862,7 @@ function dgCopyMarkdown() {
 /* ---------- 分组整理 ---------- */
 
 function dgTidyGroups() {
+  dgPushUndo();
   // 把每个分组框收拢到刚好包住自己的成员。拖动之后框和内容常常对不齐，
   // 手动一个个调太笨；但也不做成自动的——自动变形会让人失去对布局的掌控。
   const byParent = {};

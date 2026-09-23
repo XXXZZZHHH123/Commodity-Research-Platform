@@ -348,14 +348,24 @@ def diagram_from_markdown(body: dict = Body(...)):
     except diagram_md.MarkdownError as e:
         raise HTTPException(400, str(e)) from None
     with SessionLocal() as s:
+        # `into` 表示改写这一张，而不是新建。研究员在文本里改结构比拖方框快，
+        # 但改完只能「导入为新布局」的话，每改一次就多一张图，改的还不是手里这张。
+        into = body.get("into")
         name = str(body.get("name") or layout["name"]).strip()
+        payload = {"name": name, "layout": layout}
+        if into:
+            row = next((t for t in diagram_api.list_templates(s, V) if t["id"] == into), None)
+            if row is None:
+                raise HTTPException(404, f"没有这张布局：{into}")
+            payload["id"] = into
+            payload["name"] = str(body.get("name") or row["name"]).strip()
         try:
-            saved = diagram_api.save_template(s, V, {"name": name, "layout": layout})
+            saved = diagram_api.save_template(s, V, payload)
         except diagram_api.DiagramError as e:
             raise HTTPException(400, str(e)) from None
         unbound = sum(1 for n in layout["nodes"]
                       if n.get("kind") != "group" and n["binding"]["kind"] == "none")
-        return {"saved": saved, "unbound": unbound,
+        return {"saved": saved, "unbound": unbound, "replaced": bool(into),
                 "templates": diagram_api.list_templates(s, V)}
 
 

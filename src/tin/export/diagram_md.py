@@ -30,8 +30,8 @@ ITEM = re.compile(r"^(\s*)[-*+]\s+(.*)$")
 HEAD = re.compile(r"^(#{1,4})\s+(.+?)\s*$")
 
 # 画布坐标：一列分组、组内节点按缩进分列
-COL_W, ROW_H, PAD = 196, 96, 24
-NODE_W, NODE_H = 170, 76
+COL_W, ROW_H, PAD = 164, 80, 22
+NODE_W, NODE_H = 140, 66
 
 
 class MarkdownError(ValueError):

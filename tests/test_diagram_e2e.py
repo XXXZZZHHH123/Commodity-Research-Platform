@@ -331,3 +331,38 @@ def test_group_edges_survive_a_markdown_round_trip(client, session):
     assert r.status_code == 200, r.text
     saved = diagram.list_templates(session, "SN")[0]["layout"]
     assert {"from": "g1", "to": "g2"} in saved["edges"]
+
+
+def test_markdown_can_rewrite_the_layout_you_are_looking_at(client, session):
+    """研究员在文本里改结构比拖方框快，但改完必须能落回**手里这张图**。
+
+    原来只有「导入为新布局」：每改一次就多一张图，而且改的不是当前这张——
+    等于这条通道只能用一次。
+    """
+    a_series(session, "E.MINE", "国产锡精矿产量")
+    first = client.post("/api/sn/diagram/markdown", json={
+        "markdown": "# 锡\n\n## 供给端\n- 国产锡精矿 <!-- bind: E.MINE -->\n",
+        "name": "我的图"}).json()["saved"]
+
+    edited = ("# 锡\n\n## 供给端\n- 国产锡精矿 <!-- bind: E.MINE -->\n  - 云南\n"
+              "\n## 需求端\n- 锡焊料 [占比 53%]\n")
+    r = client.post("/api/sn/diagram/markdown",
+                    json={"markdown": edited, "into": first["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["replaced"] is True
+    assert r.json()["saved"]["id"] == first["id"], "必须改写同一张，不是又建一张"
+    assert r.json()["saved"]["name"] == "我的图", "没给新名字就保留原名"
+
+    assert len(diagram.list_templates(session, "SN")) == 1, "不该多出一张布局"
+    layout = diagram.list_templates(session, "SN")[0]["layout"]
+    labels = {n["label"] for n in layout["nodes"]}
+    assert {"云南", "锡焊料", "需求端"} <= labels, "新增的结构要落进去"
+    bound = [n for n in layout["nodes"] if (n.get("binding") or {}).get("series_id")]
+    assert bound[0]["series_id" if "series_id" in bound[0] else "binding"], "绑定要跟着走"
+    assert bound[0]["binding"]["series_id"] == "E.MINE"
+
+
+def test_rewriting_a_layout_that_does_not_exist_is_rejected(client, session):
+    r = client.post("/api/sn/diagram/markdown",
+                    json={"markdown": "# x\n\n## 组\n- 甲\n", "into": 99999})
+    assert r.status_code == 404
