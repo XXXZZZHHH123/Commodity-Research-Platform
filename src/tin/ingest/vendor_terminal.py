@@ -244,6 +244,54 @@ def resolve_ids(session, series_list: list[Series]) -> tuple[dict[str, str], lis
     return mapping, conflicts
 
 
+def column_cache(session, series_list: list[Series], ids: dict[str, str],
+                 *, count_hit: bool = True) -> dict:
+    """编码通道接不住的列，查一次列映射学习缓存（`ingest/column_map.py`）。
+
+    「接不住」= 这条编码在库里没有 `vendor_code` 绑定，退回去的 `SMM.<编码>` 也还没
+    登记过——正是过去每次都要把文件拿给 AI 认一遍的那些列。缓存命中就就地改写
+    `ids`（于是后面照常走已登记指标那条路，口径以登记为准）；没命中就原样上报，
+    **不猜**：这里是兜底通道，兜不住时该让人来看，而不是自作主张。
+
+    指纹按**工作表**算：一个 sheet 就是一张报表，换日期导出时表头不变、指纹不变；
+    一本工作簿里多导了或少导了一张表，也不会牵连其它表的映射。
+
+    返回 `{"fingerprints": {sheet: 指纹}, "mapped": {编码: series_id}, "unmapped": [...]}`，
+    `unmapped` 的每一项都带齐 sheet / 指纹 / 列名 / 编码，调用方拿着就能直接调
+    `column_map.confirm()`，不必再回头重算一次指纹。
+    """
+    from tin.ingest import column_map
+    from tin.models import Indicator
+
+    by_sheet: dict[str, list[Series]] = {}
+    for series in series_list:
+        by_sheet.setdefault(series.sheet, []).append(series)
+    # 一次问清哪些 series_id 已登记，别在几千条序列上逐条 get
+    known = set(session.scalars(select(Indicator.series_id).where(
+        Indicator.series_id.in_({ids[s.code] for s in series_list}))))
+
+    result: dict = {"fingerprints": {}, "mapped": {}, "unmapped": []}
+    for sheet, group in by_sheet.items():
+        fp = column_map.fingerprint([s.name for s in group])
+        result["fingerprints"][sheet] = fp
+        pending = [s for s in group if ids[s.code] not in known]
+        if not pending:
+            continue
+        mapped, missing = column_map.lookup(
+            session, fp, [s.name for s in pending], count_hit=count_hit)
+        for series in pending:
+            hit = mapped.get(series.name)
+            if hit:
+                ids[series.code] = hit
+                result["mapped"][series.code] = hit
+        unresolved = set(missing)
+        result["unmapped"] += [
+            {"sheet": sheet, "fingerprint": fp, "column_name": s.name, "vendor_code": s.code}
+            for s in pending if s.name in unresolved
+        ]
+    return result
+
+
 def vendor_of(series: Series) -> Vendor:
     return next(v for v in VENDORS if v.key == series.vendor)
 
@@ -484,6 +532,8 @@ def summarize(session, data_or_path, variety: str = "SN") -> dict:
     active = [s for s in everything if not discontinued(s)]
 
     ids, id_conflicts = resolve_ids(session, active)
+    # 确认页只是看看，不计命中数——`hit_count` 记的是真正入库的次数
+    cache = column_cache(session, active, ids, count_hit=False)
     new, reused, notes, mismatched = [], [], [], []
     for series in active:
         spec = derive_spec(series, variety, series_id=ids[series.code])
@@ -527,6 +577,10 @@ def summarize(session, data_or_path, variety: str = "SN") -> dict:
         "code_conflicts": id_conflicts,
         "caliber_notes": notes,
         "frequency_mismatches": mismatched,
+        # 列映射学习缓存：命中的自动走，没命中的列在这儿等人确认一次，下次就不用看了
+        "column_fingerprints": cache["fingerprints"],
+        "column_cache_hits": len(cache["mapped"]),
+        "unmapped_columns": cache["unmapped"],
     }
 
 
@@ -538,10 +592,18 @@ class LoadReport:
     written: int = 0
     unchanged: int = 0
     rejected: list[str] = field(default_factory=list)
+    # 列映射缓存命中的列数
+    column_cache_hits: int = 0
+    # 编码与缓存都没认出来的列，每项带 sheet / 指纹 / 列名 / 编码，等人确认一次
+    unmapped_columns: list[dict] = field(default_factory=list)
 
     def line(self) -> str:
-        return (f"指标 新登记 {self.registered} / 复用 {self.reused} / 跳过停用 {self.skipped_series}；"
-                f"观测 写入 {self.written:,} / 值未变跳过 {self.unchanged:,} / 拒绝 {len(self.rejected)}")
+        out = (f"指标 新登记 {self.registered} / 复用 {self.reused} / 跳过停用 {self.skipped_series}；"
+               f"观测 写入 {self.written:,} / 值未变跳过 {self.unchanged:,} / 拒绝 {len(self.rejected)}")
+        if self.column_cache_hits or self.unmapped_columns:
+            out += (f"；列映射 缓存命中 {self.column_cache_hits} / "
+                    f"待确认 {len(self.unmapped_columns)}")
+        return out
 
 
 def load(session, data_or_path, *, entered_by: str, variety: str = "SN",
@@ -566,6 +628,10 @@ def load(session, data_or_path, *, entered_by: str, variety: str = "SN",
     report.skipped_series = len(everything) - len(wanted)
 
     ids, _ = resolve_ids(session, wanted)
+    # 编码认不出的列，交给列映射学习缓存兜一次底。试算不计命中数。
+    cache = column_cache(session, wanted, ids, count_hit=not dry_run)
+    report.column_cache_hits = len(cache["mapped"])
+    report.unmapped_columns = cache["unmapped"]
     registered: dict[str, object] = {}
     known = set()
     for series in wanted:
@@ -573,7 +639,8 @@ def load(session, data_or_path, *, entered_by: str, variety: str = "SN",
         existing = session.get(Indicator, spec.series_id)
         if existing is None and not register_new:
             report.rejected.append(
-                f"{series.code}: 编码未登记，自动导入模式不新建指标（名称「{series.name[:30]}」）")
+                f"{series.code}: 编码未登记，自动导入模式不新建指标（名称「{series.name[:30]}」）"
+                "——确认一次列映射后，同格式的导出以后会自动命中")
             continue
         if existing is None:
             report.registered += 1
