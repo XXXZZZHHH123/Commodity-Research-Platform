@@ -35,6 +35,7 @@ from tin.export.board import (
 from tin.export import templates as export_templates
 from tin.export.excel import Column, build_export, build_import_template, field_catalog
 from tin.export import diagram as diagram_api
+from tin.export import diagram_md
 from tin.ingest import excel_importer, import_jobs, vendor_terminal
 from tin.ingest.record import RecordError, record
 from tin.judgments.importer import import_text
@@ -280,6 +281,44 @@ def diagram_save(body: dict = Body(...)):
         except diagram_api.DiagramError as e:
             raise HTTPException(400, str(e)) from None
         return {"saved": saved, "templates": diagram_api.list_templates(s, V)}
+
+
+@app.get("/api/sn/diagram/markdown")
+def diagram_to_markdown(template_id: int | None = None):
+    """导出为 Markdown 大纲。绑定写成注释，改完再导回无损。"""
+    with SessionLocal() as s:
+        rows = diagram_api.list_templates(s, V)
+        tpl = next((t for t in rows if t["id"] == template_id), None) or (rows[0] if rows else None)
+        if tpl is None:
+            raise HTTPException(404, "还没有任何布局")
+        return {"name": tpl["name"], "markdown": diagram_md.dump(tpl["layout"], tpl["name"])}
+
+
+@app.post("/api/sn/diagram/markdown")
+def diagram_from_markdown(body: dict = Body(...)):
+    """从 Markdown 大纲建一份新布局。不覆盖现有布局——导错了还能切回去。"""
+    try:
+        layout = diagram_md.parse(str(body.get("markdown", "")))
+    except diagram_md.MarkdownError as e:
+        raise HTTPException(400, str(e)) from None
+    with SessionLocal() as s:
+        name = str(body.get("name") or layout["name"]).strip()
+        try:
+            saved = diagram_api.save_template(s, V, {"name": name, "layout": layout})
+        except diagram_api.DiagramError as e:
+            raise HTTPException(400, str(e)) from None
+        unbound = sum(1 for n in layout["nodes"]
+                      if n.get("kind") != "group" and n["binding"]["kind"] == "none")
+        return {"saved": saved, "unbound": unbound,
+                "templates": diagram_api.list_templates(s, V)}
+
+
+@app.get("/api/sn/diagram/suggest")
+def diagram_suggest(label: str, exclude: str | None = None):
+    """给某个节点推荐候选指标。给不出就明说，不拿"有数据的热门指标"凑数。"""
+    with SessionLocal() as s:
+        return {"suggestions": diagram_api.suggest(s, V, label,
+                                                   bound=set((exclude or "").split(",")) - {""})}
 
 
 @app.delete("/api/sn/diagram/templates/{template_id}")

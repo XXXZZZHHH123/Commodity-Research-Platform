@@ -2,6 +2,48 @@
  "name": "锡产业结构图",
  "nodes": [
   {
+   "id": "grp_supply",
+   "kind": "group",
+   "label": "供给端 · 矿 → 冶炼 → 锭",
+   "layer": "supply",
+   "x": 44,
+   "y": 2,
+   "w": 242,
+   "h": 928,
+   "binding": {
+    "kind": "none"
+   },
+   "statics": []
+  },
+  {
+   "id": "grp_hub",
+   "kind": "group",
+   "label": "精锡 · 平衡与库存",
+   "layer": "hub",
+   "x": 384,
+   "y": 22,
+   "w": 272,
+   "h": 958,
+   "binding": {
+    "kind": "none"
+   },
+   "statics": []
+  },
+  {
+   "id": "grp_demand",
+   "kind": "group",
+   "label": "需求端 · 四大板块",
+   "layer": "demand",
+   "x": 744,
+   "y": 2,
+   "w": 242,
+   "h": 900,
+   "binding": {
+    "kind": "none"
+   },
+   "statics": []
+  },
+  {
    "id": "mine_cn",
    "label": "国产锡精矿",
    "layer": "supply",

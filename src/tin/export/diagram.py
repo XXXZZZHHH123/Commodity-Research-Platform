@@ -7,10 +7,12 @@
 研究员就失去了"为什么不出数"的线索；把代理指标显示成实测值，就是把推断当事实。
 """
 
+import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from tin.config import SHANGHAI
@@ -28,6 +30,10 @@ RETIRED = "retired"          # 绑的指标已停用或已被删除
 # 各频率的预期更新间隔（天）。超过就算断更。
 # 宽限是必要的：月频数据常在次月中旬才发布，按 30 天卡会天天误报。
 _EXPECTED_DAYS = {"日": 5, "周": 12, "月": 55, "季": 130, "年": 430, "事件": 90}
+
+
+def _norm(t: str) -> str:
+    return re.sub(r"[\s（）()·\-_:：/]+", "", unicodedata.normalize("NFKC", str(t))).lower()
 
 
 @dataclass(frozen=True)
@@ -258,3 +264,55 @@ def ensure_default(session: Session, variety: str) -> dict:
     return save_template(session, variety, {"name": json.loads(path.read_text(encoding="utf-8"))["name"],
                                             "layout": json.loads(path.read_text(encoding="utf-8")),
                                             "is_default": True})
+
+
+# ---------- 指标推荐（方案 08 §8.2） ----------
+
+# 这些词片在指标名里满天飞，用来匹配只会把不相干的指标拉进来。
+# 实测教训：「冶炼产量·中国」曾因为「中国」二字被推荐了「锡锭升贴水：中国」。
+_STOPWORDS = frozenset((
+    "中国", "全球", "日度", "周度", "月度", "年度", "季度", "合计", "总计", "指数",
+    "价格", "数量", "金额", "平均", "累计", "小计", "当月", "当日", "国内", "海外",
+))
+
+_SPLIT = re.compile(r"[·\s（）()／/、,，:：\-—>＞]+")
+
+
+def _tokens(label: str) -> list[str]:
+    raw = re.sub(r"^[└├│─\s]+|◍", "", label)
+    return [p for p in _SPLIT.split(raw) if len(p) >= 2 and p not in _STOPWORDS]
+
+
+def suggest(session: Session, variety: str, label: str, bound: set[str] | None = None,
+            limit: int = 6) -> list[dict]:
+    """按节点名推荐候选指标。
+
+    **必须有名称命中才推荐。** 实测过按「判断引用过 + 有数据」兜底的版本：没命中时
+    十几个节点的 Top3 都是同样那三条，纯噪音。给不出推荐时明说「无匹配」，比给三条
+    不相干的有用——而且给不出的节点往往正是数据本来就缺的那些，这本身就是信息。
+    """
+    parts = _tokens(label)
+    if not parts:
+        return []
+    bound = bound or set()
+    judged = {r[0] for r in session.execute(text(
+        "select distinct series_id from judgment_series_refs")).all()}
+
+    out = []
+    for ind in session.scalars(select(Indicator).where(Indicator.status == "可用",
+                                                       Indicator.variety.in_([variety, "COMMON"]))):
+        name = _norm(ind.name)
+        hits = sum(1 for p in parts if _norm(p) and _norm(p) in name)
+        if not hits:
+            continue
+        count = session.scalar(select(func.count()).select_from(Observation)
+                               .where(Observation.series_id == ind.series_id)) or 0
+        score = hits * 30 + (15 if count else -40) + (20 if ind.series_id in judged else 0)
+        score += min(count // 500, 6)
+        out.append({"series_id": ind.series_id, "name": ind.name, "unit": ind.unit,
+                    "frequency": ind.frequency, "points": count,
+                    "already_bound": ind.series_id in bound, "score": score,
+                    "why": f"名称命中 {hits} 处" + ("，判断引用过" if ind.series_id in judged else "")
+                           + ("" if count else "，但尚无数据")})
+    out.sort(key=lambda r: -r["score"])
+    return out[:limit]

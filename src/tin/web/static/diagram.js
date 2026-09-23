@@ -63,12 +63,23 @@ async function dgLoad(templateId) {
 function dgRender() {
   const nodes = document.getElementById("dg-nodes");
   const edges = document.getElementById("dg-edges");
+  const groups = document.getElementById("dg-groups");
   if (!nodes || !dg.layout) return;
+
+  // 分组框画在最底层：它是背景分区，不是节点，也不参与连线
+  groups.innerHTML = dg.layout.nodes.filter(dgIsGroup).map((g) => `
+    <g class="dg-node dg-group" data-node="${dgEsc(g.id)}" transform="translate(${g.x},${g.y})"
+       style="cursor:${dg.edit ? "grab" : "default"}">
+      <rect width="${g.w}" height="${g.h}" rx="12" fill="var(--surface)" fill-opacity="0.55"
+            stroke="var(--line-strong)" stroke-width="1.4" stroke-dasharray="7 4"/>
+      <text x="12" y="20" font-size="12" font-weight="700" fill="var(--text-muted)">${dgEsc(g.label)}</text>
+      ${dg.edit ? dgHandle(g) : ""}
+    </g>`).join("");
 
   const by = Object.fromEntries(dg.layout.nodes.map((n) => [n.id, n]));
   edges.innerHTML = (dg.layout.edges || []).map((e) => {
     const a = by[e.from], b = by[e.to];
-    if (!a || !b) return "";
+    if (!a || !b || dgIsGroup(a) || dgIsGroup(b)) return "";
     const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2;
     const mid = (x1 + x2) / 2;
     return `<path d="M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}"
@@ -76,8 +87,28 @@ function dgRender() {
       marker-end="url(#dg-arrow)"/>`;
   }).join("");
 
-  nodes.innerHTML = dg.layout.nodes.map((n) => dgNode(n)).join("");
+  nodes.innerHTML = dg.layout.nodes.filter((n) => !dgIsGroup(n)).map((n) => dgNode(n)).join("");
   dgApplyTransform();
+}
+
+const dgIsGroup = (n) => n.kind === "group";
+
+function dgHandle(n) {
+  // 右下角拖拽把手。只在编辑模式出现，避免看图时误拖。
+  return `<rect class="dg-resize" data-resize="${dgEsc(n.id)}"
+    x="${n.w - 12}" y="${n.h - 12}" width="12" height="12" rx="3"
+    fill="var(--primary)" fill-opacity="0.75" style="cursor:nwse-resize"/>`;
+}
+
+function dgSpark(values, w, h) {
+  if (!values || values.length < 3) return "";
+  const lo = Math.min(...values), hi = Math.max(...values);
+  const span = hi - lo || 1;
+  const step = w / (values.length - 1);
+  const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(h - (v - lo) / span * h).toFixed(1)}`);
+  const rising = values[values.length - 1] >= values[0];
+  return `<polyline points="${pts.join(" ")}" fill="none" stroke-width="1.4"
+    stroke="${rising ? "var(--up)" : "var(--down)"}" opacity="0.85"/>`;
 }
 
 function dgNode(n) {
@@ -117,6 +148,9 @@ function dgNode(n) {
     <rect width="${n.w}" height="${n.h}" rx="8" fill="${st.fill}" stroke="${st.stroke}"
           stroke-width="${proxy ? 1.4 : 1.6}" ${st.dash ? `stroke-dasharray="${st.dash}"` : ""}/>
     ${proxy ? `<rect width="${n.w}" height="${n.h}" rx="8" fill="url(#dg-hatch)" opacity="0.5"/>` : ""}
+    ${v.spark && v.spark.length >= 3 ? `<g transform="translate(${n.w - 66},${n.h - 26})">
+        ${dgSpark(v.spark, 54, 16)}</g>` : ""}
+    ${dg.edit ? dgHandle(n) : ""}
     <foreignObject x="10" y="8" width="${n.w - 20}" height="${n.h - 16}">
       <div xmlns="http://www.w3.org/1999/xhtml" class="${st.tone}" style="font-family:inherit">
         <div class="text-[11px] font-bold truncate">${dgEsc(n.label)}${proxy ? " ◍" : ""}</div>
@@ -166,6 +200,7 @@ function dgToggleEdit() {
   btn.classList.toggle("bg-[var(--amber-soft)]", dg.edit);
   btn.classList.toggle("text-[var(--amber)]", dg.edit);
   document.getElementById("dg-hint").classList.toggle("hidden", !dg.edit);
+  document.getElementById("dg-tools").classList.toggle("hidden", !dg.edit);
   if (!dg.edit) toggleDrawer("dg-drawer", false);
   dgRender();
 }
@@ -175,8 +210,13 @@ function dgBindCanvas() {
   let drag = null;
 
   svg.addEventListener("pointerdown", (e) => {
+    const handle = e.target.closest?.(".dg-resize");
     const g = e.target.closest?.(".dg-node");
-    if (dg.edit && g) {
+    if (dg.edit && handle) {
+      const node = dg.layout.nodes.find((n) => n.id === handle.dataset.resize);
+      drag = { node, resize: true, x0: e.clientX, y0: e.clientY, w0: node.w, h0: node.h };
+      svg.setPointerCapture(e.pointerId);
+    } else if (dg.edit && g) {
       const node = dg.layout.nodes.find((n) => n.id === g.dataset.node);
       drag = { node, x0: e.clientX, y0: e.clientY, nx: node.x, ny: node.y, moved: false };
       svg.setPointerCapture(e.pointerId);
@@ -194,6 +234,14 @@ function dgBindCanvas() {
       dgApplyTransform();
       return;
     }
+    if (drag.resize) {
+      // 下限保证框里还装得下标签与一行数值，不至于被拖成一条缝
+      drag.node.w = Math.max(120, Math.round((drag.w0 + dx / dg.zoom) / 10) * 10);
+      drag.node.h = Math.max(60, Math.round((drag.h0 + dy / dg.zoom) / 10) * 10);
+      dg.dirty = true;
+      dgRender();
+      return;
+    }
     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
     drag.node.x = Math.round((drag.nx + dx / dg.zoom) / 10) * 10;  // 对齐到 10px 网格
     drag.node.y = Math.round((drag.ny + dy / dg.zoom) / 10) * 10;
@@ -205,7 +253,9 @@ function dgBindCanvas() {
     const wasDrag = drag;
     drag = null;
     svg.releasePointerCapture?.(e.pointerId);
-    if (dg.edit && wasDrag && wasDrag.node && !wasDrag.moved) dgOpenPool(wasDrag.node.id);
+    if (dg.edit && wasDrag && wasDrag.node && !wasDrag.resize && !wasDrag.moved) {
+      dgOpenPool(wasDrag.node.id);
+    }
     dgSyncSave();
   });
 
@@ -221,6 +271,11 @@ async function dgOpenPool(nodeId) {
   dg.active = nodeId;
   const node = dg.layout.nodes.find((n) => n.id === nodeId);
   document.getElementById("dg-node-label").textContent = node.label;
+  // 分组框是背景分区，没有指标可绑，只能改名或删除
+  const isGroup = dgIsGroup(node);
+  document.getElementById("dg-pool").classList.toggle("hidden", isGroup);
+  document.getElementById("dg-search").classList.toggle("hidden", isGroup);
+  if (isGroup) { toggleDrawer("dg-drawer", true); return; }
   document.getElementById("dg-proxy").checked = !!(node.binding || {}).proxy;
   if (!dg.pool.length) {
     const res = await fetch("/api/sn/export/fields");
@@ -229,12 +284,46 @@ async function dgOpenPool(nodeId) {
   }
   dgRenderPool();
   toggleDrawer("dg-drawer", true);
+  dgSuggest(node);
+}
+
+async function dgSuggest(node) {
+  const box = document.getElementById("dg-suggest");
+  box.innerHTML = '<div class="py-2 text-[var(--text-muted)]">正在匹配…</div>';
+  const bound = dg.layout.nodes.map((n) => (n.binding || {}).series_id).filter(Boolean);
+  const q = new URLSearchParams({ label: node.label, exclude: bound.join(",") });
+  const res = await fetch(`/api/sn/diagram/suggest?${q}`);
+  const data = res.ok ? await res.json() : { suggestions: [] };
+  if (!data.suggestions.length) {
+    // 给不出推荐时明说。那些给不出的节点往往正是数据本来就缺的，这本身就是信息。
+    box.innerHTML = `<div class="px-2 py-2 rounded bg-[var(--surface-soft)] text-[var(--text-muted)]">
+      按节点名没有匹配到指标 —— 可能是库里确实没有这个环节的数据，请手动搜索确认。</div>`;
+    return;
+  }
+  box.innerHTML = `<div class="text-[10px] font-semibold text-[var(--text-muted)] mb-1">建议参考</div>` +
+    data.suggestions.map((f) => `
+      <button type="button" onclick="dgBind('${dgEsc(f.series_id)}','observation')"
+        class="w-full text-left px-2 py-1.5 rounded hover:bg-[var(--surface-soft)] ${
+          f.already_bound ? "opacity-60" : ""}">
+        <div class="font-medium truncate">${f.points ? "" : "○ "}${dgEsc(f.name)}${
+          f.unit ? `（${dgEsc(f.unit)}）` : ""}${f.already_bound ? " · 本图已绑" : ""}</div>
+        <div class="text-[10px] text-[var(--text-muted)] truncate">${dgEsc(f.why)} · ${
+          f.points.toLocaleString("zh-CN")} 条 · ${dgEsc(f.frequency)}频</div>
+      </button>`).join("");
 }
 
 function dgRenderPool() {
   const q = (document.getElementById("dg-search").value || "").trim().toLowerCase();
   const node = dg.layout.nodes.find((n) => n.id === dg.active) || {};
   const bound = (node.binding || {}).series_id;
+  // 本图别处已绑的标出来，避免重复绑、也能看出覆盖度
+  const usedBy = {};
+  for (const n of dg.layout.nodes) {
+    const sid = (n.binding || {}).series_id;
+    if (sid && n.id !== dg.active) usedBy[sid] = n.label;
+  }
+  const total = Object.keys(usedBy).length + (bound ? 1 : 0);
+  document.getElementById("dg-bound-count").textContent = `本图已绑 ${total} 个指标`;
   const hits = dg.pool
     .filter((f) => f.kind !== "meta")
     .filter((f) => !q || f.label.toLowerCase().includes(q) || f.field.toLowerCase().includes(q))
@@ -244,7 +333,8 @@ function dgRenderPool() {
       class="w-full text-left px-2 py-1.5 rounded hover:bg-[var(--surface-soft)] ${
         f.field === bound ? "bg-[var(--primary-soft)]" : ""}">
       <div class="font-medium truncate">${dgEsc(f.label)}${f.unit ? `（${dgEsc(f.unit)}）` : ""}</div>
-      <div class="text-[10px] text-[var(--text-muted)] truncate">${dgEsc(f.group)} · ${dgEsc(f.field)}</div>
+      <div class="text-[10px] text-[var(--text-muted)] truncate">${dgEsc(f.group)} · ${dgEsc(f.field)}${
+        usedBy[f.field] ? ` · <span class="text-[var(--primary)]">已绑于「${dgEsc(usedBy[f.field])}」</span>` : ""}</div>
     </button>`).join("")
     : '<div class="py-6 text-center text-[var(--text-muted)]">没有匹配的指标</div>';
 }
@@ -319,4 +409,81 @@ function dgInit() {
 if (document.getElementById("dg-canvas")) {
   document.addEventListener("DOMContentLoaded", dgInit);
   if (document.readyState !== "loading") dgInit();
+}
+
+/* ---------- 增删节点与分组 ---------- */
+
+function dgNextId(prefix) {
+  let i = 1;
+  while (dg.layout.nodes.some((n) => n.id === `${prefix}${i}`)) i += 1;
+  return `${prefix}${i}`;
+}
+
+function dgAdd(kind) {
+  // 新节点落在当前视口左上角附近，而不是画布原点——否则在远处看不见
+  const x = Math.round((-dg.pan.x / dg.zoom + 40) / 10) * 10;
+  const y = Math.round((-dg.pan.y / dg.zoom + 40) / 10) * 10;
+  const node = kind === "group"
+    ? { id: dgNextId("g"), kind: "group", label: "新分组", x, y, w: 420, h: 260, binding: { kind: "none" }, statics: [] }
+    : { id: dgNextId("n"), label: "新节点", x, y, w: 210, h: 104, binding: { kind: "none" }, statics: [] };
+  dg.layout.nodes.push(node);
+  dg.dirty = true;
+  dgSyncSave();
+  dgRender();
+  if (kind !== "group") dgOpenPool(node.id);
+}
+
+function dgDeleteActive() {
+  const node = dg.layout.nodes.find((n) => n.id === dg.active);
+  if (!node) return;
+  if (!confirm(`确认删除「${node.label}」吗？与它相连的连线会一并移除。`)) return;
+  dg.layout.nodes = dg.layout.nodes.filter((n) => n.id !== node.id);
+  dg.layout.edges = (dg.layout.edges || []).filter((e) => e.from !== node.id && e.to !== node.id);
+  dg.dirty = true;
+  dgSyncSave();
+  dgRender();
+  toggleDrawer("dg-drawer", false);
+}
+
+function dgRenameActive() {
+  const node = dg.layout.nodes.find((n) => n.id === dg.active);
+  if (!node) return;
+  const name = (prompt("节点名称：", node.label) || "").trim();
+  if (!name) return;
+  node.label = name;
+  dg.dirty = true;
+  dgSyncSave();
+  dgRender();
+  const el = document.getElementById("dg-node-label");
+  if (el) el.textContent = name;
+}
+
+/* ---------- Markdown 导入导出 ---------- */
+
+async function dgOpenMarkdown() {
+  const res = await fetch(`/api/sn/diagram/markdown?template_id=${dg.layout.__id}`);
+  const data = res.ok ? await res.json() : { markdown: "" };
+  document.getElementById("dg-md-text").value = data.markdown || "";
+  document.getElementById("dg-md-name").value = "";
+  document.getElementById("dg-md-msg").textContent = "";
+  toggleDrawer("dg-md-drawer", true);
+}
+
+async function dgImportMarkdown() {
+  const msg = document.getElementById("dg-md-msg");
+  const res = await fetch("/api/sn/diagram/markdown", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ markdown: document.getElementById("dg-md-text").value,
+                           name: document.getElementById("dg-md-name").value }),
+  });
+  const data = await res.json();
+  if (!res.ok) { msg.textContent = data.detail || "导入失败"; return; }
+  // 导入只给框和标签，绑定要靠「建议参考」逐个补——把这件事说清楚，别让人以为导完就完了
+  msg.textContent = `已建「${data.saved.name}」，其中 ${data.unbound} 个节点尚未绑定指标，正在跳转…`;
+  setTimeout(() => { window.location.href = `/sn/diagram?template=${data.saved.id}`; }, 900);
+}
+
+function dgCopyMarkdown() {
+  navigator.clipboard.writeText(document.getElementById("dg-md-text").value).then(
+    () => showToast("已复制 Markdown"), () => showToast("复制失败，请手动选择"));
 }

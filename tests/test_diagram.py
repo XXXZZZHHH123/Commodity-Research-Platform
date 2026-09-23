@@ -194,6 +194,9 @@ def test_default_layout_is_seeded_on_first_visit(session):
     assert len(nodes) >= 15
     bound = [n for n in nodes if n["binding"]["kind"] != "none"]
     assert len(bound) >= 15, "种子布局应当大部分已绑好指标"
+    groups = [n for n in nodes if n.get("kind") == "group"]
+    assert len(groups) == 3, "供给端 / 精锡 / 需求端三个分组框"
+    assert all(g["binding"]["kind"] == "none" for g in groups), "分组框是背景分区，不绑指标"
     assert diagram.ensure_default(session, "SN")["id"] == tpl["id"], "重复调用不应再建一份"
     assert len(session.scalars(select(DiagramTemplate)).all()) == 1
 
@@ -205,7 +208,7 @@ def test_layout_stores_bindings_not_values(session):
     """
     tpl = diagram.ensure_default(session, "SN")
     for n in tpl["layout"]["nodes"]:
-        assert set(n) <= {"id", "label", "layer", "x", "y", "w", "h", "binding", "statics"}
+        assert set(n) <= {"id", "kind", "label", "layer", "x", "y", "w", "h", "binding", "statics"}
         for s in n.get("statics", []):
             assert isinstance(s["value"], str), "静态标注只能是文字，数值必须来自事实层"
 
@@ -220,3 +223,120 @@ def test_derived_node_with_a_value_carries_the_formula_unit(session):
     assert out["state"] == diagram.OK
     assert out["value"] == 850.0
     assert out["unit"] == "元/吨"
+
+
+# ---------- Markdown 双向 ----------
+
+SAMPLE_MD = """# 锡产业结构
+## 供给端
+- 国产锡精矿 [占比 32%] [年体量 5.8-6.5 万金属吨] <!-- bind: T.MINE -->
+  - 云南
+  - 广西
+- 进口锡精矿 [占比 68%]
+  - 缅甸矿进口 <!-- bind: T.MM -->
+## 精锡
+- 国内产量 <!-- bind: T.REFINED -->
+- 基差 <!-- bind: BASIS -->
+"""
+
+
+def test_markdown_parses_groups_hierarchy_and_bindings():
+    from tin.export import diagram_md as md
+
+    layout = md.parse(SAMPLE_MD)
+    by = {n["label"]: n for n in layout["nodes"]}
+    assert layout["name"] == "锡产业结构"
+    assert by["供给端"]["kind"] == "group" and by["精锡"]["kind"] == "group"
+    assert by["国产锡精矿"]["binding"] == {"kind": "series", "series_id": "T.MINE"}
+    assert by["基差"]["binding"] == {"kind": "derived", "formula_id": "BASIS"}
+    assert by["国产锡精矿"]["statics"] == [{"label": "占比", "value": "32%"},
+                                            {"label": "年体量", "value": "5.8-6.5 万金属吨"}]
+    # 缩进即父子，父子之间自动连线
+    assert {"from": by["国产锡精矿"]["id"], "to": by["云南"]["id"]} in layout["edges"]
+    # 没有 bind 注释的节点一律未绑定——导入给不了绑定，那是「建议参考」的活
+    assert by["云南"]["binding"]["kind"] == "none"
+
+
+def test_markdown_round_trip_is_lossless():
+    """导出再导入必须一字不差。
+
+    曾经按「层级, y」排序输出，结果同层节点被排在一起、父子不再相邻，
+    导回来「云南」挂到了「进口锡精矿」名下——静默认错爹，比报错难发现得多。
+    """
+    from tin.export import diagram_md as md
+
+    first = md.parse(SAMPLE_MD)
+    again = md.parse(md.dump(first, first["name"]))
+    key = [(n["label"], n["binding"], n.get("statics", []), n.get("kind")) for n in first["nodes"]]
+    assert key == [(n["label"], n["binding"], n.get("statics", []), n.get("kind"))
+                   for n in again["nodes"]]
+
+    def pairs(layout):
+        ids = {n["id"]: n["label"] for n in layout["nodes"]}
+        return sorted((ids[e["from"]], ids[e["to"]]) for e in layout["edges"])
+
+    assert pairs(first) == pairs(again)
+
+
+def test_child_is_never_placed_above_its_parent():
+    """子节点排到父节点上方的话，连线倒着走，看图的人会以为物料倒流。"""
+    from tin.export import diagram_md as md
+
+    layout = md.parse(SAMPLE_MD)
+    by = {n["label"]: n for n in layout["nodes"]}
+    assert by["缅甸矿进口"]["y"] >= by["进口锡精矿"]["y"]
+    assert by["云南"]["y"] >= by["国产锡精矿"]["y"]
+
+
+def test_markdown_without_any_list_item_fails_loudly():
+    from tin.export import diagram_md as md
+
+    with pytest.raises(md.MarkdownError, match="没有解析出任何节点"):
+        md.parse("# 标题\n一段正文，没有列表项。")
+
+
+# ---------- 指标推荐 ----------
+
+def test_suggestion_requires_a_name_hit(session):
+    """没有名称命中就不推荐。
+
+    早期版本按「判断引用过 + 有数据」兜底，结果十几个节点的 Top3 是同样三条，
+    纯噪音。给不出推荐时明说，比给三条不相干的有用。
+    """
+    add_series(session, "T.缅甸矿进口量")
+    add_points(session, "T.缅甸矿进口量", [100])
+    add_series(session, "T.完全无关的指标")
+    add_points(session, "T.完全无关的指标", [100])
+
+    hit = diagram.suggest(session, "SN", "缅甸矿进口")
+    assert [r["series_id"] for r in hit] == ["T.缅甸矿进口量"]
+    assert diagram.suggest(session, "SN", "镀锡板 · 马口铁") == []
+
+
+def test_generic_words_do_not_drive_suggestions(session):
+    """「中国」「日度」这类词满天飞。
+
+    实测教训：「冶炼产量·中国」曾因为「中国」二字被推荐了「锡锭升贴水：中国」。
+    """
+    add_series(session, "T.锡锭升贴水中国")
+    add_points(session, "T.锡锭升贴水中国", [1])
+    assert diagram.suggest(session, "SN", "冶炼产量 · 中国") == []
+
+
+def test_empty_series_ranks_below_populated_ones(session):
+    """0 条数据的指标可以出现，但必须排在后面并注明——否则等于推荐一个空框。"""
+    add_series(session, "T.焊料开工率")            # 有名字没数据
+    add_series(session, "T.焊料开工率历史")
+    add_points(session, "T.焊料开工率历史", [1, 2, 3])
+
+    got = diagram.suggest(session, "SN", "焊料开工率")
+    assert got[0]["series_id"] == "T.焊料开工率历史"
+    empty = next(r for r in got if r["series_id"] == "T.焊料开工率")
+    assert "尚无数据" in empty["why"]
+
+
+def test_suggestion_marks_series_already_used_in_this_diagram(session):
+    add_series(session, "T.社会库存")
+    add_points(session, "T.社会库存", [1])
+    got = diagram.suggest(session, "SN", "社会库存", bound={"T.社会库存"})
+    assert got[0]["already_bound"] is True
