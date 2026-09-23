@@ -164,25 +164,38 @@ _ROLE_LABEL = {"threshold": "阈值", "falsifier": "证伪条件", "evidence": "
                "marginal_focus": "边际关注", "whitelist": "白名单"}
 
 
-def judgment_roles(session: Session) -> dict[str, list[str]]:
-    """每个指标在当前判断里扮演什么角色。
+def judgment_roles(session: Session, variety: str = "SN") -> tuple[dict[str, list[str]], dict]:
+    """每个指标在**当前这一版判断**里扮演什么角色。
 
     回答研究员每天都要问的问题：我这个判断，靠的是产业链上哪几个环节？
+
+    **必须按判断版本过滤。** 判断改版时旧版本只是置为「已归档」，它的引用行仍留在
+    `judgment_series_refs` 里——取全表等于把历年所有版本的引用并起来，重点关注只增不减，
+    研究员换了判断，图上还亮着上一版关心的环节。这与 P1「判断是一份带时间的快照」直接冲突。
     """
-    rows = session.execute(text(
-        "select series_id, ref_type from judgment_series_refs")).all()
+    from tin.judgments import service as judgment_service
+
+    j = judgment_service.current(session, variety)
+    if j is None:
+        return {}, {}
+    rows = session.execute(
+        text("select series_id, ref_type from judgment_series_refs where judgment_id = :jid"),
+        {"jid": j.id}).all()
     out: dict[str, list[str]] = {}
     for series_id, ref_type in rows:
         label = _ROLE_LABEL.get(ref_type, ref_type)
         out.setdefault(series_id, [])
         if label not in out[series_id]:
             out[series_id].append(label)
-    return out
+    meta = {"version": j.version, "status": j.status, "author": j.author,
+            "written_at": j.written_at.isoformat() if j.written_at else None,
+            "review_due": j.review_due.isoformat() if j.review_due else None}
+    return out, meta
 
 
 def resolve(session: Session, layout: dict, through: date) -> list[dict]:
     """按布局取出每个节点当前该显示什么。"""
-    roles = judgment_roles(session)
+    roles, _ = judgment_roles(session)
     out = []
     for node in layout.get("nodes", []):
         binding = node.get("binding") or {}
@@ -206,10 +219,19 @@ class DiagramError(ValueError):
     pass
 
 
-def _clean(layout: dict) -> dict:
+def _clean(layout: dict, *, allow_empty: bool = False) -> dict:
+    """校验布局。
+
+    空布局本身不是错误——新建一张图当然是从零个节点开始的。要拦的是**把已有的图存成空的**：
+    那通常是误删或前端状态丢了，存下去就把研究员摆了半天的结构抹掉了。所以这条限制只对
+    「更新一张本来有内容的布局」生效。
+    """
     nodes = layout.get("nodes")
-    if not isinstance(nodes, list) or not nodes:
-        raise DiagramError("布局至少要有一个节点")
+    if not isinstance(nodes, list):
+        raise DiagramError("布局格式不对：nodes 必须是列表")
+    if not nodes and not allow_empty:
+        raise DiagramError("这张布局本来是有内容的，不能存成空的。"
+                           "要清空请先删除全部节点再逐个确认，或直接删除整张布局")
     ids = [n.get("id") for n in nodes]
     if len(set(ids)) != len(ids) or not all(ids):
         raise DiagramError("节点 id 必须存在且唯一")
@@ -236,12 +258,14 @@ def save_template(session: Session, variety: str, payload: dict) -> dict:
     name = str(payload.get("name", "")).strip()
     if not name:
         raise DiagramError("请填写布局名称")
-    layout = _clean(payload.get("layout") or {})
     now = datetime.now(tz=SHANGHAI).astimezone()
 
     row = session.get(DiagramTemplate, payload["id"]) if payload.get("id") else None
     if row is not None and row.variety != variety:
         raise DiagramError("布局不属于当前品种")
+    # 新建可以是空的；把一张已经有内容的图存成空的才是要拦的事
+    existing = (row.layout or {}).get("nodes") if row is not None else None
+    layout = _clean(payload.get("layout") or {}, allow_empty=not existing)
     if row is None:
         row = DiagramTemplate(variety=variety, created_at=now,
                               is_default=not list_templates(session, variety))
@@ -420,6 +444,17 @@ def detail(session: Session, series_id: str, through: date, limit: int = 60) -> 
 
 # ---------- 跨来源交叉校验（方案 08 §11.5.2） ----------
 
+def _crosscheck_specs(variety: str) -> list[dict]:
+    import json
+
+    from tin.config import ROOT
+
+    path = ROOT / "seeds" / f"crosscheck_{variety.lower()}.json"
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8")).get("checks", [])
+
+
 def crosscheck(session: Session, variety: str, through: date, periods: int = 6) -> list[dict]:
     """同一个事实由两家分别给出时，对不对得上。
 
@@ -430,14 +465,9 @@ def crosscheck(session: Session, variety: str, through: date, periods: int = 6) 
     差异本身不是错误：两家口径不同很正常。这个功能要回答的是「差多少、是不是一直这么差、
     最近有没有突然变化」——突然变化才是信号。
     """
-    import json
-
-    from tin.config import ROOT
-
-    path = ROOT / "seeds" / f"crosscheck_{variety.lower()}.json"
-    if not path.exists():
+    checks = _crosscheck_specs(variety)
+    if not checks:
         return []
-    checks = json.loads(path.read_text(encoding="utf-8")).get("checks", [])
 
     def series(series_id: str) -> dict[str, float]:
         rows = session.scalars(
@@ -479,3 +509,42 @@ def crosscheck(session: Session, variety: str, through: date, periods: int = 6) 
         results.append({**chk, "state": state, "points": pts, "worst": worst,
                         "latest_rel": latest, "summary": summary})
     return results
+
+
+# ---------- 这个指标被谁在用 ----------
+
+def usage(session: Session, series_id: str, variety: str = "SN") -> dict:
+    """一个指标被判断和产业图怎么用着。
+
+    指标列表页回答不了「这条指标要不要维护」——444 行里每一行看起来都一样重要。
+    真正的分辨依据是**有没有人在用**：被当前判断的阈值/证伪条件引用的指标断更是事故，
+    没人引用的指标断更只是噪音。
+    """
+    from tin.judgments import service as judgment_service
+
+    out: dict = {"judgment": [], "nodes": [], "crosscheck": []}
+
+    j = judgment_service.current(session, variety)
+    if j is not None:
+        rows = session.execute(
+            text("select ref_type, ref_id from judgment_series_refs "
+                 "where judgment_id = :jid and series_id = :sid"),
+            {"jid": j.id, "sid": series_id}).all()
+        out["judgment"] = [{"role": _ROLE_LABEL.get(t, t), "ref_id": r} for t, r in rows]
+        out["judgment_version"] = j.version
+        out["judgment_status"] = j.status
+
+    for tpl in list_templates(session, variety):
+        for node in (tpl["layout"] or {}).get("nodes", []):
+            b = node.get("binding") or {}
+            if b.get("series_id") == series_id or b.get("formula_id") == series_id:
+                out["nodes"].append({"template_id": tpl["id"], "template": tpl["name"],
+                                     "node": node.get("label", node.get("id")),
+                                     "proxy": bool(b.get("proxy"))})
+
+    for spec in _crosscheck_specs(variety):
+        if series_id in (spec.get("a"), spec.get("b")):
+            other = spec["b"] if series_id == spec["a"] else spec["a"]
+            out["crosscheck"].append({"label": spec.get("label", ""), "against": other})
+
+    return out

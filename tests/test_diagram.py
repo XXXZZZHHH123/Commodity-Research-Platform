@@ -173,8 +173,26 @@ def test_layout_must_have_unique_node_ids(session):
     with pytest.raises(diagram.DiagramError, match="唯一"):
         diagram.save_template(session, "SN", {"name": "x", "layout": {
             "nodes": [node("same"), node("same")]}})
-    with pytest.raises(diagram.DiagramError, match="至少"):
-        diagram.save_template(session, "SN", {"name": "x", "layout": {"nodes": []}})
+    with pytest.raises(diagram.DiagramError, match="列表"):
+        diagram.save_template(session, "SN", {"name": "x", "layout": {"nodes": "不是列表"}})
+
+
+def test_a_new_layout_may_start_empty_but_an_existing_one_cannot_be_emptied(session):
+    """从零建图当然是从零个节点开始的——拦掉它就等于没有「新建布局」这条路。
+
+    真正要拦的是把一张**已经有内容**的图存成空的：那通常是误删或前端状态丢了，
+    存下去就把研究员摆了半天的结构抹掉，而且不可撤销。
+    """
+    blank = diagram.save_template(session, "SN", {"name": "白纸", "layout": {"nodes": []}})
+    assert blank["layout"]["nodes"] == []
+
+    filled = diagram.save_template(session, "SN", {"id": blank["id"], "name": "白纸",
+                                                   "layout": {"nodes": [node("n1")]}})
+    assert len(filled["layout"]["nodes"]) == 1
+
+    with pytest.raises(diagram.DiagramError, match="不能存成空的"):
+        diagram.save_template(session, "SN", {"id": blank["id"], "name": "白纸",
+                                              "layout": {"nodes": []}})
 
 
 def test_first_template_becomes_default_and_heir_is_promoted(session):
@@ -515,9 +533,10 @@ def test_nodes_carry_their_role_in_the_current_judgment(session):
     ])
     session.flush()
 
-    roles = diagram.judgment_roles(session)
+    roles, meta = diagram.judgment_roles(session)
     assert "证伪条件" in roles["T.STOCK"]
     assert "阈值" in roles["T.VIX"]
+    assert meta["version"] == j.version, "前端要能说出高亮依据的是哪一版判断"
 
     out = diagram.resolve(session, {"nodes": [
         node("n1", series="T.VIX"), node("n2", series="T.STOCK")]}, TODAY)
@@ -525,3 +544,68 @@ def test_nodes_carry_their_role_in_the_current_judgment(session):
 
     out2 = diagram.resolve(session, {"nodes": [node("n3", series="T.OTHER")]}, TODAY)
     assert out2[0]["roles"] == [], "没被判断引用的节点角色为空，而不是缺字段"
+
+
+def test_roles_follow_the_current_judgment_version_not_every_version_ever(session):
+    """判断改版，重点关注必须跟着换——这是 P1「判断是一份带时间的快照」的直接要求。
+
+    旧版本归档时引用行仍留在 judgment_series_refs 里。取全表等于把历年所有版本的
+    引用并起来：重点关注只增不减，研究员换了判断，图上还亮着上一版关心的环节。
+    """
+    from tin.models import Judgment, JudgmentSeriesRef
+
+    add_series(session, "T.OLD")
+    add_series(session, "T.NEW")
+
+    def a_judgment(version, status):
+        row = Judgment(variety="SN", version=version, author="测试", written_at=TODAY,
+                       review_period_days=30, review_due=TODAY, contradiction={},
+                       marginal_focus=[], pricing_power={}, whitelist=[], thresholds=[],
+                       falsifiers=[], status=status, unstructured=[], review_warnings=[],
+                       created_at=datetime.now(SHANGHAI))
+        session.add(row)
+        session.flush()
+        return row
+
+    old = a_judgment(1, "已归档")
+    session.add(JudgmentSeriesRef(judgment_id=old.id, ref_type="falsifier",
+                                  ref_id="f1", series_id="T.OLD"))
+    new = a_judgment(2, "生效")
+    session.add(JudgmentSeriesRef(judgment_id=new.id, ref_type="threshold",
+                                  ref_id="t1", series_id="T.NEW"))
+    session.flush()
+
+    roles, meta = diagram.judgment_roles(session)
+    assert meta["version"] == 2
+    assert "阈值" in roles["T.NEW"]
+    assert "T.OLD" not in roles, "上一版判断关心的环节不该还亮着"
+
+
+def test_roles_are_empty_when_no_judgment_exists(session):
+    roles, meta = diagram.judgment_roles(session)
+    assert roles == {} and meta == {}
+
+
+# ---------- 指标被谁在用 ----------
+
+def test_usage_tells_you_whether_anyone_depends_on_this_indicator(session):
+    """「这条指标要不要维护」——444 行列表回答不了，靠的是有没有人在用。"""
+    from tin.jobs.seed import seed_judgment
+    from tin.models import JudgmentSeriesRef
+
+    add_series(session, "T.USED")
+    j = seed_judgment(session)
+    session.add(JudgmentSeriesRef(judgment_id=j.id, ref_type="falsifier",
+                                  ref_id="f1", series_id="T.USED"))
+    diagram.save_template(session, "SN", {"name": "布局甲", "layout": {
+        "nodes": [node("n1", series="T.USED", label="社会库存")], "edges": []}})
+    session.flush()
+
+    u = diagram.usage(session, "T.USED")
+    assert u["judgment"] == [{"role": "证伪条件", "ref_id": "f1"}]
+    assert u["nodes"][0]["node"] == "社会库存"
+    assert u["nodes"][0]["template"] == "布局甲"
+
+    add_series(session, "T.ORPHAN")
+    orphan = diagram.usage(session, "T.ORPHAN")
+    assert orphan["judgment"] == [] and orphan["nodes"] == [], "没人用就是没人用，不编造引用"

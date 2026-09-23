@@ -252,13 +252,43 @@ def indicators_page(request: Request):
             s, "indicators", latest_trade_date(s), rows=rows, dimensions=DIMENSIONS))
 
 
-@app.get("/sn/diagram")
-def diagram_page(request: Request):
+@app.get("/sn/indicators/{series_id}")
+def indicator_page(request: Request, series_id: str):
+    """单指标页。
+
+    指标列表回答不了研究员真正的问题——444 行里每一行看起来都一样重要。这一页要回答
+    三件事：这个数现在多少且怎么来的（口径与凭证）、被谁在用（判断与产业图）、
+    历史上有没有被改过（修订）。**「被谁在用」是分辨要不要维护它的唯一依据。**
+    """
     with SessionLocal() as s:
-        tpl = diagram_api.ensure_default(s, V)
+        day = latest_trade_date(s)
+        try:
+            d = diagram_api.detail(s, series_id, day, limit=120)
+        except diagram_api.DiagramError as e:
+            raise HTTPException(404, str(e)) from e
+        return templates.TemplateResponse(request, "indicator.html", _shell(
+            s, "indicators", day, detail=d, usage=diagram_api.usage(s, series_id, V)))
+
+
+@app.get("/api/sn/indicators/{series_id}/usage")
+def indicator_usage(series_id: str):
+    with SessionLocal() as s:
+        return diagram_api.usage(s, series_id, V)
+
+
+@app.get("/sn/diagram")
+def diagram_page(request: Request, template: int | None = None):
+    with SessionLocal() as s:
+        # 这里原来无条件返回默认布局，`?template=` 被整个忽略——下拉框选哪张都回到同一张，
+        # 新建的布局也永远打不开。切换布局是这个页面最基本的操作之一。
+        default = diagram_api.ensure_default(s, V)
+        rows = diagram_api.list_templates(s, V)
+        tpl = next((t for t in rows if t["id"] == template), None) if template else None
+        if template is not None and tpl is None:
+            raise HTTPException(404, f"没有这张布局：{template}")
         return templates.TemplateResponse(request, "diagram.html", _shell(
-            s, "diagram", latest_trade_date(s), template=tpl,
-            templates_all=diagram_api.list_templates(s, V)))
+            s, "diagram", latest_trade_date(s), template=tpl or default,
+            templates_all=rows))
 
 
 @app.get("/api/sn/diagram/values")
@@ -270,7 +300,23 @@ def diagram_values(template_id: int | None = None, date: str | None = None):
             raise HTTPException(404, "还没有任何布局")
         day = _board_date(s, date)
         return {"template_id": tpl["id"], "as_of": day.isoformat(),
+                "judgment": diagram_api.judgment_roles(s, V)[1],
                 "nodes": diagram_api.resolve(s, tpl["layout"], day)}
+
+
+@app.post("/api/sn/diagram/values")
+def diagram_values_live(body: dict = Body(...)):
+    """按**前端当前正在编辑的布局**取值，不经过库里存的那一份。
+
+    新增节点、刚换的绑定在保存之前库里并不存在；GET 版按 template_id 从库里读布局，
+    于是新节点永远查不到值，看上去就是「绑了但不显示」。编辑态必须走这个入口。
+    """
+    layout = body.get("layout") or {}
+    with SessionLocal() as s:
+        day = _board_date(s, body.get("date"))
+        roles_meta = diagram_api.judgment_roles(s, V)[1]
+        return {"as_of": day.isoformat(), "judgment": roles_meta,
+                "nodes": diagram_api.resolve(s, layout, day)}
 
 
 @app.post("/api/sn/diagram/templates")

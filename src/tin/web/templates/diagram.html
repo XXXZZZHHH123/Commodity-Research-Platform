@@ -16,9 +16,15 @@
       {% for t in templates_all %}
       <option value="{{ t.id }}" {{ 'selected' if t.id == template.id }}>{{ t.name }}{{ '（默认）' if t.is_default }}</option>
       {% endfor %}
+      <option value="__new">＋ 新建空白布局…</option>
     </select>
+    <button type="button" onclick="dgDeleteTemplate()" title="删除当前布局"
+      class="px-2 py-1.5 rounded-md border border-[var(--line)] text-[var(--text-muted)] hover:text-[var(--alert)] hover:bg-[var(--surface-soft)]">🗑</button>
     <button type="button" onclick="dgToggleJudgment()" id="dg-judge-btn"
       class="px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)] font-semibold">判断视角</button>
+    <button type="button" onclick="dgOpenCompare()" id="dg-compare-btn"
+      class="px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)] font-semibold">趋势对比<span
+      data-count class="tabular"></span></button>
     <button type="button" onclick="dgOpenCrosscheck()"
       class="px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)] font-semibold">交叉校验</button>
     <button type="button" onclick="dgOpenMarkdown()"
@@ -42,12 +48,17 @@
   <span id="dg-asof" class="ml-auto tabular"></span>
 </div>
 
+<!-- 判断视角说明条：重点关注跟着哪一版判断走，必须写明 -->
+<div id="dg-judge-bar" class="hidden mb-2 px-3 py-2 rounded-md text-[11px]
+     bg-[var(--primary-soft)] text-[var(--primary)] border border-[var(--primary)]/30"></div>
+
 <div id="dg-wrap" class="relative rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden"
      style="height: calc(100vh - 260px); min-height: 520px;">
   <svg id="dg-canvas" class="w-full h-full select-none" style="touch-action:none">
     <defs>
-      <marker id="dg-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
-        <path d="M0,0 L8,4 L0,8 z" fill="var(--line-strong)" opacity="0.75"/>
+      <!-- 箭头跟着连线一起加重：物料流向是这张图的主要结构信息 -->
+      <marker id="dg-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0,0.5 L8,4 L0,7.5 z" fill="var(--text-muted)" opacity="0.9"/>
       </marker>
       <!-- 代理指标的斜纹底：一眼看出这格不是本环节的实测值 -->
       <pattern id="dg-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
@@ -74,6 +85,19 @@
     <button type="button" onclick="dgTidyGroups()" class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">整理分组</button>
   </div>
 
+  <!-- 空白布局的落地页：白板本身不说明该做什么 -->
+  <div id="dg-blank" class="hidden absolute inset-0 flex items-center justify-center pointer-events-none">
+    <div class="text-center max-w-sm pointer-events-auto">
+      <div class="text-sm font-bold">这张布局还是空的</div>
+      <p class="text-xs text-[var(--text-muted)] mt-1.5 leading-relaxed">
+        左上角 <b>＋ 分组</b> 圈出环节、<b>＋ 节点</b> 放具体指标；<br>
+        拖节点进分组即归属，点方框绑定指标。</p>
+      <p class="text-xs text-[var(--text-muted)] mt-2">
+        已经有维护好的大纲？<button type="button" onclick="dgOpenMarkdown()"
+          class="text-[var(--primary)] font-semibold underline">从 Markdown 导入</button>更快。</p>
+    </div>
+  </div>
+
   <div id="dg-hint" class="absolute right-3 bottom-3 hidden text-[11px] px-2.5 py-1.5 rounded-md
        bg-[var(--amber-soft)] text-[var(--amber)] border border-[var(--amber)]/30">
     编辑模式：拖动调位置（拖进分组即归属）｜ 右下角把手改大小 ｜ 点方框绑定指标 ｜ 改完记得保存
@@ -87,6 +111,9 @@
     <div>
       <h2 class="text-lg font-bold">绑定指标</h2>
       <p class="text-[11px] text-[var(--text-muted)] mt-0.5">节点 <span id="dg-node-label" class="font-semibold"></span></p>
+      <p class="text-[11px] text-[var(--text-muted)] mt-0.5">
+        一个节点<b>只绑一个</b>指标 —— 方框上要能一眼说清"这个数是什么"。<br>
+        要在一个环节看多条，用<b>趋势对比</b>；要让两条相减出一个数，登记<b>派生指标</b>（带口径守卫）。</p>
       <p id="dg-bound-count" class="text-[11px] text-[var(--primary)] mt-0.5"></p>
     </div>
     <button onclick="toggleDrawer('dg-drawer', false)" class="text-xl leading-none text-[var(--text-muted)] hover:text-[var(--text)]">&times;</button>
@@ -142,7 +169,8 @@
   <div class="flex items-start justify-between gap-4 pb-3 border-b border-[var(--line)]">
     <div>
       <h2 class="text-lg font-bold">趋势对比</h2>
-      <p class="text-[11px] text-[var(--text-muted)] mt-0.5">最多 4 条 ｜ 归一化后只比趋势，不比大小</p>
+      <p class="text-[11px] text-[var(--text-muted)] mt-0.5">
+        最多 4 条 ｜ 归一化后只比趋势，不比大小 ｜ 两条同单位可看差值</p>
     </div>
     <button onclick="toggleDrawer('dg-compare-drawer', false)" class="text-xl leading-none text-[var(--text-muted)] hover:text-[var(--text)]">&times;</button>
   </div>

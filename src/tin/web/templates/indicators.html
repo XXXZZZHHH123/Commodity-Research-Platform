@@ -15,7 +15,7 @@
   <div class="flex items-center justify-between gap-3 flex-wrap">
     <h2 class="text-sm font-bold flex items-center gap-2">
       <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">01</span>
-      指标登记清单<span class="text-xs font-normal text-[var(--text-muted)]">（点击代码可复制）</span>
+      指标登记清单<span class="text-xs font-normal text-[var(--text-muted)]">（点进单指标页：口径、凭证、谁在用它）</span>
     </h2>
     <span class="text-xs text-[var(--text-muted)]">
       自动 {{ rows | selectattr('fetch_mode', 'equalto', 'auto') | list | length }} ·
@@ -32,9 +32,12 @@
       <tbody class="divide-y divide-[var(--line)]">
         {% for r in rows %}
         <tr class="hover:bg-[var(--surface-soft)]">
-          <td class="py-2 px-3 tabular font-semibold text-[var(--primary)] cursor-pointer hover:underline whitespace-nowrap"
-              onclick="copyText('{{ r.series_id }}')" title="点击复制">{{ r.series_id }}</td>
-          <td class="py-2 px-3 font-bold">{{ r.name }}
+          <td class="py-2 px-3 tabular font-semibold whitespace-nowrap">
+            <a href="/sn/indicators/{{ r.series_id }}" class="text-[var(--primary)] hover:underline">{{ r.series_id }}</a>
+            <button type="button" onclick="copyText('{{ r.series_id }}')" title="复制代码"
+              class="ml-1 text-[10px] text-[var(--text-muted)] hover:text-[var(--primary)]">⧉</button></td>
+          <td class="py-2 px-3 font-bold">
+            <a href="/sn/indicators/{{ r.series_id }}" class="hover:underline">{{ r.name }}</a>
             {% if r.is_proxy %}<span class="ml-1 px-1.5 py-0.5 text-[10px] rounded bg-[var(--amber-soft)] text-[var(--amber)]">代理</span>{% endif %}
             {% if r.note %}<div class="text-[10px] font-normal text-[var(--text-muted)]">{{ r.note }}</div>{% endif %}</td>
           <td class="py-2 px-3"><span class="px-1.5 py-0.5 rounded bg-[var(--surface-soft)] text-[var(--text-muted)] whitespace-nowrap">{{ r.category }}</span></td>

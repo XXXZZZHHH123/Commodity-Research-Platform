@@ -26,6 +26,20 @@ const DG_STATE = {
   unbound:  { stroke: "var(--line)",       fill: "var(--surface)",     tone: "text-[var(--text-muted)]", dash: "2 4" },
 };
 
+/* 分组框按嵌套深度换配色。
+ *
+ * 刻意避开琥珀与红——那两个颜色已经被节点状态（断更 / 阻断）占着，分组再用就分不清
+ * 「这框是二级分组」还是「这里出问题了」。留下的中性灰 → 蓝 → 主题青是纯结构信号。
+ * 光靠字号和透明度差一点点是看不出层级的，所以边框色、底色、标签色块三者一起变。 */
+const DG_DEPTH = [
+  { stroke: "var(--line-strong)", fill: "var(--surface)",      fillOpacity: 0.55,
+    width: 2.2, dash: "10 5", pill: 0.20, label: "var(--text)" },
+  { stroke: "var(--blue)",        fill: "var(--blue-soft)",    fillOpacity: 0.75,
+    width: 1.8, dash: "6 4",  pill: 0.18, label: "var(--blue)" },
+  { stroke: "var(--primary)",     fill: "var(--primary-soft)", fillOpacity: 0.85,
+    width: 1.5, dash: "4 3",  pill: 0.18, label: "var(--primary)" },
+];
+
 const dgEsc = (t) => String(t == null ? "" : t).replace(/[<>&"]/g, (c) =>
   ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
 
@@ -45,17 +59,24 @@ function dgPct(v) {
 
 /* ---------- 取值 ---------- */
 
-async function dgLoad(templateId) {
-  const q = new URLSearchParams();
-  if (templateId) q.set("template_id", templateId);
-  if (window.DG_DATE) q.set("date", window.DG_DATE);
-  const res = await fetch(`/api/sn/diagram/values?${q}`);
-  if (!res.ok) return;
+async function dgLoad() {
+  // 按**前端此刻的布局**取值，而不是按 template_id 让服务端去库里读。
+  // 新增的节点、刚改的绑定在保存前库里并不存在，走 template_id 就永远查不到值——
+  // 表现出来就是「绑了指标但方框不显示数据」。
+  if (!dg.layout) return;
+  const res = await fetch("/api/sn/diagram/values", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ date: window.DG_DATE || null,
+                           layout: { nodes: dg.layout.nodes, edges: dg.layout.edges } }),
+  });
+  if (!res.ok) { showToast("取值失败"); return; }
   const data = await res.json();
   dg.values = Object.fromEntries(data.nodes.map((n) => [n.node_id, n]));
+  dg.judgment = data.judgment || {};
   const asOf = document.getElementById("dg-asof");
   if (asOf) asOf.textContent = `数据截至 ${data.as_of}`;
   dgRender();
+  dgSyncCompareBtn();
 }
 
 /* ---------- 渲染 ---------- */
@@ -71,19 +92,27 @@ function dgRender() {
   groups.innerHTML = dg.layout.nodes.filter(dgIsGroup)
     .map((g) => ({ g, d: dgDepth(g.id) }))
     .sort((a, b) => a.d - b.d)
-    .map(({ g, d }) => `
+    .map(({ g, d }) => {
+      const c = DG_DEPTH[Math.min(d, DG_DEPTH.length - 1)];
+      const trail = d ? dgTrail(g.id) : "";
+      // 标签做成实心色块：分组框的底色很淡，纯文字压在上面读不出来，
+      // 而层级本身也要一眼可辨——靠色块颜色，不靠字号差那 0.8px。
+      const text = (trail ? `${trail} › ` : "") + g.label;
+      const pw = text.length * (d ? 7.4 : 8.2) + 18;
+      return `
     <g class="dg-node dg-group" data-node="${dgEsc(g.id)}" transform="translate(${g.x},${g.y})"
        style="cursor:${dg.edit ? "grab" : "default"}">
-      <rect width="${g.w}" height="${g.h}" rx="${12 - d * 2}" fill="var(--surface)"
-            fill-opacity="${0.6 - d * 0.18}" stroke="var(--line-strong)"
-            stroke-width="${1.6 - d * 0.3}" stroke-dasharray="${d ? "4 3" : "8 4"}"
-            opacity="${1 - d * 0.18}"/>
-      ${d ? `<rect x="10" y="7" width="3" height="13" rx="1.5" fill="var(--primary)" opacity="0.5"/>` : ""}
-      <text x="${d ? 19 : 12}" y="${19 + d}" font-size="${12.5 - d * 0.8}" font-weight="700"
-            fill="var(--text-muted)" opacity="${1 - d * 0.1}">${
-        d ? `<tspan opacity="0.55">${dgEsc(dgTrail(g.id))} › </tspan>` : ""}${dgEsc(g.label)}</text>
+      <rect width="${g.w}" height="${g.h}" rx="${12 - d * 2}" fill="${c.fill}"
+            fill-opacity="${c.fillOpacity}" stroke="${c.stroke}"
+            stroke-width="${c.width}" stroke-dasharray="${c.dash}"/>
+      <rect x="9" y="-9.5" width="${pw}" height="20" rx="10" fill="var(--surface)"/>
+      <rect x="9" y="-9.5" width="${pw}" height="20" rx="10" fill="${c.stroke}" opacity="${c.pill}"/>
+      <text x="${9 + pw / 2}" y="4.5" text-anchor="middle" font-size="${d ? 11 : 12}"
+            font-weight="800" fill="${c.label}">${
+        trail ? `<tspan opacity="0.62">${dgEsc(trail)} › </tspan>` : ""}${dgEsc(g.label)}</text>
       ${dg.edit ? dgHandle(g) : ""}
-    </g>`).join("");
+    </g>`;
+    }).join("");
 
   const by = Object.fromEntries(dg.layout.nodes.map((n) => [n.id, n]));
   edges.innerHTML = (dg.layout.edges || []).map((e) => {
@@ -91,12 +120,19 @@ function dgRender() {
     if (!a || !b || dgIsGroup(a) || dgIsGroup(b)) return "";
     const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2;
     const mid = (x1 + x2) / 2;
+    // 连线原来 1.2px / 0.55 透明度，压在分组底色上基本看不见。物料流向是这张图的
+    // 主要结构信息，不该比分组边框还淡。
     return `<path d="M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}"
-      fill="none" stroke="var(--line-strong)" stroke-width="1.2" opacity="0.55"
-      marker-end="url(#dg-arrow)"/>`;
+      fill="none" stroke="var(--text-muted)" stroke-width="2" opacity="0.85"
+      stroke-linecap="round" marker-end="url(#dg-arrow)"/>`;
   }).join("");
 
   nodes.innerHTML = dg.layout.nodes.filter((n) => !dgIsGroup(n)).map((n) => dgNode(n)).join("");
+
+  // 一张空图给的是一块白板，看不出该干什么。说清楚两条路：自己搭，或把大纲导进来。
+  const blank = document.getElementById("dg-blank");
+  if (blank) blank.classList.toggle("hidden", dg.layout.nodes.length > 0);
+
   dgApplyTransform();
 }
 
@@ -237,11 +273,20 @@ function dgZoom(delta) {
 function dgFit() {
   const wrap = document.getElementById("dg-wrap");
   if (!wrap || !dg.layout) return;
+  // 空布局要挡住：Math.max(...[]) 是 -Infinity，算出来的 zoom 是 NaN，
+  // 整张画布的 transform 直接失效——新建一张空图就会撞上。
+  if (!dg.layout.nodes.length) {
+    dg.zoom = 1;
+    dg.pan = { x: 0, y: 0 };
+    dgApplyTransform();
+    return;
+  }
   const xs = dg.layout.nodes.map((n) => n.x), ys = dg.layout.nodes.map((n) => n.y);
   const w = Math.max(...dg.layout.nodes.map((n) => n.x + n.w)) - Math.min(...xs);
   const h = Math.max(...dg.layout.nodes.map((n) => n.y + n.h)) - Math.min(...ys);
   const pad = 40;
-  dg.zoom = Math.min((wrap.clientWidth - pad) / w, (wrap.clientHeight - pad) / h, 1.4);
+  dg.zoom = Math.min((wrap.clientWidth - pad) / Math.max(w, 1),
+                     (wrap.clientHeight - pad) / Math.max(h, 1), 1.4);
   dg.pan = { x: pad / 2 - Math.min(...xs) * dg.zoom, y: pad / 2 - Math.min(...ys) * dg.zoom };
   dgApplyTransform();
 }
@@ -432,7 +477,7 @@ function dgBind(field, kind) {
     : { kind: "series", series_id: field, proxy: document.getElementById("dg-proxy").checked };
   dg.dirty = true;
   dgSyncSave();
-  dgLoad(dg.layout.__id);
+  dgLoad();
   toggleDrawer("dg-drawer", false);
 }
 
@@ -442,7 +487,7 @@ function dgUnbind() {
   node.binding = { kind: "none" };
   dg.dirty = true;
   dgSyncSave();
-  dgLoad(dg.layout.__id);
+  dgLoad();
   toggleDrawer("dg-drawer", false);
 }
 
@@ -452,7 +497,7 @@ function dgMarkProxy() {
   node.binding.proxy = document.getElementById("dg-proxy").checked;
   dg.dirty = true;
   dgSyncSave();
-  dgLoad(dg.layout.__id);
+  dgLoad();
 }
 
 /* ---------- 保存 ---------- */
@@ -476,7 +521,42 @@ async function dgSave() {
 }
 
 function dgSwitch(templateId) {
+  if (templateId === "__new") { dgNewTemplate(); return; }
+  if (dg.dirty && !confirm("当前布局有未保存的改动，切换会丢失。继续？")) {
+    const sel = document.getElementById("dg-template");
+    if (sel) sel.value = dg.layout.__id;
+    return;
+  }
   window.location.href = `/sn/diagram?template=${templateId}`;
+}
+
+async function dgNewTemplate() {
+  // 之前只能从已有布局里挑，或者走 Markdown 导入——想从一张白纸开始是做不到的。
+  const sel = document.getElementById("dg-template");
+  const name = (prompt("新布局叫什么？", "未命名结构图") || "").trim();
+  if (!name) { if (sel) sel.value = dg.layout.__id; return; }
+  const res = await fetch("/api/sn/diagram/templates", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, layout: { nodes: [], edges: [] } }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    showToast(data.detail || "新建失败");
+    if (sel) sel.value = dg.layout.__id;
+    return;
+  }
+  window.location.href = `/sn/diagram?template=${data.saved.id}&edit=1`;
+}
+
+function dgDeleteTemplate() {
+  const name = dg.layout.__name;
+  if (!confirm(`确认删除布局「${name}」吗？此操作不可撤销。`)) return;
+  fetch(`/api/sn/diagram/templates/${dg.layout.__id}`, { method: "DELETE" })
+    .then((r) => r.json().then((d) => ({ ok: r.ok, d })))
+    .then(({ ok, d }) => {
+      if (!ok) { showToast(d.detail || "删除失败"); return; }
+      window.location.href = "/sn/diagram";
+    });
 }
 
 /* ---------- 启动 ---------- */
@@ -485,10 +565,17 @@ function dgInit() {
   const tpl = window.DG_TEMPLATE;
   if (!tpl) return;
   dg.layout = { ...tpl.layout, __id: tpl.id, __name: tpl.name };
+  dg.layout.nodes = dg.layout.nodes || [];
+  dg.layout.edges = dg.layout.edges || [];
   dgBindCanvas();
   dgRender();
   dgFit();
-  dgLoad(tpl.id);
+  dgLoad();
+  dgSyncCompareBtn();
+  // 新建的空图直接进编辑模式——否则落地看到一块白板，工具栏还藏着
+  if (new URLSearchParams(location.search).get("edit") === "1" || !dg.layout.nodes.length) {
+    if (!dg.edit) dgToggleEdit();
+  }
 }
 
 if (document.getElementById("dg-canvas")) {
@@ -609,6 +696,20 @@ function dgFmt(v) {
   return v.toLocaleString("zh-CN", { maximumFractionDigits: a >= 1000 ? 0 : a >= 10 ? 1 : 2 });
 }
 
+function dgAxisDate(ticks) {
+  // 横轴标签的粒度按**实际要标出来的那几个刻度**挑，取第一个不重复的格式。
+  //
+  // 按跨度拍粒度会两头不讨好：一律 MM-DD，五年月度序列标成「08-31 08-31 09-30 08-31」，
+  // 年份——那张图上唯一有信息量的部分——反而被切掉；一律标年，两年半的周度序列又标成
+  // 「2024 2024 2025 2025 2026」。重复的刻度等于没有刻度。
+  const forms = [(s) => s.slice(0, 4), (s) => s.slice(2, 7), (s) => s.slice(2)];
+  for (const f of forms) {
+    const labels = ticks.map(f);
+    if (new Set(labels).size === labels.length) return f;
+  }
+  return forms[forms.length - 1];
+}
+
 function dgChart(points, unit, w = 420, h = 180) {
   // 带坐标轴的走势图。只画一条序列——单位与量级不同的序列叠在一张图上会互相淹没，
   // 而双轴是明令禁用的（01 §4.6）。要比趋势走「对比」视图的归一化。
@@ -634,18 +735,24 @@ function dgChart(points, unit, w = 420, h = 180) {
           fill="var(--text-muted)" class="tabular">${dgEsc(dgFmt(v))}</text>`).join("");
 
   const every = Math.max(1, Math.ceil(points.length / 5));
-  const xlab = points.map((p, i) => (i % every === 0 || i === points.length - 1)
-    ? `<text x="${X(i).toFixed(1)}" y="${h - 8}" text-anchor="middle" font-size="9"
-             fill="var(--text-muted)" class="tabular">${dgEsc(p.as_of.slice(5))}</text>` : "").join("");
+  const at = points.map((p, i) => i).filter((i) => i % every === 0 || i === points.length - 1);
+  const fmtX = dgAxisDate(at.map((i) => points[i].as_of));
+  const xlab = at.map((i) => `<text x="${X(i).toFixed(1)}" y="${h - 8}" text-anchor="middle"
+      font-size="9" fill="var(--text-muted)" class="tabular">${dgEsc(fmtX(points[i].as_of))}</text>`).join("");
 
-  // 每个数据点都可悬停读数——图上看出"在动"，鼠标指上去看清"动到多少"
+  // 每个数据点都可悬停读数——图上看出"在动"，鼠标指上去看清"动到多少"。
+  // 十字线把光标位置投到两条坐标轴上：光有一个气泡，仍然要自己目测这个点对应哪一天、
+  // 落在纵轴什么高度。
   const dots = points.map((p, i) => `
-    <circle cx="${X(i).toFixed(1)}" cy="${Y(p.value).toFixed(1)}" r="7" fill="transparent"
+    <circle cx="${X(i).toFixed(1)}" cy="${Y(p.value).toFixed(1)}" r="9" fill="transparent"
             class="dg-dot" data-x="${X(i).toFixed(1)}" data-y="${Y(p.value).toFixed(1)}"
+            data-date="${dgEsc(p.as_of.slice(2))}" data-val="${dgEsc(dgFmt(p.value))}${dgEsc(unit || "")}"
             data-label="${dgEsc(p.as_of)}　${dgEsc(dgFmt(p.value))}${dgEsc(unit || "")}"/>`).join("");
   const last = points[points.length - 1];
 
-  return `<svg viewBox="0 0 ${w} ${h}" class="w-full" style="height:${h}px" id="dg-chart-svg">
+  return `<svg viewBox="0 0 ${w} ${h}" class="w-full" style="height:${h}px" id="dg-chart-svg"
+               data-w="${w}" data-h="${h}" data-l="${PAD.l}" data-t="${PAD.t}"
+               data-b="${(PAD.t + ih).toFixed(1)}" data-r="${w - PAD.r}">
     ${grid}${xlab}
     <line x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + ih}" stroke="var(--line-strong)" stroke-width="1"/>
     <line x1="${PAD.l}" y1="${PAD.t + ih}" x2="${w - PAD.r}" y2="${PAD.t + ih}" stroke="var(--line-strong)" stroke-width="1"/>
@@ -653,8 +760,17 @@ function dgChart(points, unit, w = 420, h = 180) {
           fill="${color}" opacity="0.08"/>
     <path d="${d}" fill="none" stroke="${color}" stroke-width="1.8"/>
     <circle cx="${X(points.length - 1).toFixed(1)}" cy="${Y(last.value).toFixed(1)}" r="3" fill="${color}"/>
+    <g id="dg-chart-cross" style="display:none" pointer-events="none">
+      <line class="dg-cx" stroke="var(--text-muted)" stroke-width="1" stroke-dasharray="3 3" opacity="0.8"/>
+      <line class="dg-cy" stroke="var(--text-muted)" stroke-width="1" stroke-dasharray="3 3" opacity="0.8"/>
+      <circle class="dg-cdot" r="4" fill="var(--surface)" stroke="${color}" stroke-width="2"/>
+      <g class="dg-cax"><rect rx="2" fill="var(--text)"/>
+        <text font-size="9" fill="var(--surface)" class="tabular" text-anchor="middle"></text></g>
+      <g class="dg-cay"><rect rx="2" fill="var(--text)"/>
+        <text font-size="9" fill="var(--surface)" class="tabular" text-anchor="end"></text></g>
+    </g>
     ${dots}
-    <g id="dg-chart-tip" style="display:none">
+    <g id="dg-chart-tip" style="display:none" pointer-events="none">
       <rect rx="3" fill="var(--text)" opacity="0.92"/>
       <text font-size="10" fill="var(--surface)" class="tabular"></text>
     </g>
@@ -664,20 +780,49 @@ function dgChart(points, unit, w = 420, h = 180) {
 function dgBindChartHover() {
   const svg = document.getElementById("dg-chart-svg");
   if (!svg) return;
+  const W = +svg.dataset.w, L = +svg.dataset.l, T = +svg.dataset.t;
+  const B = +svg.dataset.b, R = +svg.dataset.r;
   const tip = svg.querySelector("#dg-chart-tip");
   const box = tip.querySelector("rect"), label = tip.querySelector("text");
+  const cross = svg.querySelector("#dg-chart-cross");
+  const cx = cross.querySelector(".dg-cx"), cy = cross.querySelector(".dg-cy");
+  const cdot = cross.querySelector(".dg-cdot");
+  const ax = cross.querySelector(".dg-cax"), ay = cross.querySelector(".dg-cay");
+
+  const stamp = (g, text, x, y, anchor) => {
+    const t = g.querySelector("text"), r = g.querySelector("rect");
+    t.textContent = text;
+    const w = text.length * 5.6 + 8;
+    r.setAttribute("x", anchor === "end" ? x - w : x - w / 2);
+    r.setAttribute("y", y - 8); r.setAttribute("width", w); r.setAttribute("height", 13);
+    t.setAttribute("x", anchor === "end" ? x - 4 : x); t.setAttribute("y", y + 2);
+    t.setAttribute("text-anchor", anchor);
+  };
+
   svg.querySelectorAll(".dg-dot").forEach((dot) => {
     dot.addEventListener("mouseenter", () => {
       const x = +dot.dataset.x, y = +dot.dataset.y;
+      cx.setAttribute("x1", x); cx.setAttribute("x2", x);
+      cx.setAttribute("y1", T); cx.setAttribute("y2", B);
+      cy.setAttribute("y1", y); cy.setAttribute("y2", y);
+      cy.setAttribute("x1", L); cy.setAttribute("x2", R);
+      cdot.setAttribute("cx", x); cdot.setAttribute("cy", y);
+      stamp(ax, dot.dataset.date, x, B + 14, "middle");   // 投到横轴（YY-MM-DD，年份不能丢）
+      stamp(ay, dot.dataset.val, L - 4, y, "end");                  // 投到纵轴
+      cross.style.display = "";
+
       label.textContent = dot.dataset.label;
       const w = dot.dataset.label.length * 6.4 + 12;
-      const left = Math.max(2, Math.min(x - w / 2, 420 - w - 2));
+      const left = Math.max(2, Math.min(x - w / 2, W - w - 2));
       box.setAttribute("x", left); box.setAttribute("y", y - 26);
       box.setAttribute("width", w); box.setAttribute("height", 17);
       label.setAttribute("x", left + 6); label.setAttribute("y", y - 14);
       tip.style.display = "";
     });
-    dot.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+    dot.addEventListener("mouseleave", () => {
+      tip.style.display = "none";
+      cross.style.display = "none";
+    });
   });
 }
 
@@ -782,24 +927,71 @@ function dgCopy(t) {
 
 const DG_COMPARE_COLORS = ["var(--primary)", "var(--amber)", "var(--blue)", "var(--alert)"];
 
+function dgSyncCompareBtn() {
+  // 对比篮子原来没有任何常驻入口：加进去之后抽屉一关就找不回来，也看不出里面有几条。
+  const btn = document.getElementById("dg-compare-btn");
+  if (!btn) return;
+  const n = (dg.compare || []).length;
+  btn.querySelector("[data-count]").textContent = n ? ` ${n}` : "";
+  btn.classList.toggle("bg-[var(--primary-soft)]", n > 0);
+  btn.classList.toggle("text-[var(--primary)]", n > 0);
+  btn.classList.toggle("border-[var(--primary)]", n > 0);
+}
+
+function dgOpenCompare() {
+  toggleDrawer("dg-compare-drawer", true);
+  dgRenderCompare();
+}
+
 function dgAddCompare(seriesId, name) {
   dg.compare = dg.compare || [];
   if (dg.compare.some((c) => c.series_id === seriesId)) {
     showToast("已在对比里");
+    dgOpenCompare();
     return;
   }
   if (dg.compare.length >= 4) {
     showToast("最多对比 4 条，先移除一条");
+    dgOpenCompare();
     return;
   }
   dg.compare.push({ series_id: seriesId, name });
+  dgSyncCompareBtn();
   dgRenderCompare();
   toggleDrawer("dg-compare-drawer", true);
 }
 
 function dgDropCompare(seriesId) {
   dg.compare = (dg.compare || []).filter((c) => c.series_id !== seriesId);
+  dgSyncCompareBtn();
   dgRenderCompare();
+}
+
+function dgClearCompare() {
+  dg.compare = [];
+  dgSyncCompareBtn();
+  dgRenderCompare();
+}
+
+function dgCompareMode(mode) {
+  dg.compareMode = mode;
+  dgRenderCompare();
+}
+
+function dgCompareTabs(mode, canDiff, why) {
+  const tab = (id, text, on, enabled) => `<button type="button"
+    ${enabled ? `onclick="dgCompareMode('${id}')"` : "disabled"}
+    title="${dgEsc(enabled ? "" : why)}"
+    class="px-2.5 py-1 rounded-md text-[11px] font-semibold ${on
+      ? "bg-[var(--primary)] text-white"
+      : enabled ? "border border-[var(--line)] hover:bg-[var(--surface-soft)]"
+                : "border border-[var(--line)] opacity-40 cursor-not-allowed"}">${text}</button>`;
+  return `<div class="flex items-center gap-1.5 pb-2">
+    ${tab("index", "归一化趋势", mode !== "diff", true)}
+    ${tab("diff", "差值 A − B", mode === "diff", canDiff)}
+    <button type="button" onclick="dgClearCompare()"
+      class="ml-auto text-[11px] text-[var(--text-muted)] hover:text-[var(--alert)]">清空</button>
+  </div>`;
 }
 
 async function dgRenderCompare() {
@@ -807,7 +999,7 @@ async function dgRenderCompare() {
   const list = dg.compare || [];
   if (!list.length) {
     box.innerHTML = `<div class="py-8 text-center text-xs text-[var(--text-muted)]">
-      还没有加入任何序列。点开某个方框，选「加入对比」。</div>`;
+      对比篮子是空的。<br class="mb-1">点任意方框 → 详情抽屉底部「加入对比」。</div>`;
     return;
   }
   box.innerHTML = '<div class="py-8 text-center text-xs text-[var(--text-muted)]">加载中…</div>';
@@ -821,63 +1013,128 @@ async function dgRenderCompare() {
   }
   if (!loaded.length) { box.innerHTML = '<div class="py-8 text-center text-xs">没有可比较的数据</div>'; return; }
 
-  // 取共同时点，再按各自起点归一化到 100。
-  // 不叠原值：单位与量级不同的序列画在一张图上会互相淹没，而双轴是明令禁用的（01 §4.6）。
+  // 差值只在**两条、且单位相同**时允许。单位不同的相减出来的数没有含义，而它看起来
+  // 完全正常——这正是 FR-5.2 要防的东西，所以在按钮上就禁掉，不是算完再报错。
+  const canDiff = loaded.length === 2 && loaded[0].unit === loaded[1].unit;
+  const why = loaded.length !== 2
+    ? "差值只能在两条序列之间做，现在有 " + loaded.length + " 条"
+    : `单位不同（${loaded[0].unit} / ${loaded[1].unit}），相减没有含义`;
+  const mode = (dg.compareMode === "diff" && canDiff) ? "diff" : "index";
+  const tabs = dgCompareTabs(mode, canDiff, why);
+
   const common = loaded.map((s) => new Set(s.history.map((p) => p.as_of)))
     .reduce((a, b) => new Set([...a].filter((x) => b.has(x))));
   const days = [...common].sort();
   if (days.length < 2) {
-    box.innerHTML = `<div class="py-6 px-3 text-xs text-[var(--amber)]">
+    box.innerHTML = tabs + `<div class="py-6 px-3 text-xs text-[var(--amber)]">
       这几条序列没有足够的共同时点（频率不同时常见）——无法在同一时间轴上比较。</div>`;
     return;
   }
-  const series = loaded.map((s, i) => {
-    const byDay = Object.fromEntries(s.history.map((p) => [p.as_of, p.value]));
-    const base = byDay[days[0]] || 1;
-    return { ...s, color: DG_COMPARE_COLORS[i % 4],
-             pts: days.map((d) => ({ as_of: d, value: (byDay[d] / base) * 100 })) };
-  });
 
-  const w = 420, h = 200, PAD = { l: 44, r: 12, t: 12, b: 26 };
+  const w = 420, h = 200, PAD = { l: 48, r: 12, t: 12, b: 26 };
   const iw = w - PAD.l - PAD.r, ih = h - PAD.t - PAD.b;
+  const X = (i) => PAD.l + (i / (days.length - 1)) * iw;
+  const byDayOf = (s) => Object.fromEntries(s.history.map((p) => [p.as_of, p.value]));
+
+  let series, head, foot, zero = null;
+  if (mode === "diff") {
+    // 差值图画的是绝对量，纵轴就是真实数值，还要画出 0 线——差值的符号翻转
+    // （从升水变贴水、从缺口变过剩）才是要看的东西。
+    const [a, b] = loaded.map(byDayOf);
+    series = [{ name: `${loaded[0].name} − ${loaded[1].name}`, unit: loaded[0].unit,
+                color: "var(--primary)", series_id: null,
+                pts: days.map((d) => ({ as_of: d, value: a[d] - b[d] })) }];
+    head = `<div class="px-1 pb-2 text-[11px]">
+      <b>差值</b>：${dgEsc(loaded[0].name)} − ${dgEsc(loaded[1].name)}，
+      单位 ${dgEsc(loaded[0].unit)}。纵轴是真实数值，虚线为 0。</div>`;
+  } else {
+    series = loaded.map((s, i) => {
+      const byDay = byDayOf(s);
+      const base = byDay[days[0]] || 1;
+      return { ...s, color: DG_COMPARE_COLORS[i % 4],
+               pts: days.map((d) => ({ as_of: d, value: (byDay[d] / base) * 100 })) };
+    });
+    head = `<div class="px-1 pb-2 text-[11px] text-[var(--amber)]">
+      已归一化：各序列以 ${dgEsc(days[0])} 为 100。<b>纵轴不是绝对值</b>，只能比趋势，不能比大小。</div>`;
+  }
+
   const all = series.flatMap((s) => s.pts.map((p) => p.value));
   let lo = Math.min(...all), hi = Math.max(...all);
+  if (mode === "diff") { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
   if (lo === hi) { lo -= 1; hi += 1; }
-  const X = (i) => PAD.l + (i / (days.length - 1)) * iw;
+  const padv = (hi - lo) * 0.08;
+  lo -= padv; hi += padv;
   const Y = (v) => PAD.t + ih - ((v - lo) / (hi - lo)) * ih;
-  const grid = [0, 0.5, 1].map((f) => {
+  if (mode === "diff") {
+    zero = `<line x1="${PAD.l}" y1="${Y(0).toFixed(1)}" x2="${w - PAD.r}" y2="${Y(0).toFixed(1)}"
+      stroke="var(--text-muted)" stroke-width="1" stroke-dasharray="4 3" opacity="0.9"/>`;
+  }
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((f) => {
     const v = lo + (hi - lo) * f;
     return `<line x1="${PAD.l}" y1="${Y(v).toFixed(1)}" x2="${w - PAD.r}" y2="${Y(v).toFixed(1)}"
       stroke="var(--line)" stroke-width="0.8"/>
       <text x="${PAD.l - 5}" y="${(Y(v) + 3).toFixed(1)}" text-anchor="end" font-size="9"
-        fill="var(--text-muted)" class="tabular">${v.toFixed(0)}</text>`;
+        fill="var(--text-muted)" class="tabular">${dgEsc(dgFmt(v))}</text>`;
   }).join("");
   const every = Math.max(1, Math.ceil(days.length / 4));
-  const xlab = days.map((d, i) => (i % every === 0 || i === days.length - 1)
-    ? `<text x="${X(i).toFixed(1)}" y="${h - 8}" text-anchor="middle" font-size="9"
-        fill="var(--text-muted)" class="tabular">${dgEsc(d.slice(5))}</text>` : "").join("");
+  const at = days.map((d, i) => i).filter((i) => i % every === 0 || i === days.length - 1);
+  const fmtX = dgAxisDate(at.map((i) => days[i]));
+  const xlab = at.map((i) => `<text x="${X(i).toFixed(1)}" y="${h - 8}" text-anchor="middle"
+      font-size="9" fill="var(--text-muted)" class="tabular">${dgEsc(fmtX(days[i]))}</text>`).join("");
   const lines = series.map((s) => `<path d="${s.pts.map((p, i) =>
     `${i ? "L" : "M"} ${X(i).toFixed(1)} ${Y(p.value).toFixed(1)}`).join(" ")}"
     fill="none" stroke="${s.color}" stroke-width="1.8"/>`).join("");
 
-  box.innerHTML = `
-    <div class="px-1 pb-2 text-[11px] text-[var(--amber)]">
-      已归一化：各序列以 ${dgEsc(days[0])} 为 100。<b>纵轴不是绝对值</b>，只能比趋势，不能比大小。</div>
-    <svg viewBox="0 0 ${w} ${h}" class="w-full" style="height:${h}px">${grid}${xlab}
+  // 图例始终列出篮子里的全部序列——差值模式下也要能把其中一条摘掉
+  const legend = loaded.map((s, i) => {
+    const color = mode === "diff" ? (i ? "var(--text-muted)" : "var(--primary)")
+                                  : DG_COMPARE_COLORS[i % 4];
+    // 归一化模式右侧给区间涨跌幅（图上读不出来）；差值模式给最新原值（图上画的是差，
+    // 两条各自多少反而看不见了）。
+    let tail;
+    if (mode === "diff") {
+      tail = `<span class="tabular text-[var(--text-muted)]">${dgEsc(dgFmt(
+        s.history[s.history.length - 1].value))}</span>`;
+    } else {
+      const pct = series[i].pts[series[i].pts.length - 1].value - 100;
+      const d = dgDir(pct);
+      tail = `<span class="${d.cls} tabular font-semibold">${d.mark}${pct.toFixed(1)}%</span>`;
+    }
+    return `<div class="flex items-center gap-2">
+      <i style="width:10px;height:3px;background:${color};display:inline-block"></i>
+      <span class="flex-1 truncate">${mode === "diff" ? (i ? "− " : "") : ""}${dgEsc(s.name)}
+        <span class="text-[var(--text-muted)]">（${dgEsc(s.unit)}）</span></span>
+      ${tail}
+      <button type="button" onclick="dgDropCompare('${dgEsc(s.series_id)}')" title="从对比中移除"
+        class="text-[var(--text-muted)] hover:text-[var(--alert)]">&times;</button></div>`;
+  }).join("");
+
+  if (mode === "diff") {
+    const pts = series[0].pts;
+    const last = pts[pts.length - 1].value, first = pts[0].value;
+    const flips = pts.filter((p, i) => i && Math.sign(p.value) !== Math.sign(pts[i - 1].value)).length;
+    const d = dgDir(last - first);
+    foot = `<div class="mt-2 text-[11px] tabular">
+      最新差值 <b>${dgEsc(dgNum(last, loaded[0].unit))}</b>
+      <span class="${d.cls}">${d.mark} 较期初 ${dgEsc(dgNum(last - first, ""))}</span></div>
+      ${flips ? `<div class="mt-1 text-[11px] text-[var(--amber)]">
+        区间内正负号翻转 ${flips} 次 —— 方向变过，不是单纯变大变小</div>` : ""}`;
+  } else {
+    // 归一化模式的“涨跌幅”已经写在每条图例右侧，这里不再重复一遍
+    foot = "";
+  }
+
+  box.innerHTML = tabs + head + `
+    <svg viewBox="0 0 ${w} ${h}" class="w-full" style="height:${h}px">${grid}${xlab}${zero || ""}
+      <line x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + ih}"
+            stroke="var(--line-strong)" stroke-width="1"/>
       <line x1="${PAD.l}" y1="${PAD.t + ih}" x2="${w - PAD.r}" y2="${PAD.t + ih}"
             stroke="var(--line-strong)" stroke-width="1"/>${lines}</svg>
-    <div class="mt-2 space-y-1 text-[11px]">
-      ${series.map((s) => {
-        const last = s.pts[s.pts.length - 1].value;
-        const d = dgDir(last - 100);
-        return `<div class="flex items-center gap-2">
-          <i style="width:10px;height:3px;background:${s.color};display:inline-block"></i>
-          <span class="flex-1 truncate">${dgEsc(s.name)}<span class="text-[var(--text-muted)]">（${dgEsc(s.unit)}）</span></span>
-          <span class="${d.cls} tabular font-semibold">${d.mark}${(last - 100).toFixed(1)}%</span>
-          <button type="button" onclick="dgDropCompare('${dgEsc(s.series_id)}')"
-            class="text-[var(--text-muted)] hover:text-[var(--alert)]">&times;</button></div>`;
-      }).join("")}
-    </div>
+    ${foot}
+    <div class="mt-2 pt-2 border-t border-[var(--line)] space-y-1 text-[11px]">${legend}</div>
+    ${!canDiff && loaded.length === 2 ? `<div class="mt-2 text-[10px] text-[var(--amber)]">
+      差值不可用：${dgEsc(why)}。换算口径不该在图上临时拍——要么改绑同口径的指标，
+      要么登记一条派生指标由公式层带守卫地算。</div>` : ""}
     <div class="mt-2 text-[10px] text-[var(--text-muted)]">
       共同时点 ${days.length} 个（${dgEsc(days[0])} ~ ${dgEsc(days[days.length - 1])}）</div>`;
 }
@@ -890,9 +1147,27 @@ function dgToggleJudgment() {
   btn.classList.toggle("bg-[var(--primary-soft)]", dg.judgmentView);
   btn.classList.toggle("text-[var(--primary)]", dg.judgmentView);
   const n = Object.values(dg.values).filter((v) => (v.roles || []).length).length;
+  const j = dg.judgment || {};
   dgRender();
+
+  // 必须说出依据的是哪一版判断：重点关注跟着判断走，判断改版这些高亮就会变。
+  // 不写版本号，看图的人无从知道自己看的是不是最新那一版关心的环节。
+  const bar = document.getElementById("dg-judge-bar");
+  if (bar) {
+    bar.classList.toggle("hidden", !dg.judgmentView);
+    if (dg.judgmentView) {
+      bar.innerHTML = j.version
+        ? `重点关注来自<b>判断 v${j.version}</b>（${dgEsc(j.status)}${
+            j.author ? " · " + dgEsc(j.author) : ""}${
+            j.written_at ? " · 写于 " + dgEsc(j.written_at) : ""}）——
+           ${n} 个环节被它引用，其余淡出。<a href="/sn/judgment"
+           class="underline font-semibold">改判断</a>后这里会跟着变。`
+        : `当前品种还没有判断，因此没有任何环节被标为重点关注。`;
+    }
+  }
   showToast(dg.judgmentView
-    ? `判断视角：${n} 个环节被当前判断引用，其余淡出`
+    ? (j.version ? `判断 v${j.version}：${n} 个环节被引用，其余淡出`
+                 : "还没有判断，没有重点关注")
     : "已回到全图");
 }
 
