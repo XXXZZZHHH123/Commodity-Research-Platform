@@ -20,6 +20,22 @@ from tin.llm.base import (
 )
 
 
+def _unfence(text: str) -> str:
+    """剥掉 ```json ... ``` 围栏。
+
+    json_schema 模式下服务端保证纯 JSON，用不上；但 json_object / none 模式下
+    千问一类的模型习惯性套 markdown 围栏，不剥就是 JSONDecodeError——
+    把一次本来成功的调用判成失败，白白多烧一轮重试。
+    """
+    s = text.strip()
+    if not s.startswith("```"):
+        return s
+    s = s[3:]
+    if s[:4].lower() == "json":
+        s = s[4:]
+    return s.rsplit("```", 1)[0].strip() if "```" in s else s.strip()
+
+
 class OpenAICompatibleProvider:
     """SPEC §4.1 的两个 provider 实现之二。协议是 OpenAI 的，跑的是谁不关心。"""
 
@@ -27,9 +43,13 @@ class OpenAICompatibleProvider:
 
     def __init__(self, *, model: str | None = None, base_url: str | None = None,
                  api_key: str | None = None, timeout: float | None = None,
-                 max_retries: int | None = None, client=None):
+                 max_retries: int | None = None, json_mode: str | None = None, client=None):
         self.model = model or settings.llm_model
         self.base_url = base_url or settings.llm_base_url
+        self._mode = (json_mode or settings.llm_json_mode or "json_schema").strip()
+        if self._mode not in ("json_schema", "json_object", "none"):
+            raise ProviderUnavailable(
+                f"TIN_LLM_JSON_MODE 只能是 json_schema / json_object / none，收到 {self._mode!r}")
         if client is not None:
             self._client = client
             return
@@ -55,32 +75,58 @@ class OpenAICompatibleProvider:
     # ------------------------------------------------------------------ 调用
 
     def complete(self, request: LlmRequest) -> LlmResponse:
-        messages: list[dict] = []
-        if request.system:
-            # 顺序即前缀：稳定的在前，易变的在后，与 Anthropic 侧保持同一条纪律
-            messages.append({"role": "system",
-                             "content": "\n\n".join(b.text for b in request.system)})
-        messages.extend(m.dump() for m in request.messages)
+        system_text = "\n\n".join(b.text for b in request.system) if request.system else ""
+        kwargs: dict = {"model": self.model}
 
-        kwargs: dict = {
-            "model": self.model,
-            "messages": messages,
-            "max_tokens": request.max_tokens,
-        }
-        if request.output_schema is not None:
-            kwargs["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": request.schema_name,
-                    "schema": request.output_schema,
-                    "strict": True,
-                },
-            }
+        if request.output_schema is None:
+            # 自由文本才设 max_tokens
+            kwargs["max_tokens"] = request.max_tokens
+        else:
+            # 结构化输出**不能**设 max_tokens：截断会产出半截 JSON，下游解析必炸。
+            # 阿里云百炼的文档把这条写成了硬性要求，vLLM 上同样是这个道理。
+            # 输出长度改由 prompt 里的篇幅要求控制，不靠硬截。
+            rf = self._response_format(request)
+            if rf is not None:
+                kwargs["response_format"] = rf
+            if self._mode != "json_schema":
+                # 只有 json_schema 由服务端强约束形状。另外两种模式端点最多保证
+                # 「是合法 JSON」，形状得贴 schema 给模型看，最终由证据闸门兜底。
+                # 顺带满足百炼的硬要求：system/user 里必须出现「JSON」关键词，否则直接报错。
+                system_text = "\n\n".join(filter(None, [system_text, self._schema_hint(request)]))
+
+        messages: list[dict] = []
+        if system_text:
+            # 顺序即前缀：稳定的在前，易变的在后，与 Anthropic 侧保持同一条纪律
+            messages.append({"role": "system", "content": system_text})
+        messages.extend(m.dump() for m in request.messages)
+        kwargs["messages"] = messages
 
         started = perf_counter()
         completion = self._client.chat.completions.create(**kwargs)
         latency_ms = int((perf_counter() - started) * 1000)
         return self._to_response(completion, request, latency_ms)
+
+    # ---------------------------------------------------------- 结构化输出模式
+
+    def _response_format(self, request: LlmRequest) -> dict | None:
+        if self._mode == "json_schema":
+            return {"type": "json_schema",
+                    "json_schema": {"name": request.schema_name,
+                                    "schema": request.output_schema, "strict": True}}
+        if self._mode == "json_object":
+            return {"type": "json_object"}
+        return None  # 端点什么都不支持时，形状完全靠 _schema_hint + 闸门
+
+    def _schema_hint(self, request: LlmRequest) -> str:
+        """把 schema 贴给模型看。
+
+        json_schema 模式下服务端会强约束，用不上这段；json_object / none 模式下
+        端点只保证「是合法 JSON」，形状得靠说明，错了由证据闸门打回重试。
+        文中出现「JSON」是硬要求——百炼没有这个词会直接报错。
+        """
+        return ("你必须只输出一个 JSON 对象，不要包含解释文字或 markdown 代码块标记。"
+                "该 JSON 必须符合以下 JSON Schema：\n"
+                + json.dumps(request.output_schema, ensure_ascii=False, indent=2))
 
     # -------------------------------------------------------------- 响应翻译
 
@@ -113,7 +159,7 @@ class OpenAICompatibleProvider:
             return LlmResponse(status=STATUS_ERROR, text=text,
                                error="结构化输出为空", **common)
         try:
-            data = json.loads(text)
+            data = json.loads(_unfence(text))
         except json.JSONDecodeError as exc:
             return LlmResponse(status=STATUS_ERROR, text=text,
                                error=f"结构化输出不是合法 JSON：{exc}", **common)

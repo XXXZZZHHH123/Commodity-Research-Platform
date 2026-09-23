@@ -59,6 +59,9 @@ class GuardResult:
     used_playbook_item_ids: list[int]
     attempts: int                # 一共发了几次调用（1 = 一次就过）
     call_ids: list[int]          # 对应的 llm_calls.id，页面上「为什么这么说」点进去看这个
+    # 交付物缺口（缺区间/缺倾向/零数值引用）。不阻止落库——用就绪率换完整性方向是反的——
+    # 但必须打到页面和 CLI 上，否则半个产品会被当成完整产品用。
+    gaps: list[str] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:
@@ -193,6 +196,32 @@ def verify_draft(session: Session, draft: BriefDraft,
     return kept, rejected
 
 
+def missing_deliverables(draft: BriefDraft, kept: list[Claim]) -> list[str]:
+    """交付物完整性检查。**不参与降级，只进打回反馈。**
+
+    行业标准三件套是基调 + 参考运行区间 + 操作倾向，缺两件就只剩半个产品。
+    但这三样不能做成 schema 必填：必填意味着模型漏一个就整份重来，重试两次
+    都不给就是当天没有简报——用就绪率换完整性，方向是反的。
+
+    所以走「告诉它，但不为此毙掉整份」：第一次漏了，打回时点名让它补；
+    仍然不给就带着缺口落库，由页面和 CLI 打质量警报，研究员自己补。
+
+    同样重要的是数值引用：论断只挂 signal_id 也能通过证据校验，因为压根没有
+    数字要核。这是个退化解——首次打回时模型就是这么「修」的。§6.1 要求
+    100% 的数字可溯源，一个数字都不引等于把那条验收标准架空。
+    """
+    gaps: list[str] = []
+    if draft.price_range is None:
+        gaps.append("缺「参考运行区间」：三件套之一，必须给出区间与它挂靠的 series_id")
+    if not draft.stance:
+        gaps.append("缺「操作倾向」：三件套之一，必须从固定词表里选一个")
+    if kept and not any(e.series_id and e.value is not None
+                        for c in kept for e in c.evidence):
+        gaps.append("没有任何一条论断引用了带数值的 series_id——"
+                    "只挂信号编号属于退化解，至少要有一条论断引用「可引用事实」表里的具体数字")
+    return gaps
+
+
 def _degrade(draft: BriefDraft, kept: list[Claim], rejected: list[dict],
              ctx: EvidenceContext) -> BriefDraft:
     """把没过校验的部分从草稿里摘掉，剩下的照常出。"""
@@ -242,11 +271,14 @@ def compose(session: Session, provider: LlmProvider, request: LlmRequest,
             continue
 
         kept, rejected = verify_draft(session, draft, ctx)
-        if not rejected or attempts > retries:
+        gaps = missing_deliverables(draft, kept)
+        if (not rejected and not gaps) or attempts > retries:
             break
+        # 打回反馈必须报**全部**问题。早先只报证据问题，模型于是只修证据、
+        # 把区间与倾向丢得更干净——它照着反馈修，反馈漏说什么它就不修什么。
         current = current.followup(
             _echo(response.text, response.data),
-            _feedback_text([f"「{r['claim']}」：{'；'.join(r['reasons'])}" for r in rejected]),
+            _feedback_text([f"「{r['claim']}」：{'；'.join(r['reasons'])}" for r in rejected] + gaps),
         )
 
     return GuardResult(
@@ -255,6 +287,7 @@ def compose(session: Session, provider: LlmProvider, request: LlmRequest,
         used_playbook_item_ids=sorted(set(draft.used_playbook_item_ids) & ctx.playbook_item_ids),
         attempts=attempts,
         call_ids=call_ids,
+        gaps=missing_deliverables(draft, kept),
     )
 
 

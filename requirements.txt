@@ -31,3 +31,4 @@ charset-normalizer>=3.3
 
 # 测试
 pytest>=8.3
+openai>=2.0        # OpenAI 兼容端点（阿里云百炼 / 本地 vLLM）
