@@ -12,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from sqlalchemy import select, text
 
+from tin.brief import store as brief_store
 from tin.caliber.dictionary import DIMENSIONS
 from tin.compute.engine import compute_day, latest_trade_date
 from tin.config import SHANGHAI, settings
@@ -36,11 +37,15 @@ from tin.export import templates as export_templates
 from tin.export.excel import Column, build_export, build_import_template, field_catalog
 from tin.ingest import excel_importer, import_jobs, vendor_terminal
 from tin.ingest.record import RecordError, record
+from tin.jobs.seed import seed_researcher
 from tin.judgments.importer import import_text
 from tin.judgments.service import JudgmentError, current, save_version, to_payload
-from tin.models import AuditLog, Indicator, Judgment, TradingDay
+from tin.models import AuditLog, DailyBrief, Indicator, Judgment, TradingDay
+from tin.schemas.brief import STANCES
 from tin.schemas.caliber import Caliber
+from tin.schemas.judgment import TONES
 from tin.schemas.observation import ObservationIn
+from tin.web import home
 
 HERE = Path(__file__).parent
 app = FastAPI(title="大宗商品研究工作台")
@@ -135,17 +140,141 @@ def _shell(s, nav: str, d: date | None = None, **extra) -> dict:
     return {**ctx, **extra}
 
 
+def _home_date(s, q: str | None) -> date | None:
+    """首屏的日期比 `/sn` 宽容：没有行情数据也得出得来。
+
+    `/sn` 是数据看板，没数据就该 503；首屏是「今天我该干什么」，待办与简报跟行情在不在
+    没关系。整页 503 等于把人关在门外，而北极星恰恰是「我每天真的会打开它」。
+    """
+    if q:
+        return _board_date(s, q)
+    return latest_trade_date(s)
+
+
 @app.get("/")
-def root():
-    return RedirectResponse(f"/{V.lower()}")
+def home_page(request: Request, date: str | None = None, err: str | None = None):
+    """首屏工作台（F9）：待办 → 今日简报 → 昨夜变化 → 全景数据墙（默认折叠）。"""
+    with SessionLocal() as s:
+        d = _home_date(s, date)
+        researcher = seed_researcher(s)
+        brief = brief_store.current(s, researcher.id, V, d) if d is not None else None
+        return templates.TemplateResponse(request, "home.html", _shell(
+            s, "home", d,
+            researcher=researcher,
+            todos=home.todos(s, V, d),
+            brief=home.brief_view(s, brief, d) if brief is not None else None,
+            brief_gap=None if brief is not None else home.brief_gap(s, researcher, d),
+            changes=home.overnight(s, V, d) if d is not None else {"core": [], "macro": []},
+            cards=core_cards(s, V, d) if d is not None else [],
+            radar=threshold_radar(s, V, d) if d is not None else [],
+            gaps=gaps(s, V, d) if d is not None else [],
+            tones=TONES, stances=STANCES, editable=brief_store.EDITABLE_FIELDS, err=err))
+
+
+@app.post("/api/sn/brief/{brief_id}/review")
+def brief_review(brief_id: int, body: dict = Body(...)):
+    """研究员的「采纳 / 改 / 否」。规则全在 `brief/store.review` 里，这里只负责转述。
+
+    `store.BriefError` 一律转成 400 + 原文案：那些规则（改/否必须写原因、系统留痕不可
+    改写）是写给研究员看的，包成「操作失败」或者漏成 500 就白写了。
+    """
+    action = str(body.get("action") or "").strip()
+    reason = body.get("reason")
+    reason = str(reason).strip() if reason is not None else None
+    changes = body.get("changes") or None
+    if changes is not None and not isinstance(changes, dict):
+        raise HTTPException(400, "changes 必须是「字段名 → 新值」的对象")
+    elapsed = body.get("elapsed_seconds")
+    if elapsed is not None:
+        try:
+            elapsed = max(0, int(elapsed))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "elapsed_seconds 必须是秒数（整数）") from None
+
+    with SessionLocal() as s:
+        actor = str(body.get("actor") or "").strip() or seed_researcher(s).display_name
+        try:
+            revisions = brief_store.review(s, brief_id, actor=actor, action=action, changes=changes,
+                                           reason=reason, elapsed_seconds=elapsed)
+        except brief_store.BriefError as e:
+            raise HTTPException(400, str(e)) from None
+        brief = s.get(DailyBrief, brief_id)
+        return JSONResponse({"brief_id": brief_id, "status": brief.status, "actor": actor,
+                             "revisions": len(revisions), "elapsed_seconds": elapsed,
+                             "fields": [r.field for r in revisions if r.field]})
+
+
+@app.post("/api/sn/brief/{brief_id}/reopen")
+def brief_reopen(brief_id: int, body: dict = Body(...)):
+    """把已处理的简报退回草稿，让重跑能再次生成。
+
+    误点一次「否」不该让研究员当天再也拿不到简报——`save()` 拒绝覆盖已处理简报是对的，
+    但没有这个出口就是死胡同。
+    """
+    reason = str(body.get("reason") or "").strip()
+    with SessionLocal() as s:
+        actor = str(body.get("actor") or "").strip() or seed_researcher(s).display_name
+        try:
+            brief_store.reopen(s, brief_id, actor=actor, reason=reason)
+        except brief_store.BriefError as e:
+            raise HTTPException(400, str(e)) from None
+        return JSONResponse({"brief_id": brief_id, "status": "草稿", "actor": actor})
+
+
+@app.post("/api/sn/review-task/{task_id}/resolve")
+def review_task_resolve(task_id: int, body: dict = Body(...)):
+    """关闭一条复盘待办。
+
+    待办只增不减的话，首屏那块「少而紧急」几天就变成第二面数据墙——
+    而它短，恰恰是首屏全部价值所在。
+    """
+    from tin.compute.signals import resolve_review_task
+
+    note = str(body.get("note") or "").strip()
+    with SessionLocal() as s:
+        actor = str(body.get("actor") or "").strip() or seed_researcher(s).display_name
+        try:
+            task = resolve_review_task(s, task_id, actor=actor, note=note)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        return JSONResponse({"task_id": task.id, "state": task.state, "actor": actor,
+                             "resolved_at": task.resolved_at.isoformat()})
+
+
+def _schema_state() -> tuple[str | None, str | None]:
+    """（库里的 alembic 版本, 代码期望的 head）。取不到就返回 None，不让体检本身把进程弄挂。"""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    from tin.config import ROOT
+
+    try:
+        head = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini"))).get_current_head()
+    except Exception:
+        head = None
+    try:
+        with SessionLocal() as s:
+            current = s.execute(text("SELECT version_num FROM alembic_version")).scalar()
+    except Exception:
+        current = None
+    return current, head
 
 
 @app.get("/healthz", include_in_schema=False)
 def healthz():
-    """Deployment health check: the process and its configured database must both work."""
+    """部署闸门。进程活着、数据库连得上、**且表结构是代码期望的那一版**。
+
+    原来这里只做 `SELECT 1`：库落后两个迁移照样返回 ok，部署脚本据此判定成功，
+    而应用其实一点开页面就 500。体检报平安、病人躺地上，是最坏的一种失败。
+    所以版本不一致必须是 503——宁可让部署红，也不要让它假绿。
+    """
     with SessionLocal() as s:
         s.execute(text("SELECT 1"))
-    return {"status": "ok"}
+    current, head = _schema_state()
+    if head is not None and current != head:
+        raise HTTPException(503, f"数据库表结构落后于代码：库内 {current or '无版本记录'}，"
+                                 f"代码期望 {head}。请在该机器上执行 alembic upgrade head。")
+    return {"status": "ok", "schema": current}
 
 
 @app.get("/sn")

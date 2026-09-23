@@ -37,16 +37,16 @@
 
 <nav class="top sticky top-0 z-30 flex items-center justify-between gap-4 px-6 h-14 bg-[var(--surface)]/95 backdrop-blur-md border-b border-[var(--line)]">
   <div class="flex items-center gap-5 min-w-0">
-    <a href="/sn" class="flex items-center gap-2.5 font-bold tracking-tight text-[var(--text)] shrink-0">
+    <a href="/" class="flex items-center gap-2.5 font-bold tracking-tight text-[var(--text)] shrink-0">
       <span class="grid place-items-center w-7 h-7 rounded-md bg-[var(--text)] text-[var(--surface)] text-xs font-black tracking-wider">SN</span>
       <span class="text-sm font-semibold hidden sm:inline">锡研究工作台</span>
     </a>
     <div class="flex items-center gap-1 text-xs overflow-x-auto">
       {% for key, num, label, href in [
-        ('variety', '01', '总览', '/sn'), ('macro', '02', '宏观', '/sn/macro'),
+        ('home', '00', '工作台', '/'), ('variety', '01', '总览', '/sn'), ('macro', '02', '宏观', '/sn/macro'),
         ('judgment', '03', '判断', '/sn/judgment'), ('indicators', '04', '指标', '/sn/indicators'),
         ('reports', '05', '日报', '/sn/reports'), ('entry', '06', '录入通道', '/sn/entry')] %}
-      <a href="{{ href }}{% if key in ('variety', 'macro') and d %}?date={{ d }}{% endif %}"
+      <a href="{{ href }}{% if key in ('home', 'variety', 'macro') and d %}?date={{ d }}{% endif %}"
          class="nav-btn shrink-0 px-3 py-1.5 rounded-md font-medium {{ 'active text-[var(--primary)]' if nav == key else 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-soft)]' }}">
         <span class="tabular">{{ num }}</span> {{ label }}</a>
       {% endfor %}

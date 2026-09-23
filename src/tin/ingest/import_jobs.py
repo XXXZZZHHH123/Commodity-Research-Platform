@@ -39,6 +39,9 @@ class Job:
     written: int = 0
     unchanged: int = 0
     rejected: list[str] = field(default_factory=list)
+    # 编码与列映射缓存都没认出来的列，带指纹与列名，等人确认一次（确认后同格式自动命中）
+    unmapped_columns: list[dict] = field(default_factory=list)
+    column_cache_hits: int = 0
     error: str | None = None
     token: str = ""      # 暂存文件名，不随状态返回给前端
     variety: str = "SN"
@@ -138,6 +141,8 @@ def execute(job_id: str) -> None:
         with _LOCK:
             job.registered, job.written = report.registered, report.written
             job.unchanged, job.rejected = report.unchanged, report.rejected[:20]
+            job.unmapped_columns = report.unmapped_columns[:50]
+            job.column_cache_hits = report.column_cache_hits
             job.state = "done"
     except Exception as exc:  # noqa: BLE001 - 后台任务的异常没有别处可去，必须留在状态里
         with _LOCK:
