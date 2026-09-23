@@ -243,12 +243,32 @@ def to_dict(row) -> dict:
             "layout": row.layout, "updated_at": row.updated_at.isoformat()}
 
 
+class NeedsMigration(DiagramError):
+    """库里还没有产业图的表。这不是坏数据，是少跑了一次迁移。"""
+
+
 def list_templates(session: Session, variety: str) -> list[dict]:
+    from sqlalchemy.exc import OperationalError, ProgrammingError
+
     from tin.models import DiagramTemplate
 
-    rows = session.scalars(select(DiagramTemplate).where(DiagramTemplate.variety == variety)
-                           .order_by(DiagramTemplate.is_default.desc(),
-                                     DiagramTemplate.updated_at.desc())).all()
+    try:
+        rows = session.scalars(select(DiagramTemplate).where(DiagramTemplate.variety == variety)
+                               .order_by(DiagramTemplate.is_default.desc(),
+                                         DiagramTemplate.updated_at.desc())).all()
+    except (OperationalError, ProgrammingError) as e:
+        # 缺表甩一个 SQL 堆栈的 500 出来，等于让人自己去猜要跑迁移。
+        # 这个分支只认「表不存在」，其余数据库错误照常抛出，不掩盖真问题。
+        text_of = str(e.orig if getattr(e, "orig", None) else e).lower()
+        if "diagram_templates" in text_of and (
+                "no such table" in text_of or "does not exist" in text_of
+                or "doesn't exist" in text_of):
+            session.rollback()
+            raise NeedsMigration(
+                "产业图的数据表还没建 —— 这个库停在旧版本，少跑了一次迁移。\n"
+                "在项目目录下执行：conda activate tin && alembic upgrade head\n"
+                "（只新增一张空表 diagram_templates，不动任何已有数据）") from None
+        raise
     return [to_dict(r) for r in rows]
 
 

@@ -281,14 +281,28 @@ def diagram_page(request: Request, template: int | None = None):
     with SessionLocal() as s:
         # 这里原来无条件返回默认布局，`?template=` 被整个忽略——下拉框选哪张都回到同一张，
         # 新建的布局也永远打不开。切换布局是这个页面最基本的操作之一。
-        default = diagram_api.ensure_default(s, V)
-        rows = diagram_api.list_templates(s, V)
+        try:
+            default = diagram_api.ensure_default(s, V)
+            rows = diagram_api.list_templates(s, V)
+        except diagram_api.NeedsMigration as e:
+            # 缺表是"少跑了一次迁移"，不是故障。页面照常出，把该敲的命令写清楚，
+            # 而不是丢一个 SQL 堆栈让人自己猜。
+            return templates.TemplateResponse(request, "diagram.html", _shell(
+                s, "diagram", latest_trade_date(s), template=None,
+                templates_all=[], setup_error=str(e),
+                project_root=str(Path(__file__).resolve().parents[3])))
         tpl = next((t for t in rows if t["id"] == template), None) if template else None
         if template is not None and tpl is None:
             raise HTTPException(404, f"没有这张布局：{template}")
         return templates.TemplateResponse(request, "diagram.html", _shell(
             s, "diagram", latest_trade_date(s), template=tpl or default,
             templates_all=rows))
+
+
+@app.exception_handler(diagram_api.NeedsMigration)
+def _needs_migration(request: Request, exc: diagram_api.NeedsMigration):
+    """产业图接口遇到缺表时，回一个说得清的 503，而不是 500 加一段 SQL。"""
+    return JSONResponse({"detail": str(exc)}, status_code=503)
 
 
 @app.get("/api/sn/diagram/values")

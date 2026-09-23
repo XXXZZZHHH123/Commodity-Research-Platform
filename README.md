@@ -17,6 +17,7 @@ pip install -r requirements.txt && pip install -e .
 
 ```bash
 python -m tin.jobs init                     # 建库 + 导入指标登记表与锡判断 v1
+alembic upgrade head                        # 拉了新代码就先跑这个：把已有的库升到最新表结构
 python -m tin.jobs daily                    # 取数 → 计算派生值 → 导出当日 JSON 快照
 python -m tin.jobs fetch --date 2026-09-18 --only fred_macro  # 单独更新宏观序列
 python -m tin.jobs backfill --days 14       # 回补近 14 天上期所数据与 VIX
@@ -25,6 +26,11 @@ uvicorn tin.web.app:app --host 0.0.0.0 --port 8765
 # 批量导入：/sn/entry 页「下载导入模板」→ 填好后「批量导入 Excel」→ 预览确认 → 入库
 pytest
 ```
+
+> **拉取新代码后先 `alembic upgrade head`。** `init` 只在建新库时用一次；已有的库靠迁移升级。
+> 漏了这一步，新功能的页面会因为表不存在而报错（产业图页会直接把该敲的命令写在页面上）。
+> 同理，**改了 Python 代码要重启 uvicorn**——静态文件每次请求都从磁盘读，Python 是进程启动时
+> 加载的，不重启就会出现"前端是新的、后端是旧的"，新接口返回 405。
 
 数据商终端（SMM / 钢联）导出的整本工作簿走整体导入（几十万条，逐行预览装不下）：
 

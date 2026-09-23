@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from tin.config import SHANGHAI
 from tin.export import diagram, diagram_md
@@ -366,3 +367,45 @@ def test_rewriting_a_layout_that_does_not_exist_is_rejected(client, session):
     r = client.post("/api/sn/diagram/markdown",
                     json={"markdown": "# x\n\n## 组\n- 甲\n", "into": 99999})
     assert r.status_code == 404
+
+
+# ---------- 库没迁移时的失败姿态 ----------
+
+def test_missing_table_explains_the_migration_instead_of_a_500(client, session):
+    """少跑一次迁移不是故障，不该甩一段 SQL 堆栈出来。
+
+    实际发生过：本地库停在上一个版本，打开产业图页只得到一句
+    `Internal Server Error`，终端里是一大段 SELECT diagram_templates 的 SQL——
+    要从那里推出"该跑 alembic upgrade head"，得先读懂 SQLAlchemy 的报错格式。
+    """
+    session.execute(text("DROP TABLE diagram_templates"))
+    session.commit()
+
+    # 页面照常出，并写清楚该敲什么命令
+    r = client.get("/sn/diagram")
+    assert r.status_code == 200, "缺表不该 500"
+    assert "alembic upgrade head" in r.text
+    assert "不动任何已有数据" in r.text, "要说清这次迁移的影响面，否则没人敢跑"
+
+    # 接口给 503 + 同一句话，不是 500
+    r = client.get("/api/sn/diagram/values?template_id=1")
+    assert r.status_code == 503
+    assert "alembic upgrade head" in r.json()["detail"]
+
+    # 其余页面不受影响——缺的只是产业图那一张表
+    assert client.get("/sn/indicators").status_code == 200
+
+
+def test_a_real_database_error_is_not_swallowed_as_a_migration_hint():
+    """只认「表不存在」。把别的数据库错误也说成"去跑迁移"，是把真问题盖掉。"""
+    from sqlalchemy.exc import OperationalError
+
+    class Boom:
+        def scalars(self, *a, **k):
+            raise OperationalError("SELECT 1", {}, Exception("database is locked"))
+
+        def rollback(self):
+            pass
+
+    with pytest.raises(OperationalError):
+        diagram.list_templates(Boom(), "SN")
