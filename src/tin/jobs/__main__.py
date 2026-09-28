@@ -8,13 +8,15 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from sqlalchemy.exc import IntegrityError
+
 from tin.compute.engine import compute_day, latest_trade_date
 from tin.config import ROOT, SHANGHAI, settings
 from tin.db import SessionLocal
 from tin.export.board import snapshot
 from tin.ingest.record import record
 from tin.ingest.runner import fetch_all
-from tin.jobs.seed import seed_indicators, seed_judgment
+from tin.jobs.seed import seed_indicators, seed_judgment, seed_researcher
 from tin.models import Indicator
 from tin.schemas.caliber import Caliber
 from tin.schemas.observation import ObservationIn
@@ -29,6 +31,8 @@ def cmd_init(_a):
     subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=ROOT, check=True)
     with SessionLocal() as s:
         print(f"登记指标 {seed_indicators(s)} 个")
+        r = seed_researcher(s)
+        print(f"研究员 {r.display_name}（{r.username}，id={r.id}）")
         j = seed_judgment(s)
         print(f"导入判断 v{j.version}（{j.status}）" if j else "判断已存在，跳过导入")
 
@@ -49,6 +53,45 @@ def cmd_compute(a):
             print(f"{d} {r.formula_id:12s} {r.status:28s} {shown:>12s}  {r.note or ''}")
 
 
+def cmd_signals(a):
+    """把当日事实与生效判断逐条对上。纯确定性，不经过 LLM。"""
+    from tin.compute.signals import evaluate_signals
+
+    with SessionLocal() as s:
+        d = date.fromisoformat(a.date) if a.date else latest_trade_date(s)
+        if d is None:
+            sys.exit("交易日历为空：请先 fetch 行情")
+        signals, tasks = evaluate_signals(s, settings.variety, d)
+        for x in signals:
+            print(f"{d} {x.rule_type:10s} {x.rule_id:22s} {x.state:4s}  {x.gap_note or ''}")
+        hit = sum(1 for x in signals if x.state == "触发")
+        gap = sum(1 for x in signals if x.state == "数据缺失")
+        print(f"共 {len(signals)} 条：触发 {hit}，数据缺失 {gap}；新建复盘待办 {len(tasks)} 条")
+
+
+def cmd_brief(a):
+    """出当日简报草稿。LLM 只在这一步出现，且它看到的信号已经是算好的事实。"""
+    from tin.brief.compose import ComposeError, compose_daily
+    from tin.llm.base import LlmError
+
+    with SessionLocal() as s:
+        d = date.fromisoformat(a.date) if a.date else latest_trade_date(s)
+        if d is None:
+            sys.exit("交易日历为空：请先 fetch 行情")
+        me = seed_researcher(s)
+        try:
+            b = compose_daily(s, settings.variety, d, researcher_id=me.id)
+        except (ComposeError, LlmError) as exc:
+            # SPEC §7：失败时降级为「只做确定性信号，不出简报」，而不是出一份差的。
+            # daily 不因此中断——信号和快照照常完成。
+            print(f"{d} 未生成简报：{exc}")
+            return
+        print(f"{d} 简报 #{b.id}  {b.tone} / {b.stance or '—'} / "
+              f"区间 {b.range_low}–{b.range_high}")
+        print(f"  引用思路 {b.playbook_item_ids or '无（冷启动）'}；"
+              f"标灰未通过校验 {len(b.unverified)} 条")
+
+
 def cmd_snapshot(a):
     with SessionLocal() as s:
         d = date.fromisoformat(a.date) if a.date else latest_trade_date(s)
@@ -62,6 +105,9 @@ def cmd_daily(a):
     cmd_fetch(a)
     a.date = None
     cmd_compute(a)
+    # 信号必须在快照之前：快照只读已落库的信号，不自己重算（两处各算一遍必然对不上）
+    cmd_signals(a)
+    cmd_brief(a)
     cmd_snapshot(a)
 
 
@@ -134,6 +180,56 @@ def cmd_import_terminal(a):
         print("  拒绝：", r)
 
 
+def cmd_map_columns(a):
+    """列出终端导出里还没对上指标的列，并给出候选。
+
+    这是「每次导出都要拿给 AI 认列」→「只有新格式才要人看」的那一步：
+    已确认过的映射按表头指纹自动命中，这里只剩真正需要人拍板的。
+    """
+    from tin.ingest import vendor_terminal
+    from tin.ingest.column_map import suggest
+
+    with SessionLocal() as s:
+        rep = vendor_terminal.summarize(s, a.file, settings.variety)
+        unmapped = rep.get("unmapped_columns") or []
+        print(f"缓存命中 {rep.get('column_cache_hits', 0)} 列；待确认 {len(unmapped)} 列")
+        for sheet, fp in (rep.get("column_fingerprints") or {}).items():
+            print(f"  工作表「{sheet}」指纹 {fp}")
+        if not unmapped:
+            return
+        by_sheet: dict[str, list[dict]] = {}
+        for u in unmapped:
+            by_sheet.setdefault(u.get("sheet") or "", []).append(u)
+        for sheet, items in by_sheet.items():
+            names = [u["column_name"] for u in items]
+            for sug in suggest(s, a.vendor, names, names):
+                print(f"\n  [{sheet}] {sug['column_name']}（{sug['source']}）")
+                for c in sug["candidates"][:3]:
+                    print(f"      {c['confidence']:3d}%  {c['series_id']:32s} {c['name']}  ← {c['reason']}")
+                if not sug["candidates"]:
+                    print("      无候选：该列可能是新指标，需先在指标页登记")
+
+
+def cmd_confirm_columns(a):
+    """把人拍板的列映射写进缓存。此后同指纹的导出自动命中，不再问人。"""
+    from tin.ingest.column_map import confirm
+
+    mapping = {}
+    for pair in a.col:
+        if "=" not in pair:
+            sys.exit(f"--col 需要写成 「列名=series_id」，收到：{pair}")
+        name, sid = pair.split("=", 1)
+        mapping[name.strip()] = sid.strip()
+    with SessionLocal() as s:
+        try:
+            n = confirm(s, a.vendor, a.fingerprint, mapping, actor=a.by)
+            s.commit()
+        except IntegrityError as e:
+            s.rollback()
+            sys.exit(f"映射写入失败——series_id 必须是已登记指标：{e.orig}")
+    print(f"已确认 {n} 列映射（指纹 {a.fingerprint}）")
+
+
 def cmd_enter(a):
     with SessionLocal() as s:
         ind = s.get(Indicator, a.series_id)
@@ -154,7 +250,10 @@ def main():
     sub = p.add_subparsers(required=True)
     sub.add_parser("init", help="建库并导入种子").set_defaults(fn=cmd_init)
     for name, fn, h in (("fetch", cmd_fetch, "取数"), ("compute", cmd_compute, "计算派生值"),
-                        ("snapshot", cmd_snapshot, "导出 JSON 快照"), ("daily", cmd_daily, "取数+计算+快照")):
+                        ("signals", cmd_signals, "比对事实与判断，产出信号与复盘待办"),
+                        ("brief", cmd_brief, "出当日简报草稿（唯一用到 LLM 的一步）"),
+                        ("snapshot", cmd_snapshot, "导出 JSON 快照"),
+                        ("daily", cmd_daily, "取数+计算+信号+简报+快照")):
         sp = sub.add_parser(name, help=h)
         sp.add_argument("--date", help="YYYY-MM-DD，默认今天/最近交易日")
         if name in ("fetch", "daily"):
@@ -183,6 +282,17 @@ def main():
     sp.add_argument("--no-register", action="store_true",
                     help="拒绝库里没见过的编码，只更新已登记序列；无人值守的定时导入必须加这个")
     sp.set_defaults(fn=cmd_import_terminal)
+    sp = sub.add_parser("map-columns", help="列出终端导出里待确认的列映射与候选")
+    sp.add_argument("--file", required=True, help="终端导出的 .xlsx")
+    sp.add_argument("--vendor", default="Mysteel", help="数据商：SMM / Mysteel")
+    sp.set_defaults(fn=cmd_map_columns)
+    sp = sub.add_parser("confirm-columns", help="确认列映射，此后同指纹导出自动命中")
+    sp.add_argument("--fingerprint", required=True, help="map-columns 打印的表头指纹")
+    sp.add_argument("--vendor", required=True, help="数据商：SMM / Mysteel")
+    sp.add_argument("--by", required=True, help="确认人")
+    sp.add_argument("--col", action="append", required=True, metavar="列名=series_id",
+                    help="可重复：--col '锡锭社会库存=MYSTEEL.SN.stock.social'")
+    sp.set_defaults(fn=cmd_confirm_columns)
     sp = sub.add_parser("enter", help="人工录入一条观测")
     sp.add_argument("series_id")
     sp.add_argument("value", type=float)

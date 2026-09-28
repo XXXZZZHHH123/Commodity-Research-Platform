@@ -1,0 +1,399 @@
+{% extends "base.html" %}
+{% from "_card.html" import card %}
+{% block title %}锡 SN · 今日工作台{% endblock %}
+{% block main %}
+
+{#
+  首屏四个区，从上到下就是研究员早上的动作顺序：
+  01 待办（少而紧急）→ 02 今日简报（主体，带采纳/改/否）→ 03 昨夜变化 → 04 数据墙（折叠）。
+  数据墙不重做，折起来放在最后——它在 /sn 已经有一整页。
+#}
+
+<div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[var(--line-strong)]">
+  <div>
+    <div class="text-[10px] font-bold tracking-widest text-[var(--primary)] uppercase mb-1">DAILY WORKBENCH · SN</div>
+    <h1 class="text-2xl font-black tracking-tight flex items-center gap-3 flex-wrap">今天我该干什么
+      {% if d %}<span class="text-xs font-normal px-2 py-0.5 rounded bg-[var(--surface-soft)] text-[var(--text-muted)] border border-[var(--line)] tabular">{{ d }}</span>{% endif %}
+    </h1>
+    <p class="text-xs text-[var(--text-muted)] mt-1">
+      {{ researcher.display_name }} 的工作台 · 待办与简报按研究员过滤 · 全景数据留在
+      <a href="/sn{% if d %}?date={{ d }}{% endif %}" class="text-[var(--primary)] hover:underline">总览页</a>
+    </p>
+  </div>
+  <div class="flex items-center gap-6 text-right shrink-0">
+    <div>
+      <div class="text-xl font-bold tabular {{ 'text-[var(--alert)]' if todos else '' }}">{{ todos | length }}</div>
+      <div class="text-[11px] text-[var(--text-muted)]">待办</div>
+    </div>
+    <div class="h-8 w-px bg-[var(--line)]"></div>
+    <div>
+      <div class="text-xl font-bold tabular">{{ changes.core | length }}</div>
+      <div class="text-[11px] text-[var(--text-muted)]">核心数字有变化</div>
+    </div>
+  </div>
+</div>
+
+{# ---------- 01 待办 ---------- #}
+<section class="space-y-3">
+  <div class="flex items-center gap-2">
+    <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">01</span>
+    <h2 class="text-sm font-bold">待办</h2>
+    <span class="text-xs text-[var(--text-muted)]">证伪触发 · 判断到期 · 指标断供</span>
+  </div>
+
+  {% if todos %}
+  <div id="home-todos" class="rounded-lg border border-[var(--line)] bg-[var(--surface)] shadow-sm divide-y divide-[var(--line)] overflow-hidden">
+    {% for t in todos %}
+    <div class="flex items-start justify-between gap-3 px-4 py-3 hover:bg-[var(--surface-soft)]">
+      <div class="min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="px-1.5 py-0.5 text-[10px] font-bold rounded border shrink-0
+            {% if t.kind == '证伪触发' %}bg-[var(--alert-soft)] text-[var(--alert)] border-[var(--alert)]/20
+            {% elif t.kind == '判断到期' %}bg-[var(--amber-soft)] text-[var(--amber)] border-[var(--amber)]/20
+            {% else %}bg-[var(--surface-soft)] text-[var(--text-muted)] border-[var(--line)]{% endif %}">{{ t.kind }}</span>
+          <span class="text-sm font-bold text-[var(--text)] truncate">{{ t.title }}</span>
+        </div>
+        {% if t.detail %}<p class="text-[11px] text-[var(--text-muted)] mt-1 leading-relaxed">{{ t.detail }}</p>{% endif %}
+        <div class="text-[10px] text-[var(--text-muted)] mt-1 flex items-center gap-2 flex-wrap">
+          {% if t.series_id %}<span class="tabular">{{ t.series_id }}</span>{% endif %}
+          {% if t.assignee %}<span>· 负责人 {{ t.assignee }}</span>{% endif %}
+          {% if t.created_at %}<span>· 生成于 {{ t.created_at }}</span>{% endif %}
+        </div>
+      </div>
+      <a href="{{ t.href }}" class="shrink-0 px-2.5 py-1 text-xs font-semibold rounded bg-[var(--primary)] text-white hover:bg-[var(--primary-hover)] whitespace-nowrap">{{ t.cta }} &rarr;</a>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-4 py-5 text-sm text-[var(--text-muted)]">
+    今天没有待办：证伪条件没触发、判断没到复盘期、引用的指标也都有数。
+  </div>
+  {% endif %}
+</section>
+
+{# ---------- 02 今日简报 ---------- #}
+<section class="space-y-3">
+  <div class="flex items-center gap-2">
+    <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">02</span>
+    <h2 class="text-sm font-bold">今日简报</h2>
+    <span class="text-xs text-[var(--text-muted)]">基调 · 参考运行区间 · 操作倾向 · 证据链</span>
+  </div>
+
+  {% if brief is none %}
+  {# 降级路径：没简报不等于整页崩。说清原因，待办与异动照常显示。 #}
+  <div id="brief-missing" class="rounded-lg border border-dashed border-[var(--line-strong)] bg-[var(--surface)] px-4 py-5">
+    <div class="text-sm font-bold text-[var(--text)]">今天还没有简报</div>
+    <p class="text-xs text-[var(--text-muted)] mt-1.5 leading-relaxed">{{ brief_gap }}</p>
+    <p class="text-[11px] text-[var(--text-muted)] mt-2">
+      外部 API 断连时系统降级为「只做确定性信号，不出简报」，而不是出一份差的。
+    </p>
+  </div>
+
+  {% else %}
+  {# 「改」要回传完整 claims；这里给的是库里原样那份，不带页面渲染补上的指标名与来源 #}
+  <script id="brief-claims" type="application/json">{{ brief.claims_raw | tojson }}</script>
+  <div id="brief-card" data-brief-id="{{ brief.id }}"
+       class="rounded-xl border border-[var(--line)] bg-[var(--surface)] shadow-sm overflow-hidden">
+
+    <div class="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-[var(--line)] flex-wrap">
+      <div class="min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+          {% if brief.is_draft %}
+          {# SPEC §7：LLM 独立出结论但说错会毁信任，所以草稿必须显著标注，研究员动过之后才摘 #}
+          <span id="brief-draft-flag" class="px-2 py-0.5 text-[10px] font-bold rounded border bg-[var(--amber-soft)] text-[var(--amber)] border-[var(--amber)]/30">
+            AI 草稿，未经研究员确认</span>
+          {% else %}
+          <span id="brief-status-flag" class="px-2 py-0.5 text-[10px] font-bold rounded border bg-[var(--primary-soft)] text-[var(--primary)] border-[var(--primary)]/20">{{ brief.status }}</span>
+          {% endif %}
+          {% if brief.unverified %}
+          <span class="px-2 py-0.5 text-[10px] font-bold rounded border bg-[var(--alert-soft)] text-[var(--alert)] border-[var(--alert)]/20">
+            {{ brief.unverified | length }} 条未通过证据校验</span>
+          {% endif %}
+        </div>
+        <div class="mt-2 flex items-baseline gap-3 flex-wrap">
+          <span id="brief-tone" class="text-2xl font-black tracking-tight text-[var(--primary)]">{{ brief.tone or '未定基调' }}</span>
+          <span id="brief-stance" class="text-sm font-semibold text-[var(--text)]">{{ brief.stance or '未给操作倾向' }}</span>
+        </div>
+      </div>
+      <div class="text-right text-[10px] text-[var(--text-muted)] shrink-0 space-y-0.5">
+        <div class="tabular">交易日 {{ brief.trade_date }}</div>
+        {% if brief.generated_at %}<div>生成于 {{ brief.generated_at }}</div>{% endif %}
+        {% if brief.model %}<div class="tabular">{{ brief.model }}</div>{% endif %}
+        {% if brief.reviewed_by %}<div>{{ brief.reviewed_by }} 于 {{ brief.reviewed_at }} 处理</div>{% endif %}
+      </div>
+    </div>
+
+    <div class="px-5 py-4 space-y-4">
+      {% if brief.range_low is not none and brief.range_high is not none %}
+      <div class="flex items-center gap-3 flex-wrap p-3 rounded-lg bg-[var(--surface-soft)] border border-[var(--line)]">
+        <span class="text-[11px] font-semibold text-[var(--text-muted)]">参考运行区间</span>
+        <span id="brief-range" class="text-lg font-black tabular text-[var(--text)]">
+          {{ brief.range_low | num('元/吨') }} – {{ brief.range_high | num('元/吨') }}</span>
+        <span class="text-[10px] text-[var(--text-muted)] tabular">
+          挂在 {{ brief.range_name or brief.range_series_id }}（{{ brief.range_series_id }}）</span>
+        <span class="text-[10px] text-[var(--text-muted)] ml-auto">是区间不是点位</span>
+      </div>
+      {% endif %}
+
+      {% if brief.summary %}
+      <p id="brief-summary" class="text-sm leading-relaxed text-[var(--text)]">{{ brief.summary }}</p>
+      {% endif %}
+
+      {% if brief.claims %}
+      <div class="space-y-2">
+        <div class="text-[11px] font-semibold text-[var(--text-muted)]">证据链（每个数字都可点开看 series_id、取数时间与来源）</div>
+        {% for c in brief.claims %}
+        {% set ci = loop.index0 %}
+        <div class="pl-3 border-l-2 rounded-r-lg bg-[var(--surface-soft)]/50 p-2.5
+          {{ 'border-[var(--primary)]/70' if c.side == 'bull' else 'border-[var(--alert)]/70' if c.side == 'bear' else 'border-[var(--line-strong)]' }}">
+          <p class="text-xs leading-relaxed text-[var(--text)]">{{ c.text }}</p>
+          <div class="mt-1.5 flex items-center gap-1.5 flex-wrap">
+            {% for e in c.evidence %}
+            {% set eid = "ev-" ~ ci ~ "-" ~ loop.index0 %}
+            <span class="relative inline-block">
+              <button type="button" data-popover-trigger onclick="togglePopover('{{ eid }}')"
+                      class="px-1.5 py-0.5 text-[10px] font-semibold rounded border border-[var(--line)] bg-[var(--surface)] text-[var(--primary)] hover:bg-[var(--primary-soft)] tabular">
+                {% if e.series_id %}{{ e.name or e.series_id }}{% if e.value is not none %} {{ e.value | num(e.unit) }}{% endif %}
+                {% elif e.playbook_item_id %}思路 #{{ e.playbook_item_id }}
+                {% else %}信号 #{{ e.signal_id }}{% endif %} ⓘ</button>
+              <span id="{{ eid }}" data-popover class="hidden absolute left-0 top-full mt-1.5 z-20 w-72 p-3 rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] shadow-xl text-[11px] space-y-1 text-left font-normal">
+                {% if e.series_id %}
+                <span class="block font-bold tabular break-all">{{ e.series_id }}</span>
+                <span class="block text-[var(--text-muted)]">{{ e.name or '指标未登记' }}{% if e.unit %} · {{ e.unit }}{% endif %}</span>
+                <span class="block">取值 <b class="tabular">{{ e.value | num(e.unit) }}</b></span>
+                <span class="block text-[var(--text-muted)] tabular">as_of {{ e.as_of or '—' }}</span>
+                <span class="block text-[var(--text-muted)]">来源 {{ e.source or '—' }}{% if e.revision %} · 修订 {{ e.revision }}{% endif %}</span>
+                {% if e.source_url %}<a href="{{ e.source_url }}" target="_blank" rel="noopener" class="block text-[var(--primary)] hover:underline break-all">原始数据 ↗</a>{% endif %}
+                {% if e.note %}<span class="block text-[var(--amber)]">{{ e.note }}</span>{% endif %}
+                {% endif %}
+                {% if e.playbook_item_id %}<span class="block text-[var(--text)]">思路 #{{ e.playbook_item_id }}：{{ e.playbook_text }}</span>{% endif %}
+                {% if e.signal_id %}<span class="block text-[var(--text-muted)] tabular">signal #{{ e.signal_id }}</span>{% endif %}
+              </span>
+            </span>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if brief.unverified %}
+      {# 质量警报，不能藏：标灰 + 明写「未通过证据校验」，否则它就混进了正经论断里 #}
+      <div id="brief-unverified" class="space-y-2">
+        <div class="text-[11px] font-semibold text-[var(--alert)]">未通过证据校验 · 已降级，不作为结论依据</div>
+        {% for u in brief.unverified %}
+        <div data-unverified class="unverified pl-3 border-l-2 border-dashed border-[var(--text-muted)] rounded-r-lg p-2.5 bg-[var(--surface-soft)]/40">
+          <p class="text-xs leading-relaxed line-through decoration-[var(--text-muted)]/60">{{ u.claim }}</p>
+          <div class="mt-1 text-[10px] text-[var(--alert)]">未通过证据校验：{{ u.reasons | join('；') }}</div>
+          {% if u.evidence %}
+          <div class="mt-1 text-[10px] text-[var(--text-muted)] tabular">
+            {% for e in u.evidence %}{{ e.series_id or ('思路 #' ~ e.playbook_item_id) }}{% if not loop.last %} · {% endif %}{% endfor %}
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if brief.playbook %}
+      <div class="text-[10px] text-[var(--text-muted)]">
+        本条结论用到的思路条目：{% for p in brief.playbook %}#{{ p.id }} {{ p.text }}{% if not loop.last %}；{% endif %}{% endfor %}
+      </div>
+      {% endif %}
+    </div>
+
+    {# ---------- 采纳 / 改 / 否 ---------- #}
+    <div class="px-5 py-3 border-t border-[var(--line)] bg-[var(--surface-soft)]/60">
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div class="text-[11px] text-[var(--text-muted)]">
+          「改 / 否」必须写一句为什么——那是 agent 学习的唯一养料。
+          <span id="brief-timer" class="tabular ml-1" title="从简报可见到提交的阅读秒数，随提交上报"></span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button type="button" id="brief-adopt" onclick="briefAdopt()"
+                  class="px-4 py-1.5 text-xs font-semibold rounded bg-[var(--primary)] text-white hover:bg-[var(--primary-hover)] disabled:opacity-40">采纳</button>
+          <button type="button" id="brief-edit-open" onclick="briefOpen('改')"
+                  class="px-4 py-1.5 text-xs font-semibold rounded border border-[var(--line-strong)] text-[var(--text)] hover:bg-[var(--surface-soft)]">改</button>
+          <button type="button" id="brief-reject-open" onclick="briefOpen('否')"
+                  class="px-4 py-1.5 text-xs font-semibold rounded border border-[var(--alert)]/40 text-[var(--alert)] hover:bg-[var(--alert-soft)]">否</button>
+        </div>
+      </div>
+      <p id="brief-err" class="min-h-[16px] mt-1.5 text-[11px] text-[var(--alert)]"></p>
+
+      <div id="brief-form" class="hidden mt-2 pt-3 border-t border-[var(--line)] space-y-3 text-xs">
+        <div id="brief-fields" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label class="block"><span class="font-semibold">基调</span>
+            <select id="brief-f-tone" data-field="tone" data-original="{{ brief.tone or '' }}"
+                    class="mt-1 w-full px-2 py-1.5 rounded-md">
+              <option value="">（留空）</option>
+              {% for t in tones %}<option value="{{ t }}" {{ 'selected' if t == brief.tone }}>{{ t }}</option>{% endfor %}
+            </select></label>
+          <label class="block"><span class="font-semibold">操作倾向</span>
+            <select id="brief-f-stance" data-field="stance" data-original="{{ brief.stance or '' }}"
+                    class="mt-1 w-full px-2 py-1.5 rounded-md">
+              <option value="">（留空）</option>
+              {% for s in stances %}<option value="{{ s }}" {{ 'selected' if s == brief.stance }}>{{ s }}</option>{% endfor %}
+            </select></label>
+          <label class="block"><span class="font-semibold">区间下沿</span>
+            <input id="brief-f-range-low" type="number" step="any" data-field="range_low"
+                   data-original="{{ brief.range_low if brief.range_low is not none else '' }}"
+                   value="{{ brief.range_low if brief.range_low is not none else '' }}"
+                   class="mt-1 w-full px-2 py-1.5 rounded-md tabular"></label>
+          <label class="block"><span class="font-semibold">区间上沿</span>
+            <input id="brief-f-range-high" type="number" step="any" data-field="range_high"
+                   data-original="{{ brief.range_high if brief.range_high is not none else '' }}"
+                   value="{{ brief.range_high if brief.range_high is not none else '' }}"
+                   class="mt-1 w-full px-2 py-1.5 rounded-md tabular"></label>
+          <label class="block sm:col-span-2"><span class="font-semibold">结论摘要</span>
+            <textarea id="brief-f-summary" rows="3" data-field="summary"
+                      data-original="{{ brief.summary or '' }}"
+                      class="mt-1 w-full px-2 py-1.5 rounded-md">{{ brief.summary or '' }}</textarea></label>
+          {% for c in brief.claims %}
+          <label class="block sm:col-span-2"><span class="font-semibold">论断 {{ loop.index }}</span>
+            <input type="text" data-claim="{{ loop.index0 }}" data-original="{{ c.text }}" value="{{ c.text }}"
+                   class="mt-1 w-full px-2 py-1.5 rounded-md"></label>
+          {% endfor %}
+        </div>
+        <div>
+          <label class="block"><span class="font-semibold">为什么</span>
+            <span class="text-[var(--text-muted)]">（「改 / 否」必填，空着等于这次纠错白做）</span>
+            <textarea id="brief-reason" rows="2" class="mt-1 w-full px-2 py-1.5 rounded-md"
+                      placeholder="例如：社库口径变了，累库那条不成立"></textarea></label>
+        </div>
+        <div class="flex items-center justify-end gap-2">
+          <button type="button" onclick="briefCancel()" class="px-3 py-1.5 rounded-md border border-[var(--line)] text-[var(--text-muted)] hover:bg-[var(--surface-soft)]">取消</button>
+          <button type="button" id="brief-submit" onclick="briefSubmit()"
+                  class="px-4 py-1.5 rounded-md bg-[var(--primary)] text-white font-semibold hover:bg-[var(--primary-hover)] disabled:opacity-40">提交</button>
+        </div>
+      </div>
+
+      {# 系统留痕字段不接受人工改写：这条规则在 store.EDITABLE_FIELDS 里写死，前端照抄不放宽 #}
+      <p class="mt-2 text-[10px] text-[var(--text-muted)]">
+        可改字段：{{ editable | join(' / ') }}。unverified / playbook_item_ids / signal_ids / model 是系统留痕，不可改写。
+      </p>
+    </div>
+  </div>
+  {% endif %}
+</section>
+
+{# ---------- 03 昨夜到今早什么变了 ---------- #}
+<section class="space-y-3">
+  <div class="flex items-center gap-2">
+    <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">03</span>
+    <h2 class="text-sm font-bold">昨夜到今早什么变了</h2>
+    <span class="text-xs text-[var(--text-muted)]">核心数字与上一数据点的变化，按幅度排序</span>
+  </div>
+
+  {% if changes.core or changes.macro %}
+  <div id="home-changes" class="rounded-lg border border-[var(--line)] bg-[var(--surface)] shadow-sm overflow-hidden">
+    <div class="divide-y divide-[var(--line)]">
+      {% for c in changes.core %}
+      <div class="flex items-center justify-between gap-3 px-4 py-2.5">
+        <div class="min-w-0">
+          <div class="text-xs font-semibold text-[var(--text)] truncate">{{ c.label }}</div>
+          <div class="text-[10px] text-[var(--text-muted)] tabular truncate">{{ c.series_id }}{% if c.as_of %} · {{ c.as_of }}{% endif %}{% if c.source %} · {{ c.source }}{% endif %}</div>
+        </div>
+        <div class="text-right shrink-0">
+          <div class="text-sm font-bold tabular text-[var(--text)]">{{ c.value | num(c.unit) }}<span class="text-[10px] font-normal text-[var(--text-muted)] ml-1">{{ c.unit }}</span></div>
+          <div class="text-[11px] font-semibold tabular {{ 'text-[var(--up)]' if c.change > 0 else 'text-[var(--down)]' }}">
+            {{ c.change | num(c.unit, true) }}{% if c.change_pct %} ({{ c.change_pct | num('%', true) }}%){% endif %}</div>
+        </div>
+      </div>
+      {% endfor %}
+      {% for m in changes.macro %}
+      <div class="flex items-center justify-between gap-3 px-4 py-2.5">
+        <div class="min-w-0">
+          <div class="text-xs font-semibold text-[var(--text)] truncate">{{ m.name }}<span class="ml-1.5 text-[10px] font-normal text-[var(--text-muted)]">宏观</span></div>
+          <div class="text-[10px] text-[var(--text-muted)] tabular truncate">{{ m.series_id }}{% if m.as_of %} · {{ m.as_of }}{% endif %} · {{ m.publisher }}</div>
+        </div>
+        <div class="text-right shrink-0">
+          <div class="text-sm font-bold tabular text-[var(--text)]">{{ m.value }}<span class="text-[10px] font-normal text-[var(--text-muted)] ml-1">{{ m.unit }}</span></div>
+          <div class="text-[11px] font-semibold tabular text-[var(--text-muted)]">{{ m.change }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-4 py-5 text-sm text-[var(--text-muted)]">
+    {{ '该交易日的核心数字与上一数据点相比没有变化。' if d else '库里还没有交易日数据，异动无从比对。' }}
+  </div>
+  {% endif %}
+</section>
+
+{# ---------- 04 全景数据墙（默认折叠） ---------- #}
+<section class="space-y-3">
+  <details id="home-wall" class="rounded-lg border border-[var(--line)] bg-[var(--surface)] shadow-sm">
+    <summary class="flex items-center gap-2 px-4 py-3 cursor-pointer select-none">
+      <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">04</span>
+      <h2 class="text-sm font-bold">全景数据墙</h2>
+      <span class="text-xs text-[var(--text-muted)]">核心卡片 · 阈值测距 · 缺口台账（默认折叠，别让数据墙盖住今天该干的事）</span>
+      <span class="ml-auto text-xs text-[var(--primary)] font-semibold">展开 / 收起</span>
+    </summary>
+
+    <div class="px-4 pb-4 space-y-4 border-t border-[var(--line)] pt-4">
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+        {% for c in cards %}{{ card(c) }}{% endfor %}
+      </div>
+
+      {% if radar %}
+      <div>
+        <div class="text-[11px] font-semibold text-[var(--text-muted)] mb-1.5">阈值测距（只陈述当前值、触发条件与距离）</div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {% for t in radar %}
+          <div class="p-2.5 rounded-lg border border-[var(--line)] bg-[var(--surface-soft)]/50">
+            <div class="flex items-center justify-between gap-2 text-[11px]">
+              <span class="text-[var(--text-muted)] truncate" title="{{ t.name }}">{{ t.name }}（{{ t.condition }}）</span>
+              <span class="tabular font-bold shrink-0 {{ 'text-[var(--alert)]' if t.state == '已触发' and t.type == '风控线' else 'text-[var(--text)]' }}">
+                {{ t.value | num(t.unit) if t.value is not none else '—' }}</span>
+            </div>
+            <div class="w-full bg-[var(--surface)] h-1.5 rounded-full overflow-hidden border border-[var(--line)] my-1">
+              <div class="h-full rounded-full {{ 'bg-[var(--alert)]' if t.state == '已触发' and t.type == '风控线' else 'bg-[var(--amber)]' if t.state in ('已触发', '在区间内') else 'bg-[var(--primary)]' }}" style="width: {{ t.progress | round(0) }}%;"></div>
+            </div>
+            <div class="text-[10px] text-[var(--text-muted)]">{{ t.distance }}</div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <div>
+        <div class="text-[11px] font-semibold text-[var(--text-muted)] mb-1.5">
+          数据完整性{% if gaps %}：{{ gaps | length }} 项待补{% else %}：全部指标在预期更新时间内{% endif %}</div>
+        {% if gaps %}
+        <div class="rounded-lg border border-[var(--line)] overflow-hidden overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-[var(--surface-soft)] text-[11px] font-semibold text-[var(--text-muted)] border-b border-[var(--line)]">
+              <tr><th class="py-2 px-3">指标</th><th class="py-2 px-3">方式</th>
+                <th class="py-2 px-3">预期更新到</th><th class="py-2 px-3">缺口原因</th>
+                <th class="py-2 px-3 text-right">操作</th></tr>
+            </thead>
+            <tbody class="divide-y divide-[var(--line)]">
+              {% for g in gaps %}
+              <tr class="hover:bg-[var(--surface-soft)]">
+                <td class="py-2 px-3"><div class="font-bold">{{ g.name }}</div>
+                  <div class="text-[10px] tabular text-[var(--text-muted)]">{{ g.series_id }}</div></td>
+                <td class="py-2 px-3">{{ '人工' if g.fetch_mode == 'manual' else '自动' }}</td>
+                <td class="py-2 px-3 tabular">{{ g.expected_by }}</td>
+                <td class="py-2 px-3 text-[var(--amber)]">{{ g.reason }}</td>
+                <td class="py-2 px-3 text-right">
+                  {% if g.fetch_mode == 'manual' %}
+                  <button type="button" onclick="openDrawerWith('{{ g.series_id }}')" class="px-2 py-1 text-xs font-semibold rounded bg-[var(--primary)] text-white hover:bg-[var(--primary-hover)] whitespace-nowrap">原地快录</button>
+                  {% else %}<span class="text-[10px] text-[var(--text-muted)]">等待下次采集</span>{% endif %}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+      </div>
+
+      <p class="text-[11px] text-[var(--text-muted)]">
+        完整数据墙（期限结构、宏观镜头、口径穿透）在
+        <a class="text-[var(--primary)] hover:underline" href="/sn{% if d %}?date={{ d }}{% endif %}">总览页</a>；
+        agent 读取 <a class="text-[var(--primary)] hover:underline" href="/api/sn/snapshot{% if d %}?date={{ d }}{% endif %}">/api/sn/snapshot</a>
+      </p>
+    </div>
+  </details>
+</section>
+{% endblock %}

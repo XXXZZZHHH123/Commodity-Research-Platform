@@ -2,7 +2,7 @@
 
 from datetime import date, datetime
 
-from sqlalchemy import Date, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import Date, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from tin.db import Base, JSONType, UTCDateTime
@@ -23,6 +23,9 @@ class Judgment(Base):
     variety: Mapped[str] = mapped_column(String(16))
     version: Mapped[int] = mapped_column(Integer)
     author: Mapped[str] = mapped_column(String(64))
+    # M3 多研究员的落点：届时 uq_judgment_active 改为 (variety, researcher_id)，
+    # 同一品种每人一条生效判断——分歧本身就是信息。一期留空，不改现有行为。
+    researcher_id: Mapped[int | None] = mapped_column(ForeignKey("researchers.id"), index=True)
     written_at: Mapped[date] = mapped_column(Date)
     review_period_days: Mapped[int] = mapped_column(Integer, default=30)
     review_due: Mapped[date] = mapped_column(Date)
@@ -59,6 +62,11 @@ class JudgmentSeriesRef(Base):
 
 class Signal(Base):
     __tablename__ = "signals"
+    __table_args__ = (
+        # 幂等原本只靠 compute/signals.py 的查-改-插保证，并发跑两个 daily 会插重，
+        # 同一条规则一天就有两行互相矛盾的记录，而简报层只读不校验，会照单全收。
+        UniqueConstraint("judgment_id", "rule_id", "trade_date", name="uq_signal_per_day"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     judgment_id: Mapped[int] = mapped_column(ForeignKey("judgments.id"), index=True)

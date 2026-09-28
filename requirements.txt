@@ -20,6 +20,10 @@ httpx>=0.27
 pandas>=2.2
 lxml>=5.0
 
+# LLM 接入层（二期 F2）。OpenAI 兼容端点（内网 vLLM / Ollama）另需 openai，
+# 现阶段用不到所以不列；openai_provider.py 里做了延迟导入，没装不影响其余代码。
+anthropic>=1.8
+
 # Excel 导入导出（openpyxl 与 xlrd 原为 akshare 的传递依赖，移除 akshare 后需显式声明）
 openpyxl>=3.1.5
 xlrd>=2.0.1
@@ -27,3 +31,4 @@ charset-normalizer>=3.3
 
 # 测试
 pytest>=8.3
+openai>=2.0        # OpenAI 兼容端点（阿里云百炼 / 本地 vLLM）

@@ -12,9 +12,31 @@ from tin.web.app import _board_date, _shell, app
 
 def test_health_check_reaches_database(session, monkeypatch):
     monkeypatch.setattr("tin.web.app.SessionLocal", lambda: session)
+    monkeypatch.setattr("tin.web.app._schema_state", lambda: ("abc123", "abc123"))
     response = TestClient(app).get("/healthz")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json()["status"] == "ok"
+
+
+def test_health_check_fails_when_the_schema_is_behind_the_code(session, monkeypatch):
+    """体检报平安、病人躺地上，是最坏的一种失败。
+
+    部署脚本（deploy/deploy.sh、deploy-offline-release.sh）拿 /healthz 当闸门。
+    原来它只做 `SELECT 1`，库落后两个迁移照样 ok——部署报成功，应用一点开就 500。
+    """
+    monkeypatch.setattr("tin.web.app.SessionLocal", lambda: session)
+    monkeypatch.setattr("tin.web.app._schema_state", lambda: ("6c0c0443dc71", "794490950747"))
+    response = TestClient(app, raise_server_exceptions=False).get("/healthz")
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert "alembic upgrade head" in detail, "报错要直接给出修复命令，别让人去翻文档"
+
+
+def test_health_check_stays_up_when_the_migration_state_is_unreadable(session, monkeypatch):
+    """体检本身不能把进程弄挂：读不到版本信息时放行，而不是 503 误杀。"""
+    monkeypatch.setattr("tin.web.app.SessionLocal", lambda: session)
+    monkeypatch.setattr("tin.web.app._schema_state", lambda: (None, None))
+    assert TestClient(app).get("/healthz").status_code == 200
 
 
 def test_calendar_date_uses_nearest_previous_trading_day(loaded):
@@ -70,9 +92,11 @@ def test_static_assets_carry_a_version_fingerprint(tmp_path, monkeypatch):
     first = web.static_version()
     assert first.isdigit()
 
-    # 指纹取 static/ 下所有文件的最新 mtime，所以要把某个文件推到比全部都新
     js = web.HERE / "static" / "app.js"
     original = js.stat().st_mtime
+    # 指纹取的是 static/* 的 **最大** mtime，所以必须推过当前最大值才算「变化」。
+    # 早先这里推的是 app.js 自己的 mtime + 10，只要有人后改了 app.css，
+    # max 就纹丝不动、断言假红——一颗跟改动顺序绑定的定时炸弹。
     newest = max(f.stat().st_mtime for f in (web.HERE / "static").glob("*"))
     try:
         import os

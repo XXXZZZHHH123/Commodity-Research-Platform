@@ -14,7 +14,7 @@ from tin.ingest.fred import FEATURED_SERIES, FRED_SERIES, SERIES_BY_ID, SOURCE_C
 from tin.judgments.service import current as current_judgment
 from tin.judgments.service import to_payload
 from tin.judgments.validate import activation_blockers
-from tin.models import FetchRun, Indicator, Observation
+from tin.models import FetchRun, Indicator, Observation, Signal
 
 PER_CONTRACT = re.compile(r"^SHFE\.[A-Z]+\.\d{4}\.")
 OVERSEAS = {"CBOE", "LME", "代理指标", "FRED"}  # 境外源：北京时间当日尚未发布，按上一工作日要求
@@ -362,8 +362,22 @@ def judgment_block(session: Session, variety: str, today: date) -> dict | None:
     }
 
 
+def signal_block(session: Session, variety: str, d: date) -> list[dict]:
+    """当日已算出的信号。只读已落库的结果，不在导出时重算——快照必须与页面同源。"""
+    j = current_judgment(session, variety)
+    if j is None:
+        return []
+    rows = session.scalars(
+        select(Signal).where(Signal.judgment_id == j.id, Signal.trade_date == d.isoformat())
+        .order_by(Signal.rule_type, Signal.rule_id)
+    ).all()
+    return [{"rule_id": s.rule_id, "rule_type": s.rule_type, "state": s.state,
+             "current_value": s.current_value, "evidence": s.evidence, "gap_note": s.gap_note,
+             "confidence": s.confidence, "generated_at": _iso(s.generated_at)} for s in rows]
+
+
 def snapshot(session: Session, variety: str, d: date) -> dict:
-    """04 §1.9 的每日 JSON 快照结构。signals 于 M3 监测层接入前为空列表。"""
+    """04 §1.9 的每日 JSON 快照结构。"""
     obs = []
     for ind in session.scalars(select(Indicator).where(Indicator.variety.in_([variety, "COMMON"]))):
         o = latest_obs(session, ind.series_id, day_end(d))
@@ -382,7 +396,7 @@ def snapshot(session: Session, variety: str, d: date) -> dict:
         "judgment": judgment_block(session, variety, today),
         "observations": sorted(obs, key=lambda x: x["series_id"]),
         "derived": sorted(derived, key=lambda x: x["formula_id"]),
-        "signals": [], "gaps": gaps(session, variety, d), "surveys": [],
+        "signals": signal_block(session, variety, d), "gaps": gaps(session, variety, d), "surveys": [],
     }
 
 

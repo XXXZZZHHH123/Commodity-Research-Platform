@@ -433,6 +433,7 @@ document.addEventListener("DOMContentLoaded", () => {
   syncDrawerUnit();
   initMacroFilters();
   initSeriesCharts();
+  initBriefTimer();
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       closeSeriesChart();
@@ -440,6 +441,167 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 });
+
+// ---------- 首屏简报评审（F4：采纳 / 改 / 否） ----------
+
+// 阅读计时。§6.3 要靠「采纳耗时分布」识别「秒级采纳 = 没看」这个失败模式，
+// 而服务端算不出来：简报可能早上 8 点生成、下午 2 点才提交，但只被看了 3 秒。
+// 所以只累计「简报区在视口里 **且** 标签页在前台」的时间——切走标签页立刻停表，
+// 否则挂着页面去开会回来一点采纳，会被记成看了两小时，这个指标就废了。
+const briefTimer = { seconds: 0, since: null, inView: false, foreground: true };
+
+function briefTimerSync() {
+  const running = briefTimer.inView && briefTimer.foreground;
+  if (running && briefTimer.since === null) {
+    briefTimer.since = Date.now();
+  } else if (!running && briefTimer.since !== null) {
+    briefTimer.seconds += (Date.now() - briefTimer.since) / 1000;
+    briefTimer.since = null;
+  }
+  briefTimerRender();
+}
+
+function briefElapsed() {
+  const live = briefTimer.since === null ? 0 : (Date.now() - briefTimer.since) / 1000;
+  return Math.max(0, Math.round(briefTimer.seconds + live));
+}
+
+function briefTimerRender() {
+  const el = document.getElementById("brief-timer");
+  if (el) el.innerText = `· 已阅读 ${briefElapsed()} 秒`;
+}
+
+function initBriefTimer() {
+  const card = document.getElementById("brief-card");
+  if (!card) return;
+  briefTimer.foreground = document.visibilityState !== "hidden";
+  document.addEventListener("visibilitychange", () => {
+    briefTimer.foreground = document.visibilityState !== "hidden";
+    briefTimerSync();
+  });
+  if (window.IntersectionObserver) {
+    new IntersectionObserver((entries) => {
+      briefTimer.inView = entries.some((e) => e.isIntersecting);
+      briefTimerSync();
+    }, { threshold: 0.15 }).observe(card);
+  } else {
+    briefTimer.inView = true; // 老浏览器没有 IntersectionObserver，宁可多算也不漏算
+  }
+  briefTimerSync();
+  setInterval(briefTimerRender, 1000);
+}
+
+let briefAction = null;
+
+function briefError(message) {
+  // 就地标红，不走右下角浮层：浮层会压住这一排主操作按钮（自定义导出上踩过一次）
+  const slot = document.getElementById("brief-err");
+  if (slot) slot.innerText = message || "";
+}
+
+function briefRawClaims() {
+  // 回传的必须是库里原样的 claims，不能是页面上补过指标名与来源的那份——
+  // 那样一次「改」就把渲染用的装饰写进了证据链。
+  const el = document.getElementById("brief-claims");
+  if (!el) return [];
+  try {
+    return JSON.parse(el.textContent);
+  } catch (err) {
+    return [];
+  }
+}
+
+function briefOpen(action) {
+  briefAction = action;
+  briefError("");
+  const form = document.getElementById("brief-form");
+  const fields = document.getElementById("brief-fields");
+  if (!form) return;
+  form.classList.remove("hidden");
+  // 「否」是整份不要，没有要改的字段；露出编辑区只会让人以为必须填点什么
+  if (fields) fields.classList.toggle("hidden", action === "否");
+  const submit = document.getElementById("brief-submit");
+  if (submit) submit.textContent = action === "否" ? "确认否决" : "提交修改";
+  const reason = document.getElementById("brief-reason");
+  if (reason) reason.focus();
+}
+
+function briefCancel() {
+  briefAction = null;
+  briefError("");
+  const form = document.getElementById("brief-form");
+  if (form) form.classList.add("hidden");
+}
+
+function briefChanges() {
+  const changes = {};
+  document.querySelectorAll("#brief-fields [data-field]").forEach((el) => {
+    if (el.value === el.dataset.original) return;
+    const numeric = el.dataset.field === "range_low" || el.dataset.field === "range_high";
+    changes[el.dataset.field] = el.value === "" ? null : numeric ? Number(el.value) : el.value;
+  });
+  const inputs = [...document.querySelectorAll("#brief-fields [data-claim]")];
+  if (inputs.some((el) => el.value !== el.dataset.original)) {
+    const raw = briefRawClaims();
+    changes.claims = raw.map((c, i) => (inputs[i] ? { ...c, text: inputs[i].value } : c));
+  }
+  return changes;
+}
+
+async function briefPost(payload, button) {
+  const card = document.getElementById("brief-card");
+  if (!card) return;
+  const label = button ? button.textContent : "";
+  briefError("");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "提交中…";
+  }
+  try {
+    const res = await fetch(`/api/sn/brief/${card.dataset.briefId}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    // 后端（brief/store.py）的拒绝理由原样呈现：那些话是写给研究员看的，
+    // 换成「操作失败」等于把规则说明丢了。
+    if (!res.ok) throw new Error(data.detail || "提交失败");
+    showToast(`已记录「${payload.action}」（阅读 ${payload.elapsed_seconds} 秒）`);
+    setTimeout(() => window.location.reload(), 900);
+  } catch (err) {
+    briefError(err.message);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = label;
+    }
+  }
+}
+
+function briefReasonText() {
+  const el = document.getElementById("brief-reason");
+  return el ? el.value.trim() : "";
+}
+
+async function briefAdopt() {
+  // 采纳不强制写原因：没改就是没意见，逼人编一句只会换回一堆「同意」
+  const payload = { action: "采纳", elapsed_seconds: briefElapsed() };
+  const reason = briefReasonText();
+  if (reason) payload.reason = reason;
+  await briefPost(payload, document.getElementById("brief-adopt"));
+}
+
+async function briefSubmit() {
+  if (!briefAction) return;
+  const payload = {
+    action: briefAction,
+    reason: briefReasonText(),
+    elapsed_seconds: briefElapsed(),
+  };
+  if (briefAction === "改") payload.changes = briefChanges();
+  await briefPost(payload, document.getElementById("brief-submit"));
+}
 
 // ---------- Excel 批量导入 ----------
 
