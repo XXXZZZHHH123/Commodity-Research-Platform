@@ -548,6 +548,19 @@ def diagram_to_markdown(template_id: int | None = None):
         return {"name": tpl["name"], "markdown": diagram_md.dump(tpl["layout"], tpl["name"])}
 
 
+@app.post("/api/sn/diagram/markdown/dump")
+def diagram_dump_markdown(body: dict = Body(...)):
+    """把**前端此刻的布局**导成 Markdown。
+
+    按 template_id 从库里导，拿到的是已保存版本——画布上刚改的结构不在里面，
+    于是"画布改 / 文本改"这两条通道对不上：在图上加了个节点，打开 Markdown 看不到它。
+    两边要能互相接着改，导出就得按内存里的布局来。
+    """
+    layout = body.get("layout") or {}
+    name = str(body.get("name") or "产业结构").strip()
+    return {"name": name, "markdown": diagram_md.dump(layout, name)}
+
+
 @app.post("/api/sn/diagram/markdown")
 def diagram_from_markdown(body: dict = Body(...)):
     """从 Markdown 大纲建一份新布局。不覆盖现有布局——导错了还能切回去。"""

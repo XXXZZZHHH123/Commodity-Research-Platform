@@ -22,17 +22,17 @@
     </select>
     <button type="button" onclick="dgDeleteTemplate()" title="删除当前布局"
       class="px-2 py-1.5 rounded-md border border-[var(--line)] text-[var(--text-muted)] hover:text-[var(--alert)] hover:bg-[var(--surface-soft)]">🗑</button>
-    <button type="button" onclick="dgToggleJudgment()" id="dg-judge-btn"
-      class="px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)] font-semibold">判断视角</button>
-    <button type="button" onclick="dgOpenCompare()" id="dg-compare-btn"
-      class="px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)] font-semibold">趋势对比<span
-      data-count class="tabular"></span></button>
-    <button type="button" onclick="dgOpenMarkdown()"
+    {# 上方工具栏只放"这张图本身"的事：换布局、结构文本、进出编辑。
+       看图时才用的判断视角 / 趋势对比挪到画布右上角——它们是看图的选项，不是编辑动作。 #}
+    <button type="button" onclick="dgOpenMarkdown()" id="dg-md-btn"
       class="px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)] font-semibold">Markdown</button>
     <button type="button" onclick="dgToggleEdit()" id="dg-edit-btn"
       class="px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)] font-semibold">编辑布局</button>
-    <button type="button" onclick="dgSave()" id="dg-save" disabled
-      class="px-3 py-1.5 rounded-md bg-[var(--primary)] text-white font-semibold hover:bg-[var(--primary-hover)] disabled:opacity-40">保存</button>
+    {# 保存只在编辑态出现：看图时摆在那里既点不动也提示不了什么 #}
+    <button type="button" onclick="dgExitEdit()" id="dg-exit" class="hidden
+      px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)] font-semibold">退出编辑</button>
+    <button type="button" onclick="dgSave()" id="dg-save" disabled class="hidden
+      px-3 py-1.5 rounded-md bg-[var(--primary)] text-white font-semibold hover:bg-[var(--primary-hover)] disabled:opacity-40">保存</button>
   </div>
 </div>
 
@@ -80,10 +80,23 @@
     <button type="button" onclick="dgFit()" class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">适应</button>
   </div>
 
+  <!-- 看图的选项放右上角：左上是编辑工具、左下是缩放，右上空着，语义上也正好 -->
+  <div id="dg-views" class="absolute right-3 top-3 flex items-center gap-1 text-xs
+       bg-[var(--surface)] rounded-md border border-[var(--line)] px-1 py-0.5 shadow-sm">
+    <button type="button" onclick="dgToggleJudgment()" id="dg-judge-btn"
+      class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">判断视角</button>
+    <button type="button" onclick="dgOpenCompare()" id="dg-compare-btn"
+      class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">趋势对比<span data-count class="tabular"></span></button>
+  </div>
+
   <div id="dg-tools" class="absolute left-3 top-3 hidden flex items-center gap-1 text-xs
        bg-[var(--surface)] rounded-md border border-[var(--line)] px-1 py-0.5 shadow-sm">
-    <button type="button" onclick="dgAdd('node')" class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">+ 节点</button>
-    <button type="button" onclick="dgAdd('group')" class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">+ 分组</button>
+    {# 点按钮只是"拿起工具"，真正放在哪由下一次点击/拖拽决定——
+       原来一点就落在视口左上角，正好压在别的框上，还会被自动排布卷进别人的分组 #}
+    <button type="button" onclick="dgPlace('node')" id="dg-place-node"
+      class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">＋ 节点</button>
+    <button type="button" onclick="dgPlace('group')" id="dg-place-group"
+      class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">＋ 分组</button>
     <span class="w-px h-4 bg-[var(--line)]"></span>
     <button type="button" onclick="dgUndo()" id="dg-undo" disabled title="后退一步 Ctrl+Z"
       class="px-2 py-1 rounded hover:bg-[var(--surface-soft)] disabled:opacity-40">↶ 后退</button>
@@ -108,8 +121,8 @@
 
   <div id="dg-hint" class="absolute right-3 bottom-3 hidden text-[11px] px-2.5 py-1.5 rounded-md
        bg-[var(--amber-soft)] text-[var(--amber)] border border-[var(--amber)]/30">
-    编辑模式：拖动调位置（拖进分组即归属）｜ 八个把手改大小 ｜ <b>按住 Shift 拖</b>＝连线 ｜
-    点方框绑定指标 ｜ Ctrl+Z 后退 ｜ 改完记得保存
+    <b>＋ 节点</b>后在空白处点一下放置 ｜ <b>＋ 分组</b>后拖出一个框 ｜ 拖动调位置（拖进分组即归属并自动排队）｜
+    拖边框改大小 ｜ <b>Shift 拖</b>＝连线，箭头上的 <b>×</b> 删线 ｜ Ctrl+Z 后退 ｜ 改完记得保存
   </div>
 </div>
 

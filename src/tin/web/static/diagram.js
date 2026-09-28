@@ -163,11 +163,25 @@ function dgRender() {
       const y1 = a.y + a.h / 2, y2 = b.y + b.h / 2, m = (x1 + x2) / 2;
       d = `M ${x1} ${y1} C ${m} ${y1}, ${m} ${y2}, ${x2} ${y2}`;
     }
+    // 编辑态在箭头附近放一个 ×：要删一条线，Shift 再连一次这种"知道了才会用"的
+    // 办法不该是唯一入口。看得见的按钮和快捷操作两条路都留着。
+    let kill = "";
+    if (dg.edit) {
+      const back = !stacked && b.x + b.w < a.x;
+      const kx = stacked ? b.x - 11 : (back ? b.x + b.w + 11 : b.x - 11);
+      const ky = b.y + b.h / 2;
+      kill = `<g class="dg-edge-del" data-from="${dgEsc(e.from)}" data-to="${dgEsc(e.to)}"
+        transform="translate(${kx},${ky})" style="cursor:pointer">
+        <circle r="7.5" fill="var(--surface)" stroke="var(--line-strong)" stroke-width="1"/>
+        <path d="M-3,-3 L3,3 M3,-3 L-3,3" stroke="var(--alert)" stroke-width="1.6"
+              stroke-linecap="round"/>
+        <title>删除「${dgEsc(a.label)} → ${dgEsc(b.label)}」</title></g>`;
+    }
     return `<path d="${d}"
       fill="none" stroke="var(--text-muted)" stroke-width="${group ? 3 : 1.6}"
       opacity="${group ? 0.9 : 0.5}" stroke-linecap="round"
       ${group ? "" : 'stroke-dasharray="5 4"'}
-      marker-end="url(#dg-arrow${group ? "" : "-thin"})"/>`;
+      marker-end="url(#dg-arrow${group ? "" : "-thin"})"/>${kill}`;
   }).join("");
 
   nodes.innerHTML = dg.layout.nodes.filter((n) => !dgIsGroup(n)).map((n) => dgNode(n)).join("");
@@ -532,15 +546,43 @@ function dgFit() {
 /* ---------- 编辑：拖动与绑定 ---------- */
 
 function dgToggleEdit() {
-  dg.edit = !dg.edit;
-  const btn = document.getElementById("dg-edit-btn");
-  btn.textContent = dg.edit ? "退出编辑" : "编辑布局";
-  btn.classList.toggle("bg-[var(--amber-soft)]", dg.edit);
-  btn.classList.toggle("text-[var(--amber)]", dg.edit);
-  document.getElementById("dg-hint").classList.toggle("hidden", !dg.edit);
-  document.getElementById("dg-tools").classList.toggle("hidden", !dg.edit);
-  if (!dg.edit) toggleDrawer("dg-drawer", false);
+  // 「编辑布局」只负责进；出走 dgExitEdit（它要先问未保存的改动怎么办）
+  if (dg.edit) { dgExitEdit(); return; }
+  dg.edit = true;
+  dgSyncEditUI();
   dgRender();
+}
+
+function dgExitEdit() {
+  // 未保存就退出等于白改一场，而改动是看不见的（位置、归属、绑定都不在页面上标着）
+  if (dg.dirty && !confirm(
+      "有改动还没保存，退出编辑就会丢失。\n\n" +
+      "点「取消」回去保存，点「确定」放弃这些改动。")) return;
+  if (dg.dirty) {
+    // 放弃改动就真的放回原样，而不是留在内存里等下一次误存
+    dg.layout.nodes = JSON.parse(dg.__clean).nodes;
+    dg.layout.edges = JSON.parse(dg.__clean).edges;
+    dg.dirty = false;
+    dgLoad();
+  }
+  dg.edit = false;
+  dg.place = null;
+  dgSyncEditUI();
+  toggleDrawer("dg-drawer", false);
+  dgRender();
+}
+
+function dgSyncEditUI() {
+  const on = dg.edit;
+  const btn = document.getElementById("dg-edit-btn");
+  btn.classList.toggle("hidden", on);
+  for (const [id, hidden] of [["dg-exit", !on], ["dg-save", !on],
+                              ["dg-tools", !on], ["dg-hint", !on]]) {
+    document.getElementById(id)?.classList.toggle("hidden", hidden);
+  }
+  if (on && !dg.__clean) dg.__clean = dgSnapshot();   // 进编辑时记下干净版本，供放弃改动时还原
+  if (!on) dg.__clean = null;
+  dgSyncSave();
 }
 
 function dgBindCanvas() {
@@ -548,6 +590,32 @@ function dgBindCanvas() {
   let drag = null;
 
   svg.addEventListener("pointerdown", (e) => {
+    // 连线上的 × 先行：它压在画布上，不拦住就会被当成平移起点
+    const del = e.target.closest?.(".dg-edge-del");
+    if (dg.edit && del) {
+      dgPushUndo();
+      const { from, to } = del.dataset;
+      dg.layout.edges = dg.layout.edges.filter((x) => !(x.from === from && x.to === to));
+      dg.dirty = true;
+      dgSyncSave();
+      dgRender();
+      showToast("已删除这条连线 —— 不对就按 Ctrl+Z");
+      return;
+    }
+    // 放置模式先行：此刻按下去是在"放一个新元素"，不是拖画布也不是拖某个框
+    if (dg.edit && dg.place) {
+      const at = dgToCanvas(svg, e);
+      if (dg.place === "node") {
+        const snap = (v) => Math.round(v / 10) * 10;
+        dgAdd("node", { x: snap(at.x - 70), y: snap(at.y - 33) });
+        dg.place = null;
+        dgSyncPlaceUI();
+      } else {
+        drag = { draw: true, x0: at.x, y0: at.y };
+        svg.setPointerCapture(e.pointerId);
+      }
+      return;
+    }
     const handle = e.target.closest?.(".dg-resize");
     const g = e.target.closest?.(".dg-node");
     if (dg.edit && handle) {
@@ -585,6 +653,26 @@ function dgBindCanvas() {
 
   svg.addEventListener("pointermove", (e) => {
     if (!drag) return;
+    if (drag.draw) {
+      const at = dgToCanvas(svg, e);
+      let ghost = document.getElementById("dg-ghost");
+      if (!ghost) {
+        ghost = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        ghost.id = "dg-ghost";
+        ghost.setAttribute("fill", "var(--primary)");
+        ghost.setAttribute("fill-opacity", "0.08");
+        ghost.setAttribute("stroke", "var(--primary)");
+        ghost.setAttribute("stroke-width", "2");
+        ghost.setAttribute("stroke-dasharray", "6 4");
+        ghost.setAttribute("rx", "10");
+        document.getElementById("dg-groups").appendChild(ghost);
+      }
+      ghost.setAttribute("x", Math.min(drag.x0, at.x));
+      ghost.setAttribute("y", Math.min(drag.y0, at.y));
+      ghost.setAttribute("width", Math.abs(at.x - drag.x0));
+      ghost.setAttribute("height", Math.abs(at.y - drag.y0));
+      return;
+    }
     const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
     if (drag.link) {
       const a = drag.link;
@@ -648,6 +736,19 @@ function dgBindCanvas() {
     drag = null;
     svg.releasePointerCapture?.(e.pointerId);
     document.getElementById("dg-rope")?.remove();
+    document.getElementById("dg-ghost")?.remove();
+    if (wasDrag && wasDrag.draw) {
+      const at = dgToCanvas(svg, e);
+      const snap = (v) => Math.round(v / 10) * 10;
+      const w = Math.abs(at.x - wasDrag.x0), h = Math.abs(at.y - wasDrag.y0);
+      dg.place = null;
+      dgSyncPlaceUI();
+      // 拖得太小多半是手滑点了一下，别留一个看不见的框在图上
+      if (w < 60 || h < 50) { showToast("框太小，已取消 —— 拖出一个装得下节点的范围"); return; }
+      dgAdd("group", { x: snap(Math.min(wasDrag.x0, at.x)), y: snap(Math.min(wasDrag.y0, at.y)),
+                       w: snap(w), h: snap(h) });
+      return;
+    }
     if (wasDrag && wasDrag.link) {
       document.querySelectorAll(".dg-link-target").forEach((el) =>
         el.classList.remove("dg-link-target"));
@@ -682,6 +783,7 @@ function dgBindCanvas() {
   });
 
   document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && dg.place) { dg.place = null; dgSyncPlaceUI(); showToast("已取消放置"); return; }
     if (!(e.ctrlKey || e.metaKey)) return;
     const k = e.key.toLowerCase();
     if (k !== "z" && k !== "y") return;
@@ -876,6 +978,7 @@ async function dgSave() {
   const data = await res.json();
   if (!res.ok) { showToast(data.detail || "保存失败"); return; }
   dg.dirty = false;
+  dg.__clean = dgSnapshot();       // 保存成功后，这就是新的"干净版本"
   dgSyncSave();
   showToast("布局已保存");
 }
@@ -937,6 +1040,7 @@ function dgInit() {
   if (new URLSearchParams(location.search).get("edit") === "1" || !dg.layout.nodes.length) {
     if (!dg.edit) dgToggleEdit();
   }
+  dgSyncEditUI();
 }
 
 if (document.getElementById("dg-canvas")) {
@@ -952,23 +1056,55 @@ function dgNextId(prefix) {
   return `${prefix}${i}`;
 }
 
-function dgAdd(kind) {
+/* ---------- 放置新元素 ----------
+ *
+ * 原来点一下「+ 节点」就直接落在视口左上角，那里多半正压着别的框；有了自动排布之后
+ * 更糟——它会被判进那个框的分组、连带把人家排好的队重新洗一遍。
+ *
+ * 改成两步：点按钮只是**拿起工具**，落在哪由下一次操作决定。
+ *   节点：在空白处点一下 → 就放在那里
+ *   分组：在空白处拖一个框 → 框多大就是多大
+ * 这是绘图工具的通用做法，也顺便解决了"想在空白处新建"这件事。 */
+
+function dgPlace(kind) {
+  if (!dg.edit) return;
+  dg.place = dg.place === kind ? null : kind;
+  dgSyncPlaceUI();
+  showToast(!dg.place ? "已取消放置"
+    : kind === "group" ? "在空白处拖一个框，决定新分组的位置和大小"
+                       : "在空白处点一下，决定新节点放在哪（Esc 取消）");
+}
+
+function dgSyncPlaceUI() {
+  for (const [id, kind] of [["dg-place-node", "node"], ["dg-place-group", "group"]]) {
+    const b = document.getElementById(id);
+    if (!b) continue;
+    const on = dg.place === kind;
+    b.classList.toggle("bg-[var(--primary)]", on);
+    b.classList.toggle("text-white", on);
+  }
+  const svg = document.getElementById("dg-canvas");
+  if (svg) svg.style.cursor = dg.place ? "crosshair" : "";
+}
+
+function dgAdd(kind, box) {
   dgPushUndo();
-  // 新节点落在当前视口左上角附近，而不是画布原点——否则在远处看不见
-  const x = Math.round((-dg.pan.x / dg.zoom + 40) / 10) * 10;
-  const y = Math.round((-dg.pan.y / dg.zoom + 40) / 10) * 10;
+  const at = box || { x: Math.round((-dg.pan.x / dg.zoom + 40) / 10) * 10,
+                      y: Math.round((-dg.pan.y / dg.zoom + 40) / 10) * 10 };
   const node = kind === "group"
-    ? { id: dgNextId("g"), kind: "group", label: "新分组", x, y, w: 420, h: 260, binding: { kind: "none" }, statics: [] }
-    : { id: dgNextId("n"), label: "新节点", x, y, w: 140, h: 66, binding: { kind: "none" }, statics: [] };
+    ? { id: dgNextId("g"), kind: "group", label: "新分组", x: at.x, y: at.y,
+        w: at.w || 420, h: at.h || 260, binding: { kind: "none" }, statics: [] }
+    : { id: dgNextId("n"), label: "新节点", x: at.x, y: at.y,
+        w: 140, h: 66, binding: { kind: "none" }, statics: [] };
   dg.layout.nodes.push(node);
-  // 新节点落在视口角上，多半正压在别的框上。落点在某个分组内就归进去并排好队，
-  // 免得每加一个都要手动挪开。
+  // 放进某个分组里就归进去并排好队；放在空白处就老老实实待在放下的地方，不动它
   const into = dgGroupAt(node);
   if (into) { node.parent = into; dgAutoArrange(into); }
   dg.dirty = true;
   dgSyncSave();
   dgRender();
   if (kind !== "group") dgOpenPool(node.id);
+  return node;
 }
 
 function dgDeleteActive() {
@@ -1001,11 +1137,20 @@ function dgRenameActive() {
 /* ---------- Markdown 导入导出 ---------- */
 
 async function dgOpenMarkdown() {
-  const res = await fetch(`/api/sn/diagram/markdown?template_id=${dg.layout.__id}`);
+  // 导的是**画布此刻的样子**，不是库里存的那一份。
+  // 按 template_id 从库里导，画布上刚改的结构不在里面——在图上加了个节点，
+  // 打开 Markdown 却看不到它，两条编辑通道就接不上了。
+  const res = await fetch("/api/sn/diagram/markdown/dump", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: dg.layout.__name,
+                           layout: { nodes: dg.layout.nodes, edges: dg.layout.edges } }),
+  });
   const data = res.ok ? await res.json() : { markdown: "" };
   document.getElementById("dg-md-text").value = data.markdown || "";
   document.getElementById("dg-md-name").value = "";
-  document.getElementById("dg-md-msg").textContent = "";
+  document.getElementById("dg-md-msg").textContent = dg.dirty
+    ? "下面是画布当前的结构（含尚未保存的改动）。"
+    : "";
   toggleDrawer("dg-md-drawer", true);
 }
 
@@ -1025,11 +1170,25 @@ async function dgImportMarkdown(into) {
   const data = await res.json();
   if (!res.ok) { msg.textContent = data.detail || "失败"; return; }
   // 导入只给框和标签，绑定要靠「建议参考」逐个补——把这件事说清楚，别让人以为导完就完了
-  msg.textContent = data.replaced
-    ? `已改写「${data.saved.name}」，其中 ${data.unbound} 个节点尚未绑定指标，正在刷新…`
-    : `已建「${data.saved.name}」，其中 ${data.unbound} 个节点尚未绑定指标，正在跳转…`;
-  dg.dirty = false;   // 服务端已是最新，别再弹"未保存"
-  setTimeout(() => { window.location.href = `/sn/diagram?template=${data.saved.id}`; }, 900);
+  if (!data.replaced) {
+    msg.textContent = `已建「${data.saved.name}」，其中 ${data.unbound} 个节点尚未绑定指标，正在跳转…`;
+    dg.dirty = false;
+    setTimeout(() => { window.location.href = `/sn/diagram?template=${data.saved.id}`; }, 900);
+    return;
+  }
+  // 改写当前布局就**就地换掉画布**，不整页跳转：跳转会把编辑状态、缩放、撤销栈全丢掉，
+  // 而文本与画布本来就该是同一张图的两种编辑方式
+  dgPushUndo();
+  dg.layout.nodes = data.saved.layout.nodes;
+  dg.layout.edges = data.saved.layout.edges || [];
+  dg.dirty = false;                 // 服务端已是最新
+  dg.__clean = dgSnapshot();
+  dgSyncSave();
+  dgRender();
+  dgFit();
+  await dgLoad();
+  msg.textContent = `已改写「${data.saved.name}」，其中 ${data.unbound} 个节点尚未绑定指标。`;
+  showToast("画布已按 Markdown 更新");
 }
 
 function dgCopyMarkdown() {
