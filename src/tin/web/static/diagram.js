@@ -148,28 +148,13 @@ function dgRender() {
     // 二十来条线互相穿插，谁流向谁反而看不出来。现在分组也能连——
     // 物料流向本来就是环节之间的事，不是某个具体指标之间的事。
     const group = dgIsGroup(a) && dgIsGroup(b);
-    // 锚点按相对位置选：同一列上下堆叠的两个框，用左右锚点会画出一条倒着绕回去的线。
-    const stacked = a.x < b.x + b.w && b.x < a.x + a.w;
-    let d;
-    if (stacked) {
-      // 上下堆叠的两个框之间只有十几像素，一小段竖线等于看不见。画成**肘形**：
-      // 从父框左下角下来，拐进子框左边——树状图的通用画法，表达的是「包含」，
-      // 而不是物料从上流到下。（这是画出来的图形，不是标签里的 └ 符号。）
-      const x = a.x + 12;
-      d = `M ${x} ${a.y + a.h} L ${x} ${b.y + b.h / 2} L ${b.x} ${b.y + b.h / 2}`;
-    } else {
-      const back = b.x + b.w < a.x;                 // 反向（右往左）时从左边出
-      const x1 = back ? a.x : a.x + a.w, x2 = back ? b.x + b.w : b.x;
-      const y1 = a.y + a.h / 2, y2 = b.y + b.h / 2, m = (x1 + x2) / 2;
-      d = `M ${x1} ${y1} C ${m} ${y1}, ${m} ${y2}, ${x2} ${y2}`;
-    }
+    const geo = dgEdgeGeom(a, b);
+    const d = geo.d;
     // 编辑态在箭头附近放一个 ×：要删一条线，Shift 再连一次这种"知道了才会用"的
     // 办法不该是唯一入口。看得见的按钮和快捷操作两条路都留着。
     let kill = "";
     if (dg.edit) {
-      const back = !stacked && b.x + b.w < a.x;
-      const kx = stacked ? b.x - 11 : (back ? b.x + b.w + 11 : b.x - 11);
-      const ky = b.y + b.h / 2;
+      const kx = geo.kx, ky = geo.ky;
       kill = `<g class="dg-edge-del" data-from="${dgEsc(e.from)}" data-to="${dgEsc(e.to)}"
         transform="translate(${kx},${ky})" style="cursor:pointer">
         <circle r="7.5" fill="var(--surface)" stroke="var(--line-strong)" stroke-width="1"/>
@@ -214,6 +199,53 @@ function dgTrail(id) {
     if (cur) trail.unshift(cur.label);
   }
   return trail.join(" › ");
+}
+
+/* 连线走哪两条边。
+ *
+ * 原来只在"左右"和"上下堆叠"两种之间选，其余一律右出左入——B 在 A 正下方时线要先
+ * 往右绕出去、再折回左边扎进来，绕一个大圈。四条边都能接才画得直。
+ *
+ * 选法：看两个框中心的相对位置，横向差得多就走左右，纵向差得多就走上下。
+ * 贝塞尔的控制点顺着出入方向拉，线才不会在端点处打折。 */
+function dgEdgeGeom(a, b) {
+  const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
+  const bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+  const dx = bc.x - ac.x, dy = bc.y - ac.y;
+
+  // 同一列上下堆叠、且同属一个分组 —— 这是「包含」，仍然画肘形。
+  // 两框之间常常只有十几像素，一小段竖线等于看不见；肘形是树状图的通用画法。
+  const sameCol = a.x < b.x + b.w && b.x < a.x + a.w;
+  if (sameCol && dy > 0 && a.parent && a.parent === b.parent) {
+    const x = a.x + 12, my = b.y + b.h / 2;
+    return { d: `M ${x} ${a.y + a.h} L ${x} ${my} L ${b.x} ${my}`,
+             kx: b.x - 11, ky: my };
+  }
+
+  const horizontal = Math.abs(dx) >= Math.abs(dy);
+  let p1, p2, c1, c2;
+  if (horizontal) {
+    const right = dx >= 0;
+    p1 = { x: right ? a.x + a.w : a.x, y: ac.y };
+    p2 = { x: right ? b.x : b.x + b.w, y: bc.y };
+    const pull = Math.max(30, Math.abs(p2.x - p1.x) / 2);
+    c1 = { x: p1.x + (right ? pull : -pull), y: p1.y };
+    c2 = { x: p2.x - (right ? pull : -pull), y: p2.y };
+  } else {
+    const down = dy >= 0;
+    p1 = { x: ac.x, y: down ? a.y + a.h : a.y };
+    p2 = { x: bc.x, y: down ? b.y : b.y + b.h };
+    const pull = Math.max(30, Math.abs(p2.y - p1.y) / 2);
+    c1 = { x: p1.x, y: p1.y + (down ? pull : -pull) };
+    c2 = { x: p2.x, y: p2.y - (down ? pull : -pull) };
+  }
+  // 删除按钮贴在箭头外侧一点，别压住端点
+  const off = 12;
+  return {
+    d: `M ${p1.x} ${p1.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${p2.x} ${p2.y}`,
+    kx: p2.x + (horizontal ? (dx >= 0 ? -off : off) : 0),
+    ky: p2.y + (horizontal ? 0 : (dy >= 0 ? -off : off)),
+  };
 }
 
 function dgToCanvas(svg, e) {
@@ -1209,8 +1241,15 @@ function dgTidyGroups() {
   const roots = dg.layout.nodes.filter((n) => dgIsGroup(n) && !ids.has(n.parent));
   let arranged = 0;
   for (const r of roots) arranged += dgArrange(r.id);
+  // 每个分组自己排好之后，再把层与层之间压上的推开——顶层也要扫一遍
+  let pushed = 0;
+  const scopes = [null, ...dg.layout.nodes.filter(dgIsGroup).map((n) => n.id)];
+  for (const sc of scopes) pushed += dgSeparateScope(sc);
+  for (const r of roots) dgFitGroup(r);
   if (arranged) { dg.dirty = true; dgSyncSave(); dgRender(); }
-  showToast(arranged ? `已排布 ${arranged} 个元素` : "没有需要排布的分组");
+  showToast(arranged
+    ? `已排布 ${arranged} 个元素${pushed ? `，推开 ${pushed} 处重叠` : ""}`
+    : "没有需要排布的分组");
 }
 
 /* ---------- 节点详情（看图模式点击） ---------- */
@@ -1997,17 +2036,31 @@ function dgArrange(gid) {
 
     const cellW = Math.max(...leaves.map((n) => n.w));
     const cellH = Math.max(...leaves.map((n) => n.h));
-    // 列数按分组当前宽度算：框宽就多排几列，而不是一味拉长
-    const cols = Math.max(1, Math.floor((g.w - DG_PAD * 2 + DG_GAPX) / (cellW + DG_GAPX)));
-    const rows = Math.ceil(order.length / cols);
-    order.forEach((n, i) => {
-      const col = Math.floor(i / rows), row = i % rows;   // 先竖后横，和种子布局一致
-      const indent = owner[n.id] ? DG_INDENT : 0;
-      n.x = x + col * (cellW + DG_GAPX) + indent;
-      n.y = top + row * (cellH + DG_GAPY);
-      if (indent && n.w > cellW - indent) n.w = cellW - indent;
+
+    // **列的归属沿用节点现在的 x**，不是按分组宽度算一个列数再摊平。
+    //
+    // 按列数摊平的话，不管你把节点放在哪，它都会被塞进"从左往右数第 k 个"格子里——
+    // 往下放的意图看不出来，图只会一味向右长。按 x 聚类就保留了放置方向：
+    // 放在已有那一列附近 → 归进那一列、向下接着排；放到右边空处 → 自成一列。
+    const cols = [];
+    for (const n of order) {
+      const at = owner[n.id]
+        ? cols.find((c) => c.items.some((m) => m.id === owner[n.id]))   // 被包含的跟着它的主项
+        : cols.find((c) => Math.abs(c.x - n.x) < cellW * 0.7);
+      if (at) { at.items.push(n); at.x = Math.min(at.x, n.x); }
+      else cols.push({ x: n.x, items: [n] });
+    }
+    cols.sort((p, q) => p.x - q.x);
+
+    cols.forEach((col, ci) => {
+      col.items.forEach((n, ri) => {
+        const indent = owner[n.id] ? DG_INDENT : 0;
+        n.x = x + ci * (cellW + DG_GAPX) + indent;
+        n.y = top + ri * (cellH + DG_GAPY);
+        if (indent && n.w > cellW - indent) n.w = cellW - indent;
+      });
     });
-    x += cols * (cellW + DG_GAPX) - DG_GAPX;
+    x += cols.length * (cellW + DG_GAPX) - DG_GAPX;
   }
 
   dgFitGroup(g);
@@ -2036,7 +2089,67 @@ function dgAutoArrange(...gids) {
     if (!gid || done.has(gid)) continue;
     done.add(gid);
     n += dgArrange(gid);
+    // 排完这个分组可能变大，顶到同层的邻居——逐层往上把重叠推开
+    dgSeparateFrom(gid);
   }
   if (n) { dg.dirty = true; dgSyncSave(); dgRender(); }
   return n;
+}
+
+/* ---------- 同层分离 ----------
+ *
+ * 分组内部排布不会重叠，但一个分组排完可能变大，于是压到**同层的邻居**上。
+ * 整图重排一遍最省事，却会把研究员手工摆的位置全改掉。
+ *
+ * 所以只做最小干预：找出真正重叠的一对，沿**重叠较小的那个轴**推开，
+ * 被推的总是位置靠后的那个（左上优先），没重叠的一个都不动。
+ */
+function dgSeparateScope(parentId) {
+  const scope = (parentId || null);
+  const sibs = dg.layout.nodes.filter((n) => (n.parent || null) === scope);
+  if (sibs.length < 2) return 0;
+  const GAP = 18;
+  let moves = 0;
+
+  for (let pass = 0; pass < 24; pass += 1) {
+    let hit = false;
+    for (let i = 0; i < sibs.length; i += 1) {
+      for (let j = i + 1; j < sibs.length; j += 1) {
+        const a = sibs[i], b = sibs[j];
+        const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+        const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+        if (ox <= 0 || oy <= 0) continue;                 // 没压上
+        // 沿重叠较小的那个轴推开——推得最少，形变也最小
+        if (ox <= oy) {
+          // 左边那个留在原地，右边那个往右让
+          const later = a.x <= b.x ? b : a;
+          dgMoveTree(later, ox + GAP, 0);
+        } else {
+          const later = a.y <= b.y ? b : a;
+          dgMoveTree(later, 0, oy + GAP);
+        }
+        hit = true;
+        moves += 1;
+      }
+    }
+    if (!hit) break;
+  }
+  return moves;
+}
+
+function dgSeparateFrom(gid) {
+  // 从这个分组所在的那一层开始，逐层往上推——子框长大会顶大父框，父框又可能压到它的邻居
+  let node = dg.layout.nodes.find((n) => n.id === gid);
+  const seen = new Set();
+  let moves = 0;
+  while (true) {
+    const scope = node ? (node.parent || null) : null;
+    moves += dgSeparateScope(scope);
+    if (scope === null || seen.has(scope)) break;
+    seen.add(scope);
+    const parent = dg.layout.nodes.find((n) => n.id === scope);
+    if (parent) dgFitGroup(parent);
+    node = parent;
+  }
+  return moves;
 }
