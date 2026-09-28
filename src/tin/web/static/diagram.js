@@ -135,7 +135,8 @@ function dgRender() {
       <text x="${9 + pw / 2}" y="4.5" text-anchor="middle" font-size="${d ? 11 : 12}"
             font-weight="800" fill="${c.label}">${
         trail ? `<tspan opacity="0.62">${dgEsc(trail)} › </tspan>` : ""}${dgEsc(g.label)}</text>
-      ${dg.edit ? dgHandle(g) : ""}
+      ${dgGroupAgg(g, c)}
+      ${dg.edit ? dgHandles(g) : ""}
     </g>`;
     }).join("");
 
@@ -201,6 +202,37 @@ function dgTrail(id) {
   return trail.join(" › ");
 }
 
+function dgToCanvas(svg, e) {
+  const r = svg.getBoundingClientRect();
+  return { x: (e.clientX - r.left - dg.pan.x) / dg.zoom,
+           y: (e.clientY - r.top - dg.pan.y) / dg.zoom };
+}
+
+function dgConnect(a, b) {
+  if (!b) { showToast("连线取消：松手时不在任何方框上"); return; }
+  if (a.id === b.id) { showToast("不能连到自己"); return; }
+  if (dgIsGroup(a) !== dgIsGroup(b)) {
+    // 分组连节点表达不了任何东西：分组已经"包含"了它的节点，再画一条箭头只会误导
+    showToast("分组只能连分组，节点只能连节点 —— 包含关系用拖进框表达，不用连线");
+    return;
+  }
+  dg.layout.edges = dg.layout.edges || [];
+  const at = dg.layout.edges.findIndex((x) => x.from === a.id && x.to === b.id);
+  const back = dg.layout.edges.findIndex((x) => x.from === b.id && x.to === a.id);
+  dgPushUndo();
+  if (at >= 0) {
+    dg.layout.edges.splice(at, 1);
+    showToast(`已删除连线「${a.label} → ${b.label}」`);
+  } else {
+    if (back >= 0) dg.layout.edges.splice(back, 1);   // 反向连一次即改向
+    dg.layout.edges.push({ from: a.id, to: b.id });
+    showToast(`已连「${a.label} → ${b.label}」${back >= 0 ? "（方向已反转）" : ""}`);
+  }
+  dg.dirty = true;
+  dgSyncSave();
+  dgRender();
+}
+
 function dgSubtree(id) {
   // 一个分组和它里面的全部内容（含子分组）。拖动、删除都该以这个为单位。
   const out = [];
@@ -218,27 +250,38 @@ function dgSubtree(id) {
  * 画布编辑没有撤销，一次误拖就得靠手动摆回去——而归属变化是看不见的，
  * 等发现时已经不知道该怎么还原了。整份布局做快照最简单也最可靠：
  * 这份 JSON 只有几十 KB，存 30 步完全不是负担。 */
-function dgPushUndo() {
-  dg.undo = dg.undo || [];
-  dg.undo.push(JSON.stringify({ nodes: dg.layout.nodes, edges: dg.layout.edges }));
-  if (dg.undo.length > 30) dg.undo.shift();
-  const btn = document.getElementById("dg-undo");
-  if (btn) btn.disabled = false;
+const dgSnapshot = () => JSON.stringify({ nodes: dg.layout.nodes, edges: dg.layout.edges });
+
+function dgSyncHistory() {
+  const u = document.getElementById("dg-undo"), r = document.getElementById("dg-redo");
+  if (u) { u.disabled = !(dg.undo || []).length; u.title = `后退一步 Ctrl+Z（${(dg.undo || []).length}）`; }
+  if (r) { r.disabled = !(dg.redo || []).length; r.title = `前进一步 Ctrl+Shift+Z（${(dg.redo || []).length}）`; }
 }
 
-function dgUndo() {
-  if (!dg.undo || !dg.undo.length) { showToast("没有可撤销的操作"); return; }
-  const prev = JSON.parse(dg.undo.pop());
-  dg.layout.nodes = prev.nodes;
-  dg.layout.edges = prev.edges;
+function dgPushUndo() {
+  dg.undo = dg.undo || [];
+  dg.undo.push(dgSnapshot());
+  if (dg.undo.length > 40) dg.undo.shift();
+  dg.redo = [];      // 新改动让"前进"失效，否则会接到一条已经不存在的历史上
+  dgSyncHistory();
+}
+
+function dgStep(from, to, word) {
+  if (!from.length) { showToast(`没有可${word}的操作`); return; }
+  to.push(dgSnapshot());
+  const s = JSON.parse(from.pop());
+  dg.layout.nodes = s.nodes;
+  dg.layout.edges = s.edges;
   dg.dirty = true;
   dgSyncSave();
   dgRender();
   dgLoad();
-  const btn = document.getElementById("dg-undo");
-  if (btn) btn.disabled = !dg.undo.length;
-  showToast(`已撤销（还可撤销 ${dg.undo.length} 步）`);
+  dgSyncHistory();
+  showToast(`已${word}（还可${word} ${from.length} 步）`);
 }
+
+function dgUndo() { dg.undo = dg.undo || []; dg.redo = dg.redo || []; dgStep(dg.undo, dg.redo, "后退"); }
+function dgRedo() { dg.undo = dg.undo || []; dg.redo = dg.redo || []; dgStep(dg.redo, dg.undo, "前进"); }
 
 function dgIsAncestor(maybeAncestor, id) {
   let cur = dg.layout.nodes.find((n) => n.id === id);
@@ -286,11 +329,43 @@ function dgHealCycles() {
   return broken.length;
 }
 
-function dgHandle(n) {
-  // 右下角拖拽把手。只在编辑模式出现，避免看图时误拖。
-  return `<rect class="dg-resize" data-resize="${dgEsc(n.id)}"
-    x="${n.w - 12}" y="${n.h - 12}" width="12" height="12" rx="3"
-    fill="var(--primary)" fill-opacity="0.75" style="cursor:nwse-resize"/>`;
+/* 八个方向的拖拽把手。原来只有右下角一个，想把框往左边扩就得先挪位置再改大小，
+ * 两步做一件事。四角 + 四边是绘图工具的通用做法，不用教。 */
+const DG_GRIPS = [
+  ["nw", 0, 0, "nwse-resize"], ["n", 0.5, 0, "ns-resize"], ["ne", 1, 0, "nesw-resize"],
+  ["w", 0, 0.5, "ew-resize"],                              ["e", 1, 0.5, "ew-resize"],
+  ["sw", 0, 1, "nesw-resize"], ["s", 0.5, 1, "ns-resize"], ["se", 1, 1, "nwse-resize"],
+];
+
+function dgHandles(n) {
+  return DG_GRIPS.map(([dir, fx, fy, cursor]) => {
+    const x = n.w * fx - 5, y = n.h * fy - 5;
+    const corner = dir.length === 2;
+    return `<rect class="dg-resize" data-resize="${dgEsc(n.id)}" data-dir="${dir}"
+      x="${x}" y="${y}" width="10" height="10" rx="${corner ? 2 : 5}"
+      fill="var(--primary)" fill-opacity="${corner ? 0.8 : 0.45}"
+      style="cursor:${cursor}"/>`;
+  }).join("");
+}
+
+function dgGroupAgg(g, c) {
+  // 分组自己的合计值：右上角一块，和标题分开——它是这个框的数，不是框的名字
+  const v = dg.values[g.id];
+  if (!v || !v.agg) return "";
+  const blocked = v.state === "blocked" || v.state === "no_data" || v.state === "unbound";
+  const label = v.agg === "share" ? "占比" : "合计";
+  const body = blocked
+    ? `<tspan fill="var(--amber)">${dgEsc(label)}不出数</tspan>`
+    : `<tspan font-weight="800">${dgEsc(dgNum(v.value, v.unit))}</tspan>`;
+  const w = (blocked ? 60 : String(dgNum(v.value, v.unit)).length * 7 + 34);
+  return `
+    <g transform="translate(${g.w - 9 - w},-9.5)" style="cursor:pointer">
+      <rect width="${w}" height="20" rx="10" fill="var(--surface)"/>
+      <rect width="${w}" height="20" rx="10" fill="${c.stroke}" opacity="${c.pill}"/>
+      <text x="${w / 2}" y="14" text-anchor="middle" font-size="10.5" fill="${c.label}">
+        <tspan opacity="0.7">${dgEsc(label)} </tspan>${body}</text>
+      <title>${dgEsc(v.note || "")}</title>
+    </g>`;
 }
 
 function dgDir(v) {
@@ -368,7 +443,7 @@ function dgNode(n) {
         fill="${dirColor}" opacity="0.9"/>` : ""}
     ${roleMark}
     ${staticMark}
-    ${dg.edit ? dgHandle(n) : ""}
+    ${dg.edit ? dgHandles(n) : ""}
     <foreignObject x="${dirColor ? 11 : 8}" y="6" width="${n.w - (dirColor ? 20 : 16)}" height="${n.h - 10}">
       <div xmlns="http://www.w3.org/1999/xhtml" class="${st.tone}" style="font-family:inherit">
         <div class="text-[10px] font-bold" style="line-height:1.15;${
@@ -444,8 +519,16 @@ function dgBindCanvas() {
     const g = e.target.closest?.(".dg-node");
     if (dg.edit && handle) {
       const node = dg.layout.nodes.find((n) => n.id === handle.dataset.resize);
-      drag = { node, resize: true, x0: e.clientX, y0: e.clientY, w0: node.w, h0: node.h };
+      drag = { node, resize: true, dir: handle.dataset.dir || "se",
+               x0: e.clientX, y0: e.clientY,
+               w0: node.w, h0: node.h, nx: node.x, ny: node.y };
       dgPushUndo();
+      svg.setPointerCapture(e.pointerId);
+    } else if (dg.edit && g && (e.shiftKey || dg.linking)) {
+      // 手动连线：按住 Shift 从一个框拖到另一个框。连线原来只能靠 Markdown 缩进
+      // 自动生成，分组之间的主链路在画布上根本画不出来。
+      const node = dg.layout.nodes.find((n) => n.id === g.dataset.node);
+      drag = { link: node, x0: e.clientX, y0: e.clientY };
       svg.setPointerCapture(e.pointerId);
     } else if (dg.edit && g) {
       const node = dg.layout.nodes.find((n) => n.id === g.dataset.node);
@@ -470,6 +553,23 @@ function dgBindCanvas() {
   svg.addEventListener("pointermove", (e) => {
     if (!drag) return;
     const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+    if (drag.link) {
+      const a = drag.link;
+      const pt = dgToCanvas(svg, e);
+      let rope = document.getElementById("dg-rope");
+      if (!rope) {
+        rope = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        rope.id = "dg-rope";
+        rope.setAttribute("fill", "none");
+        rope.setAttribute("stroke", "var(--primary)");
+        rope.setAttribute("stroke-width", "2");
+        rope.setAttribute("stroke-dasharray", "5 4");
+        document.getElementById("dg-edges").appendChild(rope);
+      }
+      rope.setAttribute("d",
+        `M ${a.x + a.w / 2} ${a.y + a.h / 2} L ${pt.x} ${pt.y}`);
+      return;
+    }
     if (drag.pan) {
       if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
       dg.pan = { x: drag.px + dx, y: drag.py + dy };
@@ -477,9 +577,17 @@ function dgBindCanvas() {
       return;
     }
     if (drag.resize) {
-      // 下限保证框里还装得下标签与一行数值，不至于被拖成一条缝
-      drag.node.w = Math.max(100, Math.round((drag.w0 + dx / dg.zoom) / 10) * 10);
-      drag.node.h = Math.max(52, Math.round((drag.h0 + dy / dg.zoom) / 10) * 10);
+      // 往左/往上拖要同时改位置和尺寸——只改尺寸的话框会朝反方向长出去。
+      // 下限保证框里还装得下标签与一行数值，不至于被拖成一条缝。
+      const MINW = 100, MINH = 52;
+      const gx = Math.round(dx / dg.zoom / 10) * 10, gy = Math.round(dy / dg.zoom / 10) * 10;
+      const d = drag.dir;
+      let { nx: x, ny: y, w0: w, h0: h } = drag;
+      if (d.includes("e")) w = Math.max(MINW, drag.w0 + gx);
+      if (d.includes("s")) h = Math.max(MINH, drag.h0 + gy);
+      if (d.includes("w")) { w = Math.max(MINW, drag.w0 - gx); x = drag.nx + (drag.w0 - w); }
+      if (d.includes("n")) { h = Math.max(MINH, drag.h0 - gy); y = drag.ny + (drag.h0 - h); }
+      Object.assign(drag.node, { x, y, w, h });
       dg.dirty = true;
       dgRender();
       return;
@@ -496,6 +604,13 @@ function dgBindCanvas() {
     const wasDrag = drag;
     drag = null;
     svg.releasePointerCapture?.(e.pointerId);
+    document.getElementById("dg-rope")?.remove();
+    if (wasDrag && wasDrag.link) {
+      const target = e.target.closest?.(".dg-node");
+      const b = target && dg.layout.nodes.find((n) => n.id === target.dataset.node);
+      dgConnect(wasDrag.link, b);
+      return;
+    }
     if (dg.edit && wasDrag && wasDrag.node && !wasDrag.resize && wasDrag.moved) {
       // 拖到哪个分组里就归哪个组。归属是显式字段，不靠画完之后再猜几何包含。
       const before = wasDrag.node.parent || null;
@@ -510,19 +625,24 @@ function dgBindCanvas() {
       }
     }
     if (wasDrag && wasDrag.node && !wasDrag.resize && !wasDrag.moved) {
-      // 编辑模式点击是"换绑"，看图模式点击是"看清楚这个数凭什么可信"
+      // 编辑模式点击是"换绑"，看图模式点击是"看清楚这个数凭什么可信"。
+      // 分组框在看图模式下原来点了毫无反应——但它其实是个实体：有成员、有合计、
+      // 有自己的属性，该有自己的抽屉。
       if (dg.edit) dgOpenPool(wasDrag.node.id);
-      else if (!dgIsGroup(wasDrag.node)) dgOpenDetail(wasDrag.node.id);
+      else if (dgIsGroup(wasDrag.node)) dgOpenGroup(wasDrag.node.id);
+      else dgOpenDetail(wasDrag.node.id);
     }
     dgSyncSave();
   });
 
   document.addEventListener("keydown", (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
-      if (/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || "")) return;
-      e.preventDefault();
-      dgUndo();
-    }
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const k = e.key.toLowerCase();
+    if (k !== "z" && k !== "y") return;
+    if (/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || "")) return;
+    e.preventDefault();
+    if (k === "y" || e.shiftKey) dgRedo();
+    else dgUndo();
   });
 
   svg.addEventListener("wheel", (e) => {
@@ -657,6 +777,14 @@ function dgBind(field, kind) {
   dgPushUndo();
   const node = dg.layout.nodes.find((n) => n.id === dg.active);
   if (!node) return;
+  // 一个节点只绑一个指标，那么默认就该叫指标的名字——不然新建的框全叫"新节点"，
+  // 得逐个改名才看得出是什么。只在用户没起过名时替换，手工改过的名字不动。
+  const prev = (node.binding || {}).series_id || (node.binding || {}).formula_id;
+  const prevName = prev ? (dg.pool.find((f) => f.field === prev) || {}).label : null;
+  if (!node.label || node.label === "新节点" || node.label === prev || node.label === prevName) {
+    const picked = dg.pool.find((f) => f.field === field);
+    if (picked && picked.label) node.label = picked.label;
+  }
   node.binding = kind === "derived"
     ? { kind: "derived", formula_id: field }
     : { kind: "series", series_id: field, proxy: document.getElementById("dg-proxy").checked };
@@ -1424,4 +1552,144 @@ async function dgOpenCrosscheck() {
     </div>`;
   }).join("") + `<div class="pt-3 text-[10px] text-[var(--text-muted)]">
       差异本身不是错误——两家口径不同很正常。要盯的是<b>差异突然变化</b>，那说明有一方改过数或换了口径。</div>`;
+}
+
+/* ---------- 分组抽屉 ----------
+ *
+ * 分组框原来在看图模式下点了没反应，像张背景纸。但它是个实体：有成员、有合计、
+ * 有自己的层级位置。这个抽屉回答三件事：
+ *   这个环节里有什么、整体怎么样、哪一项在拖后腿。
+ */
+
+function dgOpenGroup(gid) {
+  const g = dg.layout.nodes.find((n) => n.id === gid);
+  if (!g) return;
+  dg.activeGroup = gid;
+  document.getElementById("dg-group-title").textContent = g.label;
+  document.getElementById("dg-group-trail").textContent = dgTrail(gid) || "顶层分组";
+  toggleDrawer("dg-group-drawer", true);
+
+  const kids = dg.layout.nodes.filter((n) => n.parent === gid);
+  const subs = kids.filter(dgIsGroup);
+  const leaves = kids.filter((n) => !dgIsGroup(n));
+  const v = dg.values[gid] || {};
+  const vals = leaves.map((n) => ({ n, v: dg.values[n.id] || {} }));
+  const withVal = vals.filter((x) => x.v.value != null);
+
+  // 合计/占比
+  const aggOp = (g.binding || {}).kind === "agg" ? g.binding.op : "";
+  let aggBox = "";
+  if (aggOp) {
+    const bad = v.state === "blocked" || v.state === "no_data" || v.state === "unbound";
+    aggBox = `
+      <div class="rounded-md border ${bad ? "border-[var(--amber)]/40 bg-[var(--amber-soft)]"
+                                          : "border-[var(--primary)]/30 bg-[var(--primary-soft)]"} p-3">
+        <div class="text-[10px] font-semibold text-[var(--text-muted)]">
+          ${aggOp === "share" ? "占比" : "合计"}（本分组的直接子节点）</div>
+        ${bad ? `<div class="text-sm font-bold text-[var(--amber)] mt-1">不出数</div>`
+              : `<div class="text-xl font-black tabular mt-1">${dgEsc(dgNum(v.value, v.unit))}</div>`}
+        <div class="text-[11px] text-[var(--text-muted)] mt-1">${dgEsc(v.note || "")}</div>
+        ${(v.parts || []).length ? `<div class="mt-2 space-y-1">${v.parts.map((p) => `
+          <div class="flex items-center gap-2 text-[11px]">
+            <span class="w-28 shrink-0 truncate">${dgEsc(p.label)}</span>
+            <span class="flex-1 h-2 rounded bg-[var(--surface)] overflow-hidden">
+              <i style="display:block;height:100%;width:${Math.max(1, p.pct).toFixed(1)}%;
+                 background:var(--primary);opacity:.65"></i></span>
+            <span class="tabular w-12 text-right font-semibold">${p.pct.toFixed(1)}%</span>
+          </div>`).join("")}</div>` : ""}
+      </div>`;
+  }
+
+  // 成员一览：按本期变化幅度排序——"哪一项在动"比"有哪些项"更值得先看到
+  const ranked = withVal.slice().sort((a, b) =>
+    Math.abs(b.v.mom ?? 0) - Math.abs(a.v.mom ?? 0));
+  const stateText = { ok: "正常", stale: "断更", no_data: "尚无数据", blocked: "阻断",
+                      missing_input: "缺少输入", retired: "已停用", unbound: "未绑定" };
+  const rows = vals.map(({ n, v: x }) => {
+    const d = dgDir(x.delta != null ? x.delta : x.mom);
+    return `<button type="button" onclick="dgOpenDetail('${dgEsc(n.id)}')"
+      class="w-full text-left flex items-baseline gap-2 py-1.5 px-1 rounded hover:bg-[var(--surface-soft)]">
+      <span class="flex-1 truncate text-[11px] font-medium">${dgEsc(n.label)}</span>
+      ${x.value != null
+        ? `<span class="tabular text-[11px]">${dgEsc(dgNum(x.value, x.unit))}</span>
+           <span class="${d.cls} tabular text-[10px] w-14 text-right">${
+             dgPct(x.mom) != null ? d.mark + dgPct(x.mom) : ""}</span>`
+        : `<span class="text-[10px] text-[var(--text-muted)]">${
+             stateText[x.state] || "未绑定"}</span>`}
+    </button>`;
+  }).join("");
+
+  const problems = vals.filter((x) => x.v.state && x.v.state !== "ok");
+  document.getElementById("dg-group-body").innerHTML = `
+    ${aggBox}
+    <div class="mt-3 grid grid-cols-3 gap-2 text-center">
+      ${[["直接节点", leaves.length], ["子分组", subs.length], ["有数据", withVal.length]]
+        .map(([k, n]) => `<div class="rounded-md border border-[var(--line)] py-2">
+          <div class="text-lg font-black tabular">${n}</div>
+          <div class="text-[10px] text-[var(--text-muted)]">${k}</div></div>`).join("")}
+    </div>
+
+    ${problems.length ? `<div class="mt-3 px-2.5 py-2 rounded-md bg-[var(--amber-soft)]
+      text-[var(--amber)] text-[11px]">
+      ${problems.length} 项不是「正常」：${problems.map((x) =>
+        `${dgEsc(x.n.label)}（${stateText[x.v.state] || x.v.state}）`).join("、")}
+      </div>` : ""}
+
+    ${ranked.length ? `<div class="mt-3">
+      <div class="text-[10px] font-semibold text-[var(--text-muted)] mb-1">
+        本期动得最大的</div>
+      ${ranked.slice(0, 3).map(({ n, v: x }) => {
+        const d = dgDir(x.mom);
+        return `<div class="flex items-baseline gap-2 text-[11px] py-0.5">
+          <span class="flex-1 truncate">${dgEsc(n.label)}</span>
+          <span class="${d.cls} tabular font-semibold">${d.mark} ${dgPct(x.mom) || "—"}</span></div>`;
+      }).join("")}</div>` : ""}
+
+    <div class="mt-3 pt-3 border-t border-[var(--line)]">
+      <div class="text-[10px] font-semibold text-[var(--text-muted)] mb-1">成员（点开看凭证）</div>
+      ${rows || '<div class="py-3 text-center text-[11px] text-[var(--text-muted)]">这个分组里还没有节点</div>'}
+      ${subs.length ? `<div class="mt-2 pt-2 border-t border-[var(--line)]">
+        <div class="text-[10px] font-semibold text-[var(--text-muted)] mb-1">子分组</div>
+        ${subs.map((x) => `<button type="button" onclick="dgOpenGroup('${dgEsc(x.id)}')"
+          class="w-full text-left py-1 px-1 rounded text-[11px] hover:bg-[var(--surface-soft)]">
+          ${dgEsc(x.label)} ›</button>`).join("")}</div>` : ""}
+    </div>
+
+    <div class="mt-3 pt-3 border-t border-[var(--line)]">
+      <div class="text-[10px] font-semibold text-[var(--text-muted)] mb-1.5">分组公式</div>
+      <div class="flex items-center gap-1.5 text-[11px]">
+        ${[["", "不计算"], ["sum", "合计 Σ"], ["share", "占比 %"]].map(([op, label]) => `
+          <button type="button" onclick="dgSetAgg('${dgEsc(gid)}','${op}')"
+            class="px-2.5 py-1.5 rounded-md font-semibold ${aggOp === op
+              ? "bg-[var(--primary)] text-white"
+              : "border border-[var(--line)] hover:bg-[var(--surface-soft)]"}">${label}</button>`).join("")}
+      </div>
+      <p class="text-[10px] text-[var(--text-muted)] mt-1.5 leading-relaxed">
+        只对<b>直接子节点</b>生效。单位或频率不一致时<b>不出数</b>并说明原因 ——
+        实物吨和金属吨差 2–3 倍，加出来的数看着完全正常，那比留空危险得多。
+        在 Markdown 里写成 <code>## 分组名 &lt;!-- agg: sum --&gt;</code>。</p>
+    </div>`;
+}
+
+function dgSetAgg(gid, op) {
+  const g = dg.layout.nodes.find((n) => n.id === gid);
+  if (!g) return;
+  dgPushUndo();
+  g.binding = op ? { kind: "agg", op } : { kind: "none" };
+  dg.dirty = true;
+  dgSyncSave();
+  dgLoad().then(() => dgOpenGroup(gid));
+}
+
+function dgRenameGroup() {
+  const g = dg.layout.nodes.find((n) => n.id === dg.activeGroup);
+  if (!g) return;
+  const name = (prompt("分组名称", g.label) || "").trim();
+  if (!name || name === g.label) return;
+  dgPushUndo();
+  g.label = name;
+  dg.dirty = true;
+  dgSyncSave();
+  dgRender();
+  dgOpenGroup(g.id);
 }

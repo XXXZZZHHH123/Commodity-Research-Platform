@@ -248,8 +248,12 @@ def indicators_page(request: Request):
         rows = [i for i in s.scalars(select(Indicator).order_by(Indicator.fetch_mode, Indicator.category,
                                                                 Indicator.series_id))
                 if not PER_CONTRACT.match(i.series_id)]
+        # 跨来源校验原来挂在产业图页上，但它问的是"这条数据可不可信"，
+        # 跟产业结构没关系——属于指标治理，放这里才找得到。
+        day = latest_trade_date(s)
+        checks = diagram_api.crosscheck(s, V, day) if day else []
         return templates.TemplateResponse(request, "indicators.html", _shell(
-            s, "indicators", latest_trade_date(s), rows=rows, dimensions=DIMENSIONS))
+            s, "indicators", day, rows=rows, dimensions=DIMENSIONS, checks=checks))
 
 
 @app.get("/sn/indicators/{series_id}")

@@ -197,6 +197,7 @@ def resolve(session: Session, layout: dict, through: date) -> list[dict]:
     """按布局取出每个节点当前该显示什么。"""
     roles, _ = judgment_roles(session)
     out = []
+    by_id: dict[str, dict] = {}
     for node in layout.get("nodes", []):
         binding = node.get("binding") or {}
         kind = binding.get("kind")
@@ -209,8 +210,93 @@ def resolve(session: Session, layout: dict, through: date) -> list[dict]:
             value = NodeValue(node["id"], UNBOUND, node.get("label", ""))
         item = value.dump()
         item["roles"] = roles.get(item["series_id"] or "", [])
+        by_id[node["id"]] = item
         out.append(item)
+
+    # 分组的合计放在最后算：它要用到刚算出来的子节点取值
+    for node in layout.get("nodes", []):
+        binding = node.get("binding") or {}
+        if binding.get("kind") == "agg":
+            by_id[node["id"]].update(
+                _aggregate(node, binding.get("op", "sum"), layout, by_id))
     return out
+
+
+# ---------- 分组合计（方案 08 §5.2 的声明式组合） ----------
+
+_AGG_LABEL = {"sum": "合计", "share": "占比"}
+
+
+def _aggregate(group: dict, op: str, layout: dict, values: dict[str, dict]) -> dict:
+    """分组对自己的**直接子节点**求和 / 算占比。
+
+    这是 §5.2 说的"声明式组合"：用户选的是一个运算符，不是一段自由公式，
+    所以守卫可以自动推出来，而不是指望写公式的人自己声明。
+
+    **单位、频率、重量口径不一致一律阻断。** 元/吨 和 美元/吨 相加、实物吨和金属吨
+    （差 2–3 倍）相加，算出来的数看起来完全正常——这正是 FR-5.2 要防的东西。
+    合计一个"错得很合理"的数，比留空危险得多。
+    """
+    kids = [n for n in layout.get("nodes", [])
+            if n.get("parent") == group["id"] and n.get("kind") != "group"]
+
+    # **排除被同组别的节点包含的那些。** 缅甸矿进口 ⊂ 进口锡精矿，单位、频率完全一样，
+    # 守卫拦不住，求和就把它重复算了一遍——而多出来的那部分看不出来。
+    # 包含关系在数据里是显式的：同组内一条 A→B 的连线就是"B 是 A 的一部分"。
+    ids = {k["id"] for k in kids}
+    contained = {e["to"] for e in (layout.get("edges") or [])
+                 if e.get("from") in ids and e.get("to") in ids}
+    kids = [k for k in kids if k["id"] not in contained]
+    nested = len(contained)
+
+    picked = [values[k["id"]] for k in kids if k["id"] in values]
+    usable = [v for v in picked if v.get("value") is not None]
+    label = _AGG_LABEL.get(op, op)
+
+    if not picked:
+        return {"state": UNBOUND, "agg": op,
+                "note": f"这个分组里没有直接子节点，无法{label}"}
+    if not usable:
+        return {"state": NO_DATA, "agg": op,
+                "note": f"{len(picked)} 个子节点都还没有数据"}
+
+    units = {v.get("unit") for v in usable}
+    freqs = {v.get("frequency") for v in usable}
+    if len(units) > 1:
+        return {"state": BLOCKED, "agg": op, "value": None,
+                "note": f"单位不一致（{'、'.join(sorted(u or '—' for u in units))}），不能{label}"}
+    if op == "sum" and len(freqs) > 1:
+        return {"state": BLOCKED, "agg": op, "value": None,
+                "note": f"频率不一致（{'、'.join(sorted(f or '—' for f in freqs))}），"
+                        f"合计的是不同期的数"}
+
+    skipped = len(picked) - len(usable)
+    unit = usable[0].get("unit")
+    total = sum(v["value"] for v in usable)
+    if op == "share":
+        # 占比：每个子节点占合计的百分之多少。合计为 0 时不给数，别造一个 ∞
+        if total == 0:
+            return {"state": BLOCKED, "agg": op, "value": None,
+                    "note": "合计为 0，占比无意义"}
+        parts = sorted(({"label": k["label"],
+                         "pct": values[k["id"]]["value"] / total * 100}
+                        for k in kids
+                        if k["id"] in values and values[k["id"]].get("value") is not None),
+                       key=lambda p: -p["pct"])
+        return {"state": OK, "agg": op, "value": total, "unit": unit,
+                "parts": parts, "as_of": max(v.get("as_of") or "" for v in usable),
+                "note": (f"{len(usable)} 项占比"
+                         + (f"；{nested} 项是其他项的一部分，已排除" if nested else "")
+                         + (f"；{skipped} 项无数据未计入" if skipped else ""))}
+
+    # 合计的时点取最早的那个：里面只要有一项是旧的，整个合计就只到那一天
+    stalest = min((v.get("as_of") or "" for v in usable))
+    return {"state": OK if not skipped else STALE, "agg": op, "value": total, "unit": unit,
+            "frequency": usable[0].get("frequency"),
+            "as_of": stalest, "count": len(usable),
+            "note": (f"{len(usable)} 项合计"
+                     + (f"；{nested} 项是其他项的一部分，已排除以免重复计" if nested else "")
+                     + (f"；{skipped} 项无数据**未计入**，这不是完整的合计" if skipped else ""))}
 
 
 # ---------- 模板增删改查 ----------

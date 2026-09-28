@@ -609,3 +609,125 @@ def test_usage_tells_you_whether_anyone_depends_on_this_indicator(session):
     add_series(session, "T.ORPHAN")
     orphan = diagram.usage(session, "T.ORPHAN")
     assert orphan["judgment"] == [] and orphan["nodes"] == [], "没人用就是没人用，不编造引用"
+
+
+# ---------- 分组合计 ----------
+
+def group(gid, op=None, parent=None):
+    b = {"kind": "agg", "op": op} if op else {"kind": "none"}
+    return {"id": gid, "kind": "group", "label": gid, "parent": parent,
+            "x": 0, "y": 0, "w": 400, "h": 300, "binding": b, "statics": []}
+
+
+def test_group_sums_its_children(session):
+    for sid in ("G.A", "G.B"):
+        add_series(session, sid, unit="吨", frequency="月")
+    add_points(session, "G.A", [100, 90], step_days=30)
+    add_points(session, "G.B", [25, 20], step_days=30)
+
+    out = {n["node_id"]: n for n in diagram.resolve(session, {"nodes": [
+        group("g1", "sum"),
+        {**node("n1", series="G.A"), "parent": "g1"},
+        {**node("n2", series="G.B"), "parent": "g1"}]}, TODAY)}
+    assert out["g1"]["value"] == 125
+    assert out["g1"]["unit"] == "吨"
+    assert "2 项合计" in out["g1"]["note"]
+
+
+def test_group_refuses_to_add_across_units(session):
+    """实物吨和金属吨差 2–3 倍，加出来的数看起来完全正常——这正是 FR-5.2 要防的。"""
+    add_series(session, "G.T", unit="吨", frequency="月")
+    add_series(session, "G.M", unit="金属吨", frequency="月")
+    add_points(session, "G.T", [100], step_days=30)
+    add_points(session, "G.M", [40], step_days=30)
+
+    out = {n["node_id"]: n for n in diagram.resolve(session, {"nodes": [
+        group("g1", "sum"),
+        {**node("n1", series="G.T"), "parent": "g1"},
+        {**node("n2", series="G.M"), "parent": "g1"}]}, TODAY)}
+    assert out["g1"]["state"] == diagram.BLOCKED
+    assert out["g1"]["value"] is None, "阻断时必须留空，不能给 140"
+    assert "单位不一致" in out["g1"]["note"]
+
+
+def test_group_refuses_to_add_across_frequencies(session):
+    add_series(session, "G.D", unit="吨", frequency="日")
+    add_series(session, "G.MO", unit="吨", frequency="月")
+    add_points(session, "G.D", [10])
+    add_points(session, "G.MO", [300], step_days=30)
+
+    out = {n["node_id"]: n for n in diagram.resolve(session, {"nodes": [
+        group("g1", "sum"),
+        {**node("n1", series="G.D"), "parent": "g1"},
+        {**node("n2", series="G.MO"), "parent": "g1"}]}, TODAY)}
+    assert out["g1"]["state"] == diagram.BLOCKED
+    assert "频率不一致" in out["g1"]["note"]
+
+
+def test_partial_sum_says_it_is_partial(session):
+    """少算了一项的合计，看起来和完整的合计一模一样——必须说出来。"""
+    add_series(session, "G.A", unit="吨", frequency="月")
+    add_series(session, "G.EMPTY", unit="吨", frequency="月")
+    add_points(session, "G.A", [100], step_days=30)
+
+    out = {n["node_id"]: n for n in diagram.resolve(session, {"nodes": [
+        group("g1", "sum"),
+        {**node("n1", series="G.A"), "parent": "g1"},
+        {**node("n2", series="G.EMPTY"), "parent": "g1"}]}, TODAY)}
+    assert out["g1"]["value"] == 100
+    assert out["g1"]["state"] == diagram.STALE, "不完整的合计不能标成正常"
+    assert "未计入" in out["g1"]["note"]
+
+
+def test_group_share_ranks_children(session):
+    for sid in ("G.A", "G.B"):
+        add_series(session, sid, unit="吨", frequency="月")
+    add_points(session, "G.A", [30], step_days=30)
+    add_points(session, "G.B", [70], step_days=30)
+
+    out = {n["node_id"]: n for n in diagram.resolve(session, {"nodes": [
+        group("g1", "share"),
+        {**node("n1", series="G.A", label="小的"), "parent": "g1"},
+        {**node("n2", series="G.B", label="大的"), "parent": "g1"}]}, TODAY)}
+    parts = out["g1"]["parts"]
+    assert [p["label"] for p in parts] == ["大的", "小的"], "占比要从大到小排"
+    assert parts[0]["pct"] == pytest.approx(70.0)
+
+
+def test_group_without_children_says_so(session):
+    out = {n["node_id"]: n for n in diagram.resolve(
+        session, {"nodes": [group("g1", "sum")]}, TODAY)}
+    assert out["g1"]["state"] == diagram.UNBOUND
+    assert "没有直接子节点" in out["g1"]["note"]
+
+
+def test_a_plain_group_still_has_no_value(session):
+    """没写 agg 的分组框就是背景分区，不该凭空长出一个数。"""
+    add_series(session, "G.A", unit="吨", frequency="月")
+    add_points(session, "G.A", [100], step_days=30)
+    out = {n["node_id"]: n for n in diagram.resolve(session, {"nodes": [
+        group("g1"), {**node("n1", series="G.A"), "parent": "g1"}]}, TODAY)}
+    assert out["g1"]["state"] == diagram.UNBOUND
+    assert out["g1"]["value"] is None
+
+
+def test_sum_excludes_parts_of_other_items(session):
+    """缅甸矿进口 ⊂ 进口锡精矿：单位频率完全一样，守卫拦不住，求和会重复计一次。
+
+    包含关系在数据里是显式的——同组内一条 A→B 的连线就是"B 是 A 的一部分"。
+    """
+    for sid in ("G.TOTAL", "G.PART", "G.OTHER"):
+        add_series(session, sid, unit="吨", frequency="月")
+    add_points(session, "G.TOTAL", [100], step_days=30)
+    add_points(session, "G.PART", [30], step_days=30)     # 是 TOTAL 的一部分
+    add_points(session, "G.OTHER", [50], step_days=30)
+
+    layout = {"nodes": [
+        group("g1", "sum"),
+        {**node("whole", series="G.TOTAL"), "parent": "g1"},
+        {**node("part", series="G.PART"), "parent": "g1"},
+        {**node("other", series="G.OTHER"), "parent": "g1"}],
+        "edges": [{"from": "whole", "to": "part"}]}
+    out = {n["node_id"]: n for n in diagram.resolve(session, layout, TODAY)}
+    assert out["g1"]["value"] == 150, "不能算成 180 —— 那 30 吨被数了两遍"
+    assert "重复计" in out["g1"]["note"]
