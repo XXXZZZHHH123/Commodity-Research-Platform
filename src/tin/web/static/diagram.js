@@ -216,7 +216,7 @@ function dgEdgeGeom(a, b) {
   // 同一列上下堆叠、且同属一个分组 —— 这是「包含」，仍然画肘形。
   // 两框之间常常只有十几像素，一小段竖线等于看不见；肘形是树状图的通用画法。
   const sameCol = a.x < b.x + b.w && b.x < a.x + a.w;
-  if (sameCol && dy > 0 && a.parent && a.parent === b.parent) {
+  if (sameCol && dy > 0 && a.parent && a.parent === b.parent && !dgIsGroup(a) && !dgIsGroup(b)) {
     const x = a.x + 12, my = b.y + b.h / 2;
     return { d: `M ${x} ${a.y + a.h} L ${x} ${my} L ${b.x} ${my}`,
              kx: b.x - 11, ky: my };
@@ -355,6 +355,27 @@ function dgIsAncestor(maybeAncestor, id) {
     cur = dg.layout.nodes.find((n) => n.id === cur.parent);
   }
   return false;
+}
+
+function dgDropTarget(node) {
+  // 松手时归哪个组。
+  //
+  // 分组框是**紧贴内容**的，框内下方没有空处——于是"放到最后一项下面"必然落在框外，
+  // dgGroupAt 判它不在任何组里，节点就被移出了分组。纵向意图因此永远表达不出来：
+  // 往下放 = 被踢出去，只剩往右这一条路。
+  //
+  // 所以当前父框有粘性：落点不在别的组里（或只落在它的祖先里），但还贴着当前父框
+  // （相距 STICK 以内），就当作仍在框内。想真的拖出去，拉远一点即可。
+  // 显式落进**另一个**分组的，照常换组——那是明确的意图。
+  const STICK = 48;
+  const hit = dgGroupAt(node);
+  const cur = node.parent && dg.layout.nodes.find((n) => n.id === node.parent);
+  if (!cur || hit === cur.id) return hit;
+  const intoOther = hit && !dgIsAncestor(hit, cur.id);
+  if (intoOther) return hit;
+  const near = node.x < cur.x + cur.w + STICK && node.x + node.w > cur.x - STICK
+            && node.y < cur.y + cur.h + STICK && node.y + node.h > cur.y - STICK;
+  return near ? cur.id : hit;
 }
 
 function dgGroupAt(node) {
@@ -791,7 +812,12 @@ function dgBindCanvas() {
     if (dg.edit && wasDrag && wasDrag.node && !wasDrag.resize && wasDrag.moved) {
       // 拖到哪个分组里就归哪个组。归属是显式字段，不靠画完之后再猜几何包含。
       const before = wasDrag.node.parent || null;
-      const now = dgGroupAt(wasDrag.node);
+      const now = dgDropTarget(wasDrag.node);
+      if (before === now && now) {
+        // 归属没变，但位置变了（比如在组内拖到了别人下方）——照样按新位置重排
+        dgAutoArrange(now);
+        dgRender();
+      }
       if (before !== now) {
         wasDrag.node.parent = now;
         // 停在手松开的地方多半和别的框叠着，顺手排整齐；旧分组也要重排，把空位收掉
@@ -1238,18 +1264,25 @@ function dgTidyGroups() {
   // 这个按钮时发生**——自动重排整张图会让人失去对布局的掌控：刚摆好的位置被系统
   // 改掉，比对不齐更难受。
   const ids = new Set(dg.layout.nodes.filter(dgIsGroup).map((n) => n.id));
-  const roots = dg.layout.nodes.filter((n) => dgIsGroup(n) && !ids.has(n.parent));
+  // 顶层 = 没有父分组的一切（包括散落在分组外的节点）
+  const tops = dg.layout.nodes.filter((n) => !n.parent || !ids.has(n.parent));
+  if (!tops.length) { showToast("图是空的"); return; }
+
   let arranged = 0;
-  for (const r of roots) arranged += dgArrange(r.id);
-  // 每个分组自己排好之后，再把层与层之间压上的推开——顶层也要扫一遍
-  let pushed = 0;
-  const scopes = [null, ...dg.layout.nodes.filter(dgIsGroup).map((n) => n.id)];
-  for (const sc of scopes) pushed += dgSeparateScope(sc);
-  for (const r of roots) dgFitGroup(r);
-  if (arranged) { dg.dirty = true; dgSyncSave(); dgRender(); }
-  showToast(arranged
-    ? `已排布 ${arranged} 个元素${pushed ? `，推开 ${pushed} 处重叠` : ""}`
-    : "没有需要排布的分组");
+  for (const r of tops.filter(dgIsGroup)) arranged += dgArrange(r.id);
+
+  // 顶层也按列归位、统一间距。上一版这里只推开重叠——压上的拉开了，但隔得老远的
+  // 照样隔得老远，挨得太近的也照样挨着。「整理」就是要把远近不一的间距拉回同一个值。
+  // 起点锚在原图左上角，整张图不会被挪到别处去。
+  const x0 = Math.min(...tops.map((n) => n.x));
+  const y0 = Math.min(...tops.map((n) => n.y));
+  dgPlaceColumns(tops, x0, y0, DG_TOP_GAPX, DG_TOP_GAPY, dgContainedIn(null));
+
+  dg.dirty = true;
+  dgSyncSave();
+  dgRender();
+  dgFit();
+  showToast(`已整理 ${arranged + tops.length} 个元素，间距统一`);
 }
 
 /* ---------- 节点详情（看图模式点击） ---------- */
@@ -1986,14 +2019,20 @@ function dgRenameGroup() {
  */
 
 const DG_PAD = 12, DG_HEAD = 26, DG_GAPX = 20, DG_GAPY = 14, DG_INDENT = 18;
+// 顶层分组之间要比组内留得开一些：那是环节与环节的边界，挤在一起就分不出段落
+const DG_TOP_GAPX = 40, DG_TOP_GAPY = 32;
 
 function dgMoveTree(node, dx, dy) {
   for (const n of dgSubtree(node.id)) { n.x += dx; n.y += dy; }
 }
 
 function dgContainedIn(gid) {
-  // 同组内一条 A→B 的连线表示"B 是 A 的一部分"，排布时 B 紧跟 A 并缩进
-  const ids = new Set(dg.layout.nodes.filter((n) => n.parent === gid).map((n) => n.id));
+  // 同组内一条 A→B 的连线表示"B 是 A 的一部分"，排布时 B 紧跟 A 并缩进。
+  //
+  // **只认节点之间的线。** 分组之间的线是流向（矿端 → 冶炼与锭），不是包含——
+  // 当成包含的话，冶炼与锭会被缩进挂到矿端底下，整条主链路被折成一根竖条。
+  const ids = new Set(dg.layout.nodes
+    .filter((n) => (n.parent || null) === (gid || null) && !dgIsGroup(n)).map((n) => n.id));
   const of = {};
   for (const e of dg.layout.edges || []) {
     if (ids.has(e.from) && ids.has(e.to)) of[e.to] = e.from;
@@ -2001,68 +2040,80 @@ function dgContainedIn(gid) {
   return of;
 }
 
+/* 把一组元素按"列"摆好。节点和子分组走同一套规则，分组内部和顶层也走同一套。
+ *
+ * **列的归属看它现在横向落在哪**：与某一列横向重叠得够多，就归进那一列、按上下顺序
+ * 往下接；跟哪一列都不怎么重叠，就自成一列。于是放在下方就是向下长，放在右边
+ * 就是向右长——意图由位置表达，而不是被一个"列数"公式摊平。
+ *
+ * 上一版只对节点这样做，子分组仍然写死了横向并排：把一个分组拖进另一个分组的
+ * 下方，照样被排到右边去。宽度不一的子分组用"中心距离"判列也不准，所以改用
+ * 横向重叠比例。
+ *
+ * 间距在这里一次定死——这正是「整理」要做的事：远近不一的间距拉回同一个值。 */
+function dgPlaceColumns(items, x0, y0, gapX, gapY, owner = {}) {
+  if (!items.length) return;
+  const byXY = (a, b) => (a.y - b.y) || (a.x - b.x);
+  const sorted = items.slice().sort(byXY);
+
+  // 被包含的紧跟它的主项，其余保持原有上下顺序
+  const order = [];
+  const seen = new Set();
+  const push = (n) => {
+    if (seen.has(n.id)) return;
+    seen.add(n.id);
+    order.push(n);
+    for (const k of sorted) if (owner[k.id] === n.id) push(k);
+  };
+  for (const n of sorted) if (!owner[n.id]) push(n);
+  for (const n of sorted) push(n);            // 主项已被删掉的孤儿也要排进去
+
+  const cols = [];
+  for (const n of order) {
+    let col = owner[n.id] ? cols.find((c) => c.items.some((m) => m.id === owner[n.id])) : null;
+    if (!col) {
+      let best = 0;
+      for (const c of cols) {
+        const ov = Math.min(n.x + n.w, c.x1) - Math.max(n.x, c.x0);
+        // 重叠超过较窄那一方的四成才算"放在这一列上"，擦个边不算
+        if (ov > 0.4 * Math.min(n.w, c.x1 - c.x0) && ov > best) { best = ov; col = c; }
+      }
+    }
+    if (col) {
+      col.items.push(n);
+      col.x0 = Math.min(col.x0, n.x);
+      col.x1 = Math.max(col.x1, n.x + n.w);
+    } else {
+      cols.push({ x0: n.x, x1: n.x + n.w, items: [n] });
+    }
+  }
+  cols.sort((p, q) => p.x0 - q.x0);
+
+  const byId = Object.fromEntries(items.map((n) => [n.id, n]));
+  let x = x0;
+  for (const c of cols) {
+    let y = y0, colW = 0;
+    for (const n of c.items) {
+      const indent = owner[n.id] ? DG_INDENT : 0;
+      // 被包含的子项缩进后不该比主项还宽，否则缩进出去的那截会顶出列外
+      const host = byId[owner[n.id]];
+      if (indent && host && n.w > host.w - indent) n.w = host.w - indent;
+      dgMoveTree(n, x + indent - n.x, y - n.y);
+      colW = Math.max(colW, n.w + indent);
+      y += n.h + gapY;
+    }
+    x += colW + gapX;
+  }
+}
+
 function dgArrange(gid) {
   const g = dg.layout.nodes.find((n) => n.id === gid);
   if (!g) return 0;
   const kids = dg.layout.nodes.filter((n) => n.parent === gid);
   if (!kids.length) return 0;
-
-  const byXY = (a, b) => (a.y - b.y) || (a.x - b.x);
-  const subs = kids.filter(dgIsGroup).sort(byXY);
-  const leaves = kids.filter((n) => !dgIsGroup(n)).sort(byXY);
-
-  for (const s of subs) dgArrange(s.id);       // 内层先各自排好，外层才知道它多大
-
-  let x = g.x + DG_PAD;
-  const top = g.y + DG_HEAD;
-  for (const s of subs) {                       // 子分组横向并排
-    dgMoveTree(s, x - s.x, top - s.y);
-    x += s.w + DG_GAPX;
-  }
-
-  if (leaves.length) {
-    // 把"被包含的"排到它所属那一项后面，其余保持原有上下顺序
-    const owner = dgContainedIn(gid);
-    const order = [];
-    const seen = new Set();
-    const push = (n) => {
-      if (seen.has(n.id)) return;
-      seen.add(n.id);
-      order.push(n);
-      for (const k of leaves) if (owner[k.id] === n.id) push(k);
-    };
-    for (const n of leaves) if (!owner[n.id]) push(n);
-    for (const n of leaves) push(n);            // owner 已被删掉的孤儿也要排进去
-
-    const cellW = Math.max(...leaves.map((n) => n.w));
-    const cellH = Math.max(...leaves.map((n) => n.h));
-
-    // **列的归属沿用节点现在的 x**，不是按分组宽度算一个列数再摊平。
-    //
-    // 按列数摊平的话，不管你把节点放在哪，它都会被塞进"从左往右数第 k 个"格子里——
-    // 往下放的意图看不出来，图只会一味向右长。按 x 聚类就保留了放置方向：
-    // 放在已有那一列附近 → 归进那一列、向下接着排；放到右边空处 → 自成一列。
-    const cols = [];
-    for (const n of order) {
-      const at = owner[n.id]
-        ? cols.find((c) => c.items.some((m) => m.id === owner[n.id]))   // 被包含的跟着它的主项
-        : cols.find((c) => Math.abs(c.x - n.x) < cellW * 0.7);
-      if (at) { at.items.push(n); at.x = Math.min(at.x, n.x); }
-      else cols.push({ x: n.x, items: [n] });
-    }
-    cols.sort((p, q) => p.x - q.x);
-
-    cols.forEach((col, ci) => {
-      col.items.forEach((n, ri) => {
-        const indent = owner[n.id] ? DG_INDENT : 0;
-        n.x = x + ci * (cellW + DG_GAPX) + indent;
-        n.y = top + ri * (cellH + DG_GAPY);
-        if (indent && n.w > cellW - indent) n.w = cellW - indent;
-      });
-    });
-    x += cols.length * (cellW + DG_GAPX) - DG_GAPX;
-  }
-
+  // 内层先各自排好——外层要知道每个子分组排完有多大，才摆得开
+  for (const s of kids.filter(dgIsGroup)) dgArrange(s.id);
+  dgPlaceColumns(kids, g.x + DG_PAD, g.y + DG_HEAD, DG_GAPX, DG_GAPY, dgContainedIn(gid));
   dgFitGroup(g);
   return kids.length;
 }
