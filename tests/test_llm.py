@@ -92,8 +92,15 @@ def claim(text="仓单继续去化", *, series_id=None, value=None, as_of=None,
 
 
 def draft(*claims, **kw) -> dict:
+    """一份**交付完整**的草稿：基调 + 参考运行区间 + 操作倾向，三件套齐。
+
+    默认值必须齐全，否则 `missing_deliverables` 会报缺口，`guard.compose` 就会
+    打回重试 —— 于是每个只预置一条响应的测试都会撞上「FakeProvider 脚本已用尽」，
+    而它们的本意是「一次就过」。想测缺口的用例自己用 `**kw` 覆盖掉对应字段。
+    """
     payload = {
         "tone": "偏多",
+        "price_range": {"low": 400000, "high": 420000, "series_id": "SHFE.SN.main.settle"},
         "stance": "逢低做多",
         "summary": "仓单去化叠加宏观回暖，短期偏多。",
         "claims": list(claims),

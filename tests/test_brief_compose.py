@@ -68,11 +68,19 @@ def claim(text="主力结算价落在补库区间", *, series_id=MAIN, value=MAI
 
 
 def draft(*claims, **kw) -> dict:
+    """一份**交付完整**的草稿：三件套齐，且至少一条论断引用带数值的 series_id。
+
+    这两样缺任意一个，`missing_deliverables` 都会报缺口，`guard.compose` 随即打回
+    重试 —— 于是只预置一条响应的测试会撞上「FakeProvider 脚本已用尽」，而它们的本意
+    是「一次就过」（比如缓存纪律那两条，靠 requests[0] / requests[1] 区分两次 run，
+    多出来的重试会把下标全部错位）。想测缺口的用例用 `**kw` 覆盖对应字段。
+    """
     payload = {
         "tone": "区间震荡",
+        "price_range": {"low": 400000, "high": 420000, "series_id": MAIN},
         "stance": "逢低做多",
         "summary": "上方缺新驱动，下方有补库支撑，区间思路。",
-        "claims": list(claims) or [claim()],
+        "claims": list(claims) or [claim(series_id=MAIN, value=MAIN_VALUE, as_of=MAIN_AS_OF)],
         "used_playbook_item_ids": [],
     }
     payload.update(kw)
@@ -267,8 +275,12 @@ def test_signal_ids_are_citable_and_carry_the_computed_state(ready, me):
 
     evaluate(ready, "SN", D)
     hit = {s.rule_id: s for s in compose.signals_of(ready, judgment.id, D)}["th_entry_40w"]
-    provider = FakeProvider([draft(claim("区间下沿已被触及", signal_id=hit.id,
-                                         series_id=None, value=None, as_of=None))])
+    # 只挂 signal_id 的那条是本测试的主角；另加一条带数值的论断，是为了让草稿在
+    # 交付上完整（§missing_deliverables 要求至少一条论断引用具体数字）。
+    # 少了它就会被打回重试一次，而这里要验的是「一次就过」。
+    provider = FakeProvider([draft(
+        claim("区间下沿已被触及", signal_id=hit.id, series_id=None, value=None, as_of=None),
+        claim("主力结算价在区间内", series_id=MAIN, value=MAIN_VALUE, as_of=MAIN_AS_OF))])
 
     brief = run(ready, provider, researcher_id=me.id)
 

@@ -46,7 +46,8 @@
         ('home', '00', '工作台', '/'), ('variety', '01', '总览', '/sn'), ('macro', '02', '宏观', '/sn/macro'),
         ('judgment', '03', '判断', '/sn/judgment'), ('strategies', '04', '策略', '/sn/strategies'),
         ('indicators', '05', '指标', '/sn/indicators'),
-        ('reports', '06', '日报', '/sn/reports'), ('entry', '07', '录入通道', '/sn/entry')] %}
+        ('diagram', '06', '产业图', '/sn/diagram'),
+        ('reports', '07', '日报', '/sn/reports'), ('entry', '08', '录入通道', '/sn/entry')] %}
       <a href="{{ href }}{% if key in ('home', 'variety', 'macro') and d %}?date={{ d }}{% endif %}"
          class="nav-btn shrink-0 px-3 py-1.5 rounded-md font-medium {{ 'active text-[var(--primary)]' if nav == key else 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-soft)]' }}">
         <span class="tabular">{{ num }}</span> {{ label }}</a>

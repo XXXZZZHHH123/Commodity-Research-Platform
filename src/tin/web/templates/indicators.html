@@ -11,11 +11,57 @@
   <button onclick="toggleDrawer('quick-drawer', true)" class="px-3 py-1.5 text-xs font-semibold rounded bg-[var(--primary)] text-white hover:bg-[var(--primary-hover)] shrink-0">+ 人工录入</button>
 </div>
 
+{% if checks %}
+<section class="space-y-3">
+  <div class="flex items-center justify-between gap-3 flex-wrap">
+    <h2 class="text-sm font-bold flex items-center gap-2">
+      <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">00</span>
+      跨来源交叉校验<span class="text-xs font-normal text-[var(--text-muted)]">（同一个事实由两家分别给出时，对不对得上）</span>
+    </h2>
+    <span class="text-xs text-[var(--text-muted)]">
+      {{ checks | selectattr('state', 'ne', 'ok') | list | length }} / {{ checks | length }} 项存疑</span>
+  </div>
+  <div class="grid gap-3 md:grid-cols-3">
+    {% for c in checks %}
+    {% set bad = c.state != 'ok' %}
+    <div class="rounded-lg border {{ 'border-[var(--amber)]/40 bg-[var(--amber-soft)]' if bad else 'border-[var(--line)] bg-[var(--surface)]' }} p-3">
+      <div class="flex items-baseline gap-2">
+        <b class="text-xs">{{ c.label }}</b>
+        <span class="text-[10px] px-1.5 py-0.5 rounded {{ 'bg-[var(--surface)] text-[var(--amber)]' if bad else 'bg-[var(--primary-soft)] text-[var(--primary)]' }}">
+          {{ '超出容差' if bad else '一致' }}</span>
+      </div>
+      <p class="text-[11px] mt-1 {{ 'text-[var(--amber)]' if bad else 'text-[var(--text-muted)]' }}">{{ c.summary }}</p>
+      {% if c.note %}<p class="text-[10px] text-[var(--text-muted)] mt-1">{{ c.note }}</p>{% endif %}
+      {% if c.points %}
+      <table class="mt-2 w-full text-[10px] tabular">
+        <tr class="text-[var(--text-muted)]"><td>时点</td><td class="text-right">{{ c.a_name }}</td>
+          <td class="text-right">{{ c.b_name }}</td><td class="text-right">相对差</td></tr>
+        {% for p in c.points[:4] %}
+        <tr><td>{{ p.as_of }}</td><td class="text-right">{{ p.a | num }}</td>
+          <td class="text-right">{{ p.b | num }}</td>
+          <td class="text-right {{ 'text-[var(--amber)] font-semibold' if p.rel is not none and (p.rel | abs) > (c.tolerance_pct or 5) }}">
+            {{ '%.1f%%' % p.rel if p.rel is not none else '—' }}</td></tr>
+        {% endfor %}
+      </table>
+      {% endif %}
+      <div class="mt-2 flex gap-2 text-[10px]">
+        <a href="/sn/indicators/{{ c.a }}" class="text-[var(--primary)] hover:underline">{{ c.a }}</a>
+        <a href="/sn/indicators/{{ c.b }}" class="text-[var(--primary)] hover:underline">{{ c.b }}</a>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="text-[11px] text-[var(--text-muted)]">
+    差异本身不是错误 —— 两家口径不同很正常。要盯的是<b>差异突然变化</b>，那说明有一方改过数或换了口径。
+    差异<b>恰好为 0</b> 也值得注意：多半是两家转载同一来源，双边维护没有冗余价值。</p>
+</section>
+{% endif %}
+
 <section class="space-y-3">
   <div class="flex items-center justify-between gap-3 flex-wrap">
     <h2 class="text-sm font-bold flex items-center gap-2">
       <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">01</span>
-      指标登记清单<span class="text-xs font-normal text-[var(--text-muted)]">（点击代码可复制）</span>
+      指标登记清单<span class="text-xs font-normal text-[var(--text-muted)]">（点进单指标页：口径、凭证、谁在用它）</span>
     </h2>
     <span class="text-xs text-[var(--text-muted)]">
       自动 {{ rows | selectattr('fetch_mode', 'equalto', 'auto') | list | length }} ·
@@ -32,9 +78,12 @@
       <tbody class="divide-y divide-[var(--line)]">
         {% for r in rows %}
         <tr class="hover:bg-[var(--surface-soft)]">
-          <td class="py-2 px-3 tabular font-semibold text-[var(--primary)] cursor-pointer hover:underline whitespace-nowrap"
-              onclick="copyText('{{ r.series_id }}')" title="点击复制">{{ r.series_id }}</td>
-          <td class="py-2 px-3 font-bold">{{ r.name }}
+          <td class="py-2 px-3 tabular font-semibold whitespace-nowrap">
+            <a href="/sn/indicators/{{ r.series_id }}" class="text-[var(--primary)] hover:underline">{{ r.series_id }}</a>
+            <button type="button" onclick="copyText('{{ r.series_id }}')" title="复制代码"
+              class="ml-1 text-[10px] text-[var(--text-muted)] hover:text-[var(--primary)]">⧉</button></td>
+          <td class="py-2 px-3 font-bold">
+            <a href="/sn/indicators/{{ r.series_id }}" class="hover:underline">{{ r.name }}</a>
             {% if r.is_proxy %}<span class="ml-1 px-1.5 py-0.5 text-[10px] rounded bg-[var(--amber-soft)] text-[var(--amber)]">代理</span>{% endif %}
             {% if r.note %}<div class="text-[10px] font-normal text-[var(--text-muted)]">{{ r.note }}</div>{% endif %}</td>
           <td class="py-2 px-3"><span class="px-1.5 py-0.5 rounded bg-[var(--surface-soft)] text-[var(--text-muted)] whitespace-nowrap">{{ r.category }}</span></td>

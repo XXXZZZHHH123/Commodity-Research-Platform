@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% block title %}{{ detail.name }} · 锡 SN{% endblock %}
+{% block main %}
+
+{% set d = detail %}
+{% set used = usage.judgment or usage.nodes or usage.crosscheck %}
+
+<div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[var(--line-strong)]">
+  <div class="min-w-0">
+    <div class="text-[10px] font-bold tracking-widest text-[var(--primary)] uppercase mb-1">
+      <a href="/sn/indicators" class="hover:underline">指标登记</a> › {{ d.category or '派生指标' }}</div>
+    <h1 class="text-2xl font-black tracking-tight break-all">{{ d.name }}</h1>
+    <p class="text-xs text-[var(--text-muted)] mt-1 tabular">
+      <span class="cursor-pointer hover:underline text-[var(--primary)] font-semibold"
+            onclick="copyText('{{ d.series_id }}')" title="点击复制">{{ d.series_id }}</span>
+      {% if d.vendor_code %}· 供应商编码 {{ d.vendor_code }}{% endif %}
+      · {{ d.frequency }}频 · {{ d.unit }}
+      · {{ '自动采集' if d.fetch_mode == 'auto' else '人工录入' }}
+    </p>
+  </div>
+  <div class="flex items-center gap-1.5 shrink-0 text-xs">
+    {% if d.fetch_mode == 'manual' %}
+    <a href="/sn/entry?series_id={{ d.series_id }}"
+       class="px-3 py-1.5 rounded-md bg-[var(--primary)] text-white font-semibold hover:bg-[var(--primary-hover)]">去录入</a>
+    {% endif %}
+    <a href="/sn/diagram" class="px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)]">产业图</a>
+  </div>
+</div>
+
+<!-- 被谁在用：放在最上面。这是「要不要维护它」的唯一依据 -->
+<section class="mt-4">
+  <div class="rounded-lg border {{ 'border-[var(--primary)]/40 bg-[var(--primary-soft)]' if usage.judgment
+              else 'border-[var(--line)] bg-[var(--surface)]' }} p-4">
+    <div class="text-[10px] font-bold tracking-widest text-[var(--text-muted)] uppercase mb-2">WHO DEPENDS ON THIS</div>
+    {% if usage.judgment %}
+    <p class="text-sm font-bold text-[var(--primary)]">
+      当前判断（v{{ usage.judgment_version }}·{{ usage.judgment_status }}）直接引用了这条指标
+    </p>
+    <div class="mt-1.5 flex flex-wrap gap-1.5">
+      {% for r in usage.judgment %}
+      <span class="px-2 py-0.5 text-[11px] rounded font-semibold bg-[var(--surface)] border border-[var(--primary)]/40 text-[var(--primary)]">
+        {{ r.role }}{% if r.ref_id %} · {{ r.ref_id }}{% endif %}</span>
+      {% endfor %}
+    </div>
+    <p class="text-[11px] text-[var(--text-muted)] mt-2">
+      它断更或口径变化会直接影响判断的监测结果 —— 这条必须维护。</p>
+    {% else %}
+    <p class="text-sm font-semibold text-[var(--text-muted)]">当前判断没有引用这条指标</p>
+    <p class="text-[11px] text-[var(--text-muted)] mt-1">
+      它断更不会触发任何信号。{% if usage.nodes %}但产业图上用着它，见下。{% else %}也没有任何产业图节点绑定它。{% endif %}</p>
+    {% endif %}
+
+    {% if usage.nodes %}
+    <div class="mt-3 pt-3 border-t border-[var(--line)]">
+      <div class="text-[10px] font-semibold text-[var(--text-muted)] mb-1">产业图上的位置</div>
+      {% for n in usage.nodes %}
+      <a href="/sn/diagram?template={{ n.template_id }}" class="text-[11px] block hover:underline">
+        {{ n.template }} › <b>{{ n.node }}</b>{% if n.proxy %}
+        <span class="text-[var(--amber)]">（标为代理指标，非本环节实测）</span>{% endif %}</a>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if usage.crosscheck %}
+    <div class="mt-3 pt-3 border-t border-[var(--line)]">
+      <div class="text-[10px] font-semibold text-[var(--text-muted)] mb-1">参与跨来源校验</div>
+      {% for c in usage.crosscheck %}
+      <div class="text-[11px]">{{ c.label }} —— 与 <span class="tabular">{{ c.against }}</span> 对照</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="mt-4 grid gap-4 lg:grid-cols-3">
+  <div class="lg:col-span-2 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4">
+    <div class="flex items-baseline justify-between">
+      <h2 class="text-sm font-bold">近 {{ d.history | length }} 期走势</h2>
+      {% if d.history %}
+      <span class="text-[11px] text-[var(--text-muted)] tabular">
+        {{ d.history[0].as_of }} ~ {{ d.history[-1].as_of }}</span>
+      {% endif %}
+    </div>
+    <div id="ind-chart" class="mt-2"></div>
+    {% if not d.history %}
+    <p class="py-10 text-center text-xs text-[var(--text-muted)]">
+      这条指标尚无任何观测 —— 不是 0，是没取到。</p>
+    {% endif %}
+  </div>
+
+  <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4 text-[11px]">
+    <h2 class="text-sm font-bold mb-2">口径</h2>
+    {% if d.caliber %}
+      {% for c in d.caliber %}
+      <div class="flex gap-2 py-0.5 border-b border-[var(--line)] last:border-0">
+        <span class="w-20 shrink-0 text-[var(--text-muted)]">{{ c.label }}</span>
+        <span class="flex-1">{{ c.value }}</span></div>
+      {% endfor %}
+    {% else %}
+      <p class="text-[var(--text-muted)]">未标注口径维度</p>
+    {% endif %}
+    {% if d.expression %}
+    <div class="flex gap-2 py-0.5"><span class="w-20 shrink-0 text-[var(--text-muted)]">计算式</span>
+      <span class="flex-1 break-all">{{ d.expression }}</span></div>{% endif %}
+    {% if d.tolerance %}
+    <div class="flex gap-2 py-0.5"><span class="w-20 shrink-0 text-[var(--text-muted)]">容差</span>
+      <span class="flex-1">{{ d.tolerance }}</span></div>{% endif %}
+
+    <h2 class="text-sm font-bold mt-4 mb-2">来源与凭证</h2>
+    <div class="flex gap-2 py-0.5"><span class="w-20 shrink-0 text-[var(--text-muted)]">来源</span>
+      <span class="flex-1">{{ d.source or '—' }}</span></div>
+    {% if d.entered_by %}
+    <div class="flex gap-2 py-0.5"><span class="w-20 shrink-0 text-[var(--text-muted)]">录入人</span>
+      <span class="flex-1">{{ d.entered_by }}</span></div>{% endif %}
+    {% if d.owner %}
+    <div class="flex gap-2 py-0.5"><span class="w-20 shrink-0 text-[var(--text-muted)]">负责人</span>
+      <span class="flex-1 text-[var(--amber)]">{{ d.owner }}</span></div>{% endif %}
+    {% if d.latest_note %}
+    <div class="flex gap-2 py-0.5"><span class="w-20 shrink-0 text-[var(--text-muted)]">入库说明</span>
+      <span class="flex-1">{{ d.latest_note }}</span></div>{% endif %}
+    {% if d.source_url %}
+    <div class="flex gap-2 py-0.5"><span class="w-20 shrink-0 text-[var(--text-muted)]">凭证</span>
+      <a href="{{ d.source_url }}" target="_blank"
+         class="flex-1 break-all text-[var(--primary)] underline">{{ d.source_url }}</a></div>{% endif %}
+  </div>
+</section>
+
+{% if d.revisions %}
+<section class="mt-4 rounded-lg border border-[var(--amber)]/40 bg-[var(--amber-soft)] p-4">
+  <h2 class="text-sm font-bold text-[var(--amber)]">{{ d.revisions | length }} 处修订 —— 数据商回溯改过数</h2>
+  <p class="text-[11px] text-[var(--text-muted)] mt-0.5">
+    这是「数字变了但没人告诉你」的唯一线索。引用过旧值的结论需要复核。</p>
+  <table class="mt-2 w-full text-[11px] tabular">
+    <thead class="text-[var(--text-muted)] text-left">
+      <tr><th class="py-1">数据时点</th><th>值</th><th>修订号</th><th>录入人</th><th>说明</th></tr></thead>
+    <tbody>
+    {% for r in d.revisions %}
+      <tr class="border-t border-[var(--line)]"><td class="py-1">{{ r.as_of }}</td><td>{{ r.value }}</td>
+        <td>{{ r.revision }}</td><td>{{ r.entered_by or '—' }}</td><td>{{ r.note or '—' }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if d.history %}
+<section class="mt-4 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4">
+  <div class="flex items-baseline justify-between">
+    <h2 class="text-sm font-bold">观测明细</h2>
+    <button type="button" onclick="indCopyCsv()"
+      class="text-[11px] px-2 py-1 rounded border border-[var(--line)] hover:bg-[var(--surface-soft)]">复制为 CSV</button>
+  </div>
+  <div class="mt-2 max-h-80 overflow-y-auto">
+    <table class="w-full text-[11px] tabular text-left">
+      <thead class="text-[var(--text-muted)] sticky top-0 bg-[var(--surface)]">
+        <tr><th class="py-1">数据时点</th><th class="text-right">值（{{ d.unit }}）</th>
+            <th class="text-right">环比</th></tr></thead>
+      <tbody id="ind-rows"></tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<script>
+  window.IND = {{ d | tojson }};
+</script>
+<script src="/static/diagram.js?v={{ static_version() }}"></script>
+<script>
+  (function () {
+    const d = window.IND;
+    if (!d || !d.history || !d.history.length) return;
+    const box = document.getElementById("ind-chart");
+    if (box && d.history.length > 1) {
+      box.innerHTML = dgChart(d.history, d.unit, 720, 300);
+      dgBindChartHover();
+    }
+    const tb = document.getElementById("ind-rows");
+    if (!tb) return;
+    const rows = d.history.slice().reverse();
+    tb.innerHTML = rows.map((p, i) => {
+      const prev = rows[i + 1];
+      const pct = prev && prev.value ? ((p.value - prev.value) / Math.abs(prev.value)) * 100 : null;
+      const cls = pct == null || pct === 0 ? "text-[var(--text-muted)]"
+        : pct > 0 ? "text-[var(--up)]" : "text-[var(--down)]";
+      return `<tr class="border-t border-[var(--line)]"><td class="py-1">${p.as_of}</td>
+        <td class="text-right font-semibold">${dgFmt(p.value)}</td>
+        <td class="text-right ${cls}">${pct == null ? "—" : (pct > 0 ? "+" : "") + pct.toFixed(2) + "%"}</td></tr>`;
+    }).join("");
+  })();
+
+  function indCopyCsv() {
+    const d = window.IND;
+    const csv = ["数据时点,值,单位"].concat(
+      d.history.slice().reverse().map((p) => `${p.as_of},${p.value},${d.unit || ""}`)).join("\n");
+    navigator.clipboard.writeText(csv).then(
+      () => showToast(`已复制 ${d.history.length} 行`), () => showToast("复制失败"));
+  }
+</script>
+{% endblock %}

@@ -339,3 +339,19 @@ body.drawer-open #toast { right: auto; left: 1.5rem; }
   .series-chart-stats > div:nth-child(2) { border-right: 0; }
   .series-chart-stats > div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
 }
+
+/* 动态产业图 */
+.dg-key { display: inline-flex; align-items: center; gap: 0.3rem; }
+.dg-sw { width: 0.7rem; height: 0.7rem; border-radius: 3px; display: inline-block; }
+.dg-sw-empty { border: 1px dashed var(--line-strong); background: var(--surface); }
+.dg-sw-proxy {
+  border: 1px solid var(--text-muted);
+  background: repeating-linear-gradient(45deg, transparent, transparent 2px,
+              color-mix(in srgb, var(--text-muted) 35%, transparent) 2px,
+              color-mix(in srgb, var(--text-muted) 35%, transparent) 3px);
+}
+#dg-canvas .dg-node rect { transition: stroke-width 0.12s ease; }
+#dg-canvas .dg-node:hover rect:first-of-type { stroke-width: 2.4; }
+
+/* 拖线时的候选目标：松手就会连到它。没有这个提示只能靠试。 */
+.dg-link-target { stroke: var(--primary) !important; stroke-width: 3 !important; }

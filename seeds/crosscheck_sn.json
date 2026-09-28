@@ -1,0 +1,20 @@
+{
+ "comment": "跨来源交叉校验。同一个事实由两家分别给出时，对不上就是信号——要么口径不同，要么其中一家改过数。不列SMM平衡表内部的恒等式：表观消费本就是倒算的，校验它等于同义反复。",
+ "checks": [
+  {"id": "prod_cn", "label": "精锡月产量",
+   "a": "SMM.a10167090", "a_name": "SMM 平衡表",
+   "b": "MYSTEEL.ID01517452", "b_name": "钢联 锡锭产量",
+   "tolerance_pct": 3,
+   "note": "两家口径不同：SMM 为平衡表倒算基准，钢联为分省样本汇总"},
+  {"id": "mine_import", "label": "锡矿月进口",
+   "a": "SMM.a10005167", "a_name": "SMM 矿端平衡",
+   "b": "MYSTEEL.CM0000138665", "b_name": "钢联 海关口径",
+   "tolerance_pct": 1,
+   "note": "两家若完全一致，说明转载的是同一份海关数据，无须双边维护"},
+  {"id": "social_stock", "label": "锡锭社会库存",
+   "a": "SMM.a10020744", "a_name": "SMM 调研",
+   "b": "MYSTEEL.SN.stock.social", "b_name": "钢联调研（证伪条件绑定）",
+   "tolerance_pct": 10,
+   "note": "两家覆盖仓库范围不同；证伪条件 fl_social_stock_2w 读的是钢联口径"}
+ ]
+}

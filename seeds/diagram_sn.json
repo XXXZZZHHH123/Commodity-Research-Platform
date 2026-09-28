@@ -1,0 +1,609 @@
+{
+  "name": "锡产业结构图",
+  "nodes": [
+    {
+      "id": "grp_supply",
+      "kind": "group",
+      "label": "供给端",
+      "parent": null,
+      "x": 0,
+      "y": 6,
+      "w": 374,
+      "h": 378,
+      "binding": {
+        "kind": "none"
+      },
+      "statics": []
+    },
+    {
+      "id": "grp_hub",
+      "kind": "group",
+      "label": "精锡",
+      "parent": null,
+      "x": 410,
+      "y": 6,
+      "w": 374,
+      "h": 378,
+      "binding": {
+        "kind": "none"
+      },
+      "statics": []
+    },
+    {
+      "id": "grp_demand",
+      "kind": "group",
+      "label": "需求端",
+      "parent": null,
+      "x": 820,
+      "y": 6,
+      "w": 374,
+      "h": 378,
+      "binding": {
+        "kind": "none"
+      },
+      "statics": []
+    },
+    {
+      "id": "sub_mine",
+      "kind": "group",
+      "label": "矿端",
+      "parent": "grp_supply",
+      "x": 9,
+      "y": 30,
+      "w": 164,
+      "h": 344,
+      "binding": {
+        "kind": "none"
+      },
+      "statics": []
+    },
+    {
+      "id": "sub_smelt",
+      "kind": "group",
+      "label": "冶炼与锭",
+      "parent": "grp_supply",
+      "x": 201,
+      "y": 30,
+      "w": 164,
+      "h": 264,
+      "binding": {
+        "kind": "none"
+      },
+      "statics": []
+    },
+    {
+      "id": "sub_balance",
+      "kind": "group",
+      "label": "平衡",
+      "parent": "grp_hub",
+      "x": 419,
+      "y": 30,
+      "w": 164,
+      "h": 344,
+      "binding": {
+        "kind": "none"
+      },
+      "statics": []
+    },
+    {
+      "id": "sub_stock",
+      "kind": "group",
+      "label": "库存与价格",
+      "parent": "grp_hub",
+      "x": 611,
+      "y": 30,
+      "w": 164,
+      "h": 344,
+      "binding": {
+        "kind": "none"
+      },
+      "statics": []
+    },
+    {
+      "id": "sub_use",
+      "kind": "group",
+      "label": "四大板块",
+      "parent": "grp_demand",
+      "x": 829,
+      "y": 30,
+      "w": 164,
+      "h": 344,
+      "binding": {
+        "kind": "none"
+      },
+      "statics": []
+    },
+    {
+      "id": "sub_macro",
+      "kind": "group",
+      "label": "宏观代理",
+      "parent": "grp_demand",
+      "x": 1021,
+      "y": 30,
+      "w": 164,
+      "h": 184,
+      "binding": {
+        "kind": "none"
+      },
+      "statics": []
+    },
+    {
+      "id": "mine_cn",
+      "label": "国产锡精矿",
+      "layer": "supply",
+      "x": 21,
+      "y": 56,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "series",
+        "series_id": "MYSTEEL.ID01590150",
+        "proxy": false
+      },
+      "statics": [
+        {
+          "label": "占比",
+          "value": "32%"
+        },
+        {
+          "label": "年体量",
+          "value": "5.8–6.5 万金属吨"
+        }
+      ],
+      "parent": "sub_mine"
+    },
+    {
+      "id": "mine_imp",
+      "label": "进口锡精矿",
+      "layer": "supply",
+      "x": 21,
+      "y": 136,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "series",
+        "series_id": "MYSTEEL.CM0000138665",
+        "proxy": false
+      },
+      "statics": [
+        {
+          "label": "占比",
+          "value": "68%"
+        },
+        {
+          "label": "年体量",
+          "value": "约 7.2 万金属吨"
+        }
+      ],
+      "parent": "sub_mine"
+    },
+    {
+      "id": "mine_mm",
+      "label": "缅甸矿进口",
+      "layer": "supply",
+      "x": 39,
+      "y": 216,
+      "w": 122,
+      "h": 66,
+      "binding": {
+        "kind": "series",
+        "series_id": "SMM.a10005168",
+        "proxy": false
+      },
+      "statics": [
+        {
+          "label": "占比",
+          "value": "25.5%"
+        }
+      ],
+      "parent": "sub_mine"
+    },
+    {
+      "id": "tc",
+      "label": "加工费 TC · 云南 40%",
+      "layer": "supply",
+      "x": 21,
+      "y": 296,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "series",
+        "series_id": "MYSTEEL.SN.TC.YN40",
+        "proxy": false
+      },
+      "statics": [
+        {
+          "label": "证据",
+          "value": "多头 bull1 · 矿端松紧"
+        }
+      ],
+      "parent": "sub_mine"
+    },
+    {
+      "id": "smelt",
+      "label": "冶炼产量 · 中国",
+      "layer": "supply",
+      "x": 213,
+      "y": 56,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "series",
+        "series_id": "MYSTEEL.ID01517452",
+        "proxy": false
+      },
+      "statics": [
+        {
+          "label": "国内精锡占比",
+          "value": "92%"
+        },
+        {
+          "label": "云南",
+          "value": "65–70%"
+        }
+      ],
+      "parent": "sub_smelt"
+    },
+    {
+      "id": "oprate",
+      "label": "冶炼开工率",
+      "layer": "supply",
+      "x": 213,
+      "y": 136,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "series",
+        "series_id": "MYSTEEL.ID02226391",
+        "proxy": false
+      },
+      "statics": [
+        {
+          "label": "样本",
+          "value": "20 家，占产能 97%"
+        }
+      ],
+      "parent": "sub_smelt"
+    },
+    {
+      "id": "ingot_imp",
+      "label": "进口锡锭",
+      "layer": "supply",
+      "x": 213,
+      "y": 216,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "series",
+        "series_id": "CUSTOMS.8001.import.total",
+        "proxy": false
+      },
+      "statics": [
+        {
+          "label": "占比",
+          "value": "8% + 再生 12%"
+        },
+        {
+          "label": "印尼",
+          "value": "45–55%"
+        }
+      ],
+      "parent": "sub_smelt"
+    },
+    {
+      "id": "refined",
+      "label": "精 锡  Sn≥99.85%",
+      "layer": "hub",
+      "x": 431,
+      "y": 56,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "series",
+        "series_id": "SMM.a10167090",
+        "proxy": false
+      },
+      "statics": [
+        {
+          "label": "2025 全球产量",
+          "value": "37.1 万吨"
+        },
+        {
+          "label": "中国占",
+          "value": "51%"
+        },
+        {
+          "label": "缺口",
+          "value": "−0.87 万吨"
+        }
+      ],
+      "parent": "sub_balance"
+    },
+    {
+      "id": "apparent",
+      "label": "表观消费量",
+      "layer": "hub",
+      "x": 431,
+      "y": 136,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "series",
+        "series_id": "SMM.a10167097",
+        "proxy": false
+      },
+      "statics": [],
+      "parent": "sub_balance"
+    },
+    {
+      "id": "balance_g",
+      "label": "全球供需平衡",
+      "layer": "hub",
+      "x": 431,
+      "y": 216,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "series",
+        "series_id": "MYSTEEL.ID00265309",
+        "proxy": false
+      },
+      "statics": [
+        {
+          "label": "2025 全球消费",
+          "value": "38.1 万吨"
+        }
+      ],
+      "parent": "sub_balance"
+    },
+    {
+      "id": "warrant",
+      "label": "上期所注册仓单",
+      "layer": "hub",
+      "x": 623,
+      "y": 56,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "series",
+        "series_id": "SHFE.SN.warrant",
+        "proxy": false
+      },
+      "statics": [],
+      "parent": "sub_stock"
+    },
+    {
+      "id": "social",
+      "label": "锡锭社会库存",
+      "layer": "hub",
+      "x": 623,
+      "y": 136,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "series",
+        "series_id": "MYSTEEL.SN.stock.social",
+        "proxy": false
+      },
+      "statics": [
+        {
+          "label": "证伪",
+          "value": "连续两周累库"
+        }
+      ],
+      "parent": "sub_stock"
+    },
+    {
+      "id": "lme",
+      "label": "LME 锡库存",
+      "layer": "hub",
+      "x": 623,
+      "y": 216,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "series",
+        "series_id": "LME.SN.stock",
+        "proxy": false
+      },
+      "statics": [],
+      "parent": "sub_stock"
+    },
+    {
+      "id": "basis",
+      "label": "基差（现货 − 主力结算）",
+      "layer": "hub",
+      "x": 431,
+      "y": 296,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "derived",
+        "formula_id": "BASIS"
+      },
+      "statics": [
+        {
+          "label": "容差",
+          "value": "同交易日 · ≤4 小时"
+        }
+      ],
+      "parent": "sub_balance"
+    },
+    {
+      "id": "solder",
+      "label": "锡焊料",
+      "layer": "demand",
+      "x": 841,
+      "y": 56,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "series",
+        "series_id": "SMM.SN.solder.oprate",
+        "proxy": false
+      },
+      "statics": [
+        {
+          "label": "占比",
+          "value": "53–55%（中国≈65%）"
+        },
+        {
+          "label": "终端",
+          "value": "手机·AI服务器·半导体封装·白电·汽车"
+        }
+      ],
+      "parent": "sub_use"
+    },
+    {
+      "id": "sox",
+      "label": "◍ 费城半导体指数",
+      "layer": "demand",
+      "x": 1033,
+      "y": 56,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "series",
+        "series_id": "FRED.NASDAQSOX",
+        "proxy": true
+      },
+      "statics": [
+        {
+          "label": "用途",
+          "value": "需求侧代理，非实测"
+        }
+      ],
+      "parent": "sub_macro"
+    },
+    {
+      "id": "chem",
+      "label": "锡化工",
+      "layer": "demand",
+      "x": 841,
+      "y": 136,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "series",
+        "series_id": "SMM.a12874914",
+        "proxy": false
+      },
+      "statics": [
+        {
+          "label": "占比",
+          "value": "15–17%"
+        },
+        {
+          "label": "去向",
+          "value": "PVC 稳定剂 · PU 催化剂"
+        }
+      ],
+      "parent": "sub_use"
+    },
+    {
+      "id": "tinplate",
+      "label": "镀锡板 · 马口铁",
+      "layer": "demand",
+      "x": 841,
+      "y": 216,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "none"
+      },
+      "statics": [
+        {
+          "label": "占比",
+          "value": "11–12%"
+        },
+        {
+          "label": "终端",
+          "value": "食品罐 36% · 饮料罐 22%"
+        }
+      ],
+      "parent": "sub_use"
+    },
+    {
+      "id": "alloy",
+      "label": "合金 · 铅酸",
+      "layer": "demand",
+      "x": 841,
+      "y": 296,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "none"
+      },
+      "statics": [
+        {
+          "label": "占比",
+          "value": "12–14%"
+        },
+        {
+          "label": "终端",
+          "value": "轴承轴瓦 · 启动/储能电池"
+        }
+      ],
+      "parent": "sub_use"
+    },
+    {
+      "id": "spot",
+      "label": "现货均价 SMM 1#",
+      "layer": "demand",
+      "x": 623,
+      "y": 296,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "series",
+        "series_id": "SMM.SN.spot.1",
+        "proxy": false
+      },
+      "statics": [],
+      "parent": "sub_stock"
+    },
+    {
+      "id": "vix",
+      "label": "◍ VIX",
+      "layer": "demand",
+      "x": 1033,
+      "y": 136,
+      "w": 140,
+      "h": 66,
+      "binding": {
+        "kind": "series",
+        "series_id": "MACRO.VIX",
+        "proxy": true
+      },
+      "statics": [
+        {
+          "label": "风控",
+          "value": "VIX>19 → 降敞口"
+        }
+      ],
+      "parent": "sub_macro"
+    }
+  ],
+  "edges": [
+    {
+      "from": "sub_mine",
+      "to": "sub_smelt"
+    },
+    {
+      "from": "sub_smelt",
+      "to": "sub_balance"
+    },
+    {
+      "from": "sub_balance",
+      "to": "sub_stock"
+    },
+    {
+      "from": "sub_stock",
+      "to": "sub_use"
+    },
+    {
+      "from": "mine_imp",
+      "to": "mine_mm"
+    }
+  ]
+}

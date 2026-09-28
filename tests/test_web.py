@@ -1,3 +1,4 @@
+import re
 from datetime import date
 
 import pytest
@@ -115,7 +116,8 @@ def test_every_inline_handler_resolves_to_a_real_function():
 
     from tin.web import app as web
 
-    sources = [(web.HERE / "static" / "app.js").read_text(encoding="utf-8")]
+    sources = [f.read_text(encoding="utf-8") for f in sorted((web.HERE / "static").glob("*.js"))
+               if f.name != "tailwind.min.js"]
     attrs: list[tuple[str, str]] = []
     for tpl in sorted((web.HERE / "templates").glob("*.html")):
         text = tpl.read_text(encoding="utf-8")
@@ -174,3 +176,21 @@ def test_export_validation_is_inline_not_a_floating_toast():
 
     assert ".field-error" in css
     assert "body.drawer-open #toast" in css, "抽屉打开时 toast 必须避开右下角的主操作按钮"
+
+
+def test_diagram_canvas_layers_all_share_one_transform():
+    """分组框、连线、节点必须用同一个 transform。
+
+    漏掉任一层，缩放或平移时它就会和其余部分错位——分组框曾因此一缩放就跑偏。
+    """
+    from tin.web import app as web
+
+    js = (web.HERE / "static" / "diagram.js").read_text(encoding="utf-8")
+    html = (web.HERE / "templates" / "diagram.html").read_text(encoding="utf-8")
+
+    layers = re.findall(r'<g id="(dg-[a-z]+)"></g>', html)
+    assert set(layers) == {"dg-groups", "dg-edges", "dg-nodes"}
+
+    applied = re.search(r'for \(const id of \[([^\]]+)\]\)', js)
+    assert applied, "找不到统一施加 transform 的循环"
+    assert set(re.findall(r'"(dg-[a-z]+)"', applied.group(1))) == set(layers)

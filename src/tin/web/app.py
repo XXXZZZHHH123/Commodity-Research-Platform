@@ -35,6 +35,8 @@ from tin.export.board import (
 )
 from tin.export import templates as export_templates
 from tin.export.excel import Column, build_export, build_import_template, field_catalog
+from tin.export import diagram as diagram_api
+from tin.export import diagram_md
 from tin.ingest import excel_importer, import_jobs, vendor_terminal
 from tin.ingest.record import RecordError, record
 from tin.jobs.seed import seed_researcher
@@ -380,8 +382,175 @@ def indicators_page(request: Request):
         rows = [i for i in s.scalars(select(Indicator).order_by(Indicator.fetch_mode, Indicator.category,
                                                                 Indicator.series_id))
                 if not PER_CONTRACT.match(i.series_id)]
+        # 跨来源校验原来挂在产业图页上，但它问的是"这条数据可不可信"，
+        # 跟产业结构没关系——属于指标治理，放这里才找得到。
+        day = latest_trade_date(s)
+        checks = diagram_api.crosscheck(s, V, day) if day else []
         return templates.TemplateResponse(request, "indicators.html", _shell(
-            s, "indicators", latest_trade_date(s), rows=rows, dimensions=DIMENSIONS))
+            s, "indicators", day, rows=rows, dimensions=DIMENSIONS, checks=checks))
+
+
+@app.get("/sn/indicators/{series_id}")
+def indicator_page(request: Request, series_id: str):
+    """单指标页。
+
+    指标列表回答不了研究员真正的问题——444 行里每一行看起来都一样重要。这一页要回答
+    三件事：这个数现在多少且怎么来的（口径与凭证）、被谁在用（判断与产业图）、
+    历史上有没有被改过（修订）。**「被谁在用」是分辨要不要维护它的唯一依据。**
+    """
+    with SessionLocal() as s:
+        day = latest_trade_date(s)
+        try:
+            d = diagram_api.detail(s, series_id, day, limit=120)
+        except diagram_api.DiagramError as e:
+            raise HTTPException(404, str(e)) from e
+        return templates.TemplateResponse(request, "indicator.html", _shell(
+            s, "indicators", day, detail=d, usage=diagram_api.usage(s, series_id, V)))
+
+
+@app.get("/api/sn/indicators/{series_id}/usage")
+def indicator_usage(series_id: str):
+    with SessionLocal() as s:
+        return diagram_api.usage(s, series_id, V)
+
+
+@app.get("/sn/diagram")
+def diagram_page(request: Request, template: int | None = None):
+    with SessionLocal() as s:
+        # 这里原来无条件返回默认布局，`?template=` 被整个忽略——下拉框选哪张都回到同一张，
+        # 新建的布局也永远打不开。切换布局是这个页面最基本的操作之一。
+        try:
+            default = diagram_api.ensure_default(s, V)
+            rows = diagram_api.list_templates(s, V)
+        except diagram_api.NeedsMigration as e:
+            # 缺表是"少跑了一次迁移"，不是故障。页面照常出，把该敲的命令写清楚，
+            # 而不是丢一个 SQL 堆栈让人自己猜。
+            return templates.TemplateResponse(request, "diagram.html", _shell(
+                s, "diagram", latest_trade_date(s), template=None,
+                templates_all=[], setup_error=str(e),
+                project_root=str(Path(__file__).resolve().parents[3])))
+        tpl = next((t for t in rows if t["id"] == template), None) if template else None
+        if template is not None and tpl is None:
+            raise HTTPException(404, f"没有这张布局：{template}")
+        return templates.TemplateResponse(request, "diagram.html", _shell(
+            s, "diagram", latest_trade_date(s), template=tpl or default,
+            templates_all=rows))
+
+
+@app.exception_handler(diagram_api.NeedsMigration)
+def _needs_migration(request: Request, exc: diagram_api.NeedsMigration):
+    """产业图接口遇到缺表时，回一个说得清的 503，而不是 500 加一段 SQL。"""
+    return JSONResponse({"detail": str(exc)}, status_code=503)
+
+
+@app.get("/api/sn/diagram/values")
+def diagram_values(template_id: int | None = None, date: str | None = None):
+    with SessionLocal() as s:
+        rows = diagram_api.list_templates(s, V)
+        tpl = next((t for t in rows if t["id"] == template_id), None) or (rows[0] if rows else None)
+        if tpl is None:
+            raise HTTPException(404, "还没有任何布局")
+        day = _board_date(s, date)
+        return {"template_id": tpl["id"], "as_of": day.isoformat(),
+                "judgment": diagram_api.judgment_roles(s, V)[1],
+                "nodes": diagram_api.resolve(s, tpl["layout"], day)}
+
+
+@app.post("/api/sn/diagram/values")
+def diagram_values_live(body: dict = Body(...)):
+    """按**前端当前正在编辑的布局**取值，不经过库里存的那一份。
+
+    新增节点、刚换的绑定在保存之前库里并不存在；GET 版按 template_id 从库里读布局，
+    于是新节点永远查不到值，看上去就是「绑了但不显示」。编辑态必须走这个入口。
+    """
+    layout = body.get("layout") or {}
+    with SessionLocal() as s:
+        day = _board_date(s, body.get("date"))
+        roles_meta = diagram_api.judgment_roles(s, V)[1]
+        return {"as_of": day.isoformat(), "judgment": roles_meta,
+                "nodes": diagram_api.resolve(s, layout, day)}
+
+
+@app.post("/api/sn/diagram/templates")
+def diagram_save(body: dict = Body(...)):
+    with SessionLocal() as s:
+        try:
+            saved = diagram_api.save_template(s, V, body)
+        except diagram_api.DiagramError as e:
+            raise HTTPException(400, str(e)) from None
+        return {"saved": saved, "templates": diagram_api.list_templates(s, V)}
+
+
+@app.get("/api/sn/diagram/markdown")
+def diagram_to_markdown(template_id: int | None = None):
+    """导出为 Markdown 大纲。绑定写成注释，改完再导回无损。"""
+    with SessionLocal() as s:
+        rows = diagram_api.list_templates(s, V)
+        tpl = next((t for t in rows if t["id"] == template_id), None) or (rows[0] if rows else None)
+        if tpl is None:
+            raise HTTPException(404, "还没有任何布局")
+        return {"name": tpl["name"], "markdown": diagram_md.dump(tpl["layout"], tpl["name"])}
+
+
+@app.post("/api/sn/diagram/markdown")
+def diagram_from_markdown(body: dict = Body(...)):
+    """从 Markdown 大纲建一份新布局。不覆盖现有布局——导错了还能切回去。"""
+    try:
+        layout = diagram_md.parse(str(body.get("markdown", "")))
+    except diagram_md.MarkdownError as e:
+        raise HTTPException(400, str(e)) from None
+    with SessionLocal() as s:
+        # `into` 表示改写这一张，而不是新建。研究员在文本里改结构比拖方框快，
+        # 但改完只能「导入为新布局」的话，每改一次就多一张图，改的还不是手里这张。
+        into = body.get("into")
+        name = str(body.get("name") or layout["name"]).strip()
+        payload = {"name": name, "layout": layout}
+        if into:
+            row = next((t for t in diagram_api.list_templates(s, V) if t["id"] == into), None)
+            if row is None:
+                raise HTTPException(404, f"没有这张布局：{into}")
+            payload["id"] = into
+            payload["name"] = str(body.get("name") or row["name"]).strip()
+        try:
+            saved = diagram_api.save_template(s, V, payload)
+        except diagram_api.DiagramError as e:
+            raise HTTPException(400, str(e)) from None
+        unbound = sum(1 for n in layout["nodes"]
+                      if n.get("kind") != "group" and n["binding"]["kind"] == "none")
+        return {"saved": saved, "unbound": unbound, "replaced": bool(into),
+                "templates": diagram_api.list_templates(s, V)}
+
+
+@app.get("/api/sn/diagram/crosscheck")
+def diagram_crosscheck(date: str | None = None):
+    with SessionLocal() as s:
+        return {"checks": diagram_api.crosscheck(s, V, _board_date(s, date))}
+
+
+@app.get("/api/sn/diagram/detail")
+def diagram_detail(series_id: str, date: str | None = None):
+    with SessionLocal() as s:
+        try:
+            return diagram_api.detail(s, series_id, _board_date(s, date))
+        except diagram_api.DiagramError as e:
+            raise HTTPException(404, str(e)) from None
+
+
+@app.get("/api/sn/diagram/suggest")
+def diagram_suggest(label: str, exclude: str | None = None):
+    """给某个节点推荐候选指标。给不出就明说，不拿"有数据的热门指标"凑数。"""
+    with SessionLocal() as s:
+        return {"suggestions": diagram_api.suggest(s, V, label,
+                                                   bound=set((exclude or "").split(",")) - {""})}
+
+
+@app.delete("/api/sn/diagram/templates/{template_id}")
+def diagram_delete(template_id: int):
+    with SessionLocal() as s:
+        try:
+            return diagram_api.delete_template(s, V, template_id)
+        except diagram_api.DiagramError as e:
+            raise HTTPException(400, str(e)) from None
 
 
 @app.get("/sn/reports")

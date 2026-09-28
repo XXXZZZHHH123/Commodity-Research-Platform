@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% block title %}动态产业图 · 锡 SN{% endblock %}
+{% block main %}
+
+{% if setup_error %}
+<div class="max-w-2xl mx-auto mt-16">
+  <div class="rounded-lg border border-[var(--amber)]/40 bg-[var(--amber-soft)] p-6">
+    <h1 class="text-lg font-black">还差一步：这个库需要迁移</h1>
+    <p class="text-xs text-[var(--text-muted)] mt-2 leading-relaxed whitespace-pre-line">{{ setup_error }}</p>
+    <pre class="mt-3 p-3 rounded bg-[var(--surface)] border border-[var(--line)] text-[11px] tabular overflow-x-auto">conda activate tin
+cd {{ project_root }}
+alembic upgrade head</pre>
+    <p class="text-[11px] text-[var(--text-muted)] mt-2">跑完刷新本页即可。其余页面不受影响。</p>
+  </div>
+</div>
+{% else %}
+
+<div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[var(--line-strong)]">
+  <div>
+    <div class="text-[10px] font-bold tracking-widest text-[var(--primary)] uppercase mb-1">INDUSTRY CHAIN · LIVE</div>
+    <h1 class="text-2xl font-black tracking-tight">动态产业图</h1>
+    <p class="text-xs text-[var(--text-muted)] mt-1">
+      结构来自《锡产业基础研究框架》，每个环节的数值从事实层现取 ——
+      <span class="text-[var(--amber)]">没数的环节显示「尚无数据」，不会拿旧值充数</span>
+    </p>
+  </div>
+  <div class="flex items-center gap-1.5 shrink-0 text-xs">
+    <select id="dg-template" onchange="dgSwitch(this.value)" class="px-2 py-1.5 rounded-md">
+      {% for t in templates_all %}
+      <option value="{{ t.id }}" {{ 'selected' if t.id == template.id }}>{{ t.name }}{{ '（默认）' if t.is_default }}</option>
+      {% endfor %}
+      <option value="__new">＋ 新建空白布局…</option>
+    </select>
+    <button type="button" onclick="dgDeleteTemplate()" title="删除当前布局"
+      class="px-2 py-1.5 rounded-md border border-[var(--line)] text-[var(--text-muted)] hover:text-[var(--alert)] hover:bg-[var(--surface-soft)]">🗑</button>
+    <button type="button" onclick="dgToggleJudgment()" id="dg-judge-btn"
+      class="px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)] font-semibold">判断视角</button>
+    <button type="button" onclick="dgOpenCompare()" id="dg-compare-btn"
+      class="px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)] font-semibold">趋势对比<span
+      data-count class="tabular"></span></button>
+    <button type="button" onclick="dgOpenMarkdown()"
+      class="px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)] font-semibold">Markdown</button>
+    <button type="button" onclick="dgToggleEdit()" id="dg-edit-btn"
+      class="px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)] font-semibold">编辑布局</button>
+    <button type="button" onclick="dgSave()" id="dg-save" disabled
+      class="px-3 py-1.5 rounded-md bg-[var(--primary)] text-white font-semibold hover:bg-[var(--primary-hover)] disabled:opacity-40">保存</button>
+  </div>
+</div>
+
+<div class="flex items-center flex-wrap gap-3 py-2 text-[11px] text-[var(--text-muted)]">
+  <span class="font-semibold text-[var(--text)]">图例</span>
+  <span class="dg-key"><i class="dg-sw" style="background:var(--primary)"></i>正常</span>
+  <span class="dg-key"><i class="dg-sw" style="background:var(--amber)"></i>断更</span>
+  <span class="dg-key"><i class="dg-sw" style="background:var(--alert)"></i>阻断（口径冲突）</span>
+  <span class="dg-key"><i class="dg-sw" style="background:var(--amber);opacity:.6"></i>缺少输入</span>
+  <span class="dg-key"><i class="dg-sw dg-sw-empty"></i>尚无数据</span>
+  <span class="dg-key"><i class="dg-sw dg-sw-proxy"></i>代理指标（非实测）</span>
+  <span class="dg-key">［静］调研系数 · 2026-08</span>
+  <span id="dg-asof" class="ml-auto tabular"></span>
+</div>
+
+<!-- 判断视角说明条：重点关注跟着哪一版判断走，必须写明 -->
+<div id="dg-judge-bar" class="hidden mb-2 px-3 py-2 rounded-md text-[11px]
+     bg-[var(--primary-soft)] text-[var(--primary)] border border-[var(--primary)]/30"></div>
+
+<div id="dg-wrap" class="relative rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden"
+     style="height: calc(100vh - 260px); min-height: 520px;">
+  <svg id="dg-canvas" class="w-full h-full select-none" style="touch-action:none">
+    <defs>
+      <!-- 主流向（分组之间）用粗箭头；节点之间的细连线是补充说明，刻意画淡 -->
+      <marker id="dg-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0,0.5 L8,4 L0,7.5 z" fill="var(--text-muted)" opacity="0.9"/>
+      </marker>
+      <marker id="dg-arrow-thin" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto">
+        <path d="M0,1 L8,4 L0,7 z" fill="var(--text-muted)" opacity="0.5"/>
+      </marker>
+      <!-- 代理指标的斜纹底：一眼看出这格不是本环节的实测值 -->
+      <pattern id="dg-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <line x1="0" y1="0" x2="0" y2="6" stroke="var(--text-muted)" stroke-width="1.2" opacity="0.25"/>
+      </pattern>
+    </defs>
+    <g id="dg-groups"></g>
+    <g id="dg-edges"></g>
+    <g id="dg-nodes"></g>
+  </svg>
+
+  <div class="absolute left-3 bottom-3 flex items-center gap-1 text-xs bg-[var(--surface)] rounded-md border border-[var(--line)] px-1 py-0.5 shadow-sm">
+    <button type="button" onclick="dgZoom(-0.1)" class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">−</button>
+    <span id="dg-zoom" class="tabular w-12 text-center text-[var(--text-muted)]">100%</span>
+    <button type="button" onclick="dgZoom(0.1)" class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">+</button>
+    <button type="button" onclick="dgFit()" class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">适应</button>
+  </div>
+
+  <div id="dg-tools" class="absolute left-3 top-3 hidden flex items-center gap-1 text-xs
+       bg-[var(--surface)] rounded-md border border-[var(--line)] px-1 py-0.5 shadow-sm">
+    <button type="button" onclick="dgAdd('node')" class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">+ 节点</button>
+    <button type="button" onclick="dgAdd('group')" class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">+ 分组</button>
+    <span class="w-px h-4 bg-[var(--line)]"></span>
+    <button type="button" onclick="dgUndo()" id="dg-undo" disabled title="后退一步 Ctrl+Z"
+      class="px-2 py-1 rounded hover:bg-[var(--surface-soft)] disabled:opacity-40">↶ 后退</button>
+    <button type="button" onclick="dgRedo()" id="dg-redo" disabled title="前进一步 Ctrl+Shift+Z"
+      class="px-2 py-1 rounded hover:bg-[var(--surface-soft)] disabled:opacity-40">↷ 前进</button>
+    <span class="w-px h-4 bg-[var(--line)]"></span>
+    <button type="button" onclick="dgTidyGroups()" class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">整理分组</button>
+  </div>
+
+  <!-- 空白布局的落地页：白板本身不说明该做什么 -->
+  <div id="dg-blank" class="hidden absolute inset-0 flex items-center justify-center pointer-events-none">
+    <div class="text-center max-w-sm pointer-events-auto">
+      <div class="text-sm font-bold">这张布局还是空的</div>
+      <p class="text-xs text-[var(--text-muted)] mt-1.5 leading-relaxed">
+        左上角 <b>＋ 分组</b> 圈出环节、<b>＋ 节点</b> 放具体指标；<br>
+        拖节点进分组即归属，点方框绑定指标。</p>
+      <p class="text-xs text-[var(--text-muted)] mt-2">
+        已经有维护好的大纲？<button type="button" onclick="dgOpenMarkdown()"
+          class="text-[var(--primary)] font-semibold underline">从 Markdown 导入</button>更快。</p>
+    </div>
+  </div>
+
+  <div id="dg-hint" class="absolute right-3 bottom-3 hidden text-[11px] px-2.5 py-1.5 rounded-md
+       bg-[var(--amber-soft)] text-[var(--amber)] border border-[var(--amber)]/30">
+    编辑模式：拖动调位置（拖进分组即归属）｜ 八个把手改大小 ｜ <b>按住 Shift 拖</b>＝连线 ｜
+    点方框绑定指标 ｜ Ctrl+Z 后退 ｜ 改完记得保存
+  </div>
+</div>
+
+<!-- 指标池：编辑模式下点节点才打开 -->
+<aside id="dg-drawer" data-drawer
+  class="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-[var(--surface)] border-l border-[var(--line)] shadow-2xl p-6 flex flex-col translate-x-full transition-transform duration-300 ease-in-out">
+  <div class="flex items-start justify-between gap-4 pb-3 border-b border-[var(--line)]">
+    <div>
+      <h2 class="text-lg font-bold">绑定指标</h2>
+      <p class="text-[11px] text-[var(--text-muted)] mt-0.5">节点 <span id="dg-node-label" class="font-semibold"></span></p>
+      <p class="text-[11px] text-[var(--text-muted)] mt-0.5">
+        一个节点<b>只绑一个</b>指标 —— 方框上要能一眼说清"这个数是什么"。<br>
+        要在一个环节看多条，用<b>趋势对比</b>；要让两条相减出一个数，登记<b>派生指标</b>（带口径守卫）。</p>
+      <p id="dg-bound-count" class="text-[11px] text-[var(--primary)] mt-0.5"></p>
+    </div>
+    <button onclick="toggleDrawer('dg-drawer', false)" class="text-xl leading-none text-[var(--text-muted)] hover:text-[var(--text)]">&times;</button>
+  </div>
+  <div class="mt-3">
+    <input id="dg-search" type="text" placeholder="搜指标名称或编码…" oninput="dgRenderPool()"
+           class="w-full px-2 py-1.5 rounded-md text-xs">
+  </div>
+  <div class="mt-2 flex items-center gap-1.5 text-[11px]">
+    <label class="flex items-center gap-1"><input type="checkbox" id="dg-proxy" onchange="dgMarkProxy()"> 标为代理指标</label>
+    <button type="button" onclick="dgRenameActive()" class="ml-auto px-2 py-1 rounded hover:bg-[var(--surface-soft)]">改名</button>
+    <button type="button" onclick="dgUnbind()" class="px-2 py-1 rounded hover:bg-[var(--surface-soft)]">解除绑定</button>
+    <button type="button" onclick="dgDeleteActive()" class="px-2 py-1 rounded text-[var(--alert)] hover:bg-[var(--alert-soft)]">删除节点</button>
+  </div>
+  <div id="dg-suggest" class="mt-2 text-xs shrink-0"></div>
+  <div class="mt-2 pt-2 border-t border-[var(--line)] flex items-baseline gap-2">
+    <span class="text-[10px] font-semibold text-[var(--text-muted)]">全部指标</span>
+    <span id="dg-pool-count" class="text-[10px] text-[var(--text-muted)]"></span>
+  </div>
+  <div id="dg-pool" class="mt-1 flex-1 overflow-y-auto text-xs"></div>
+</aside>
+
+<!-- 节点详情：看图模式点方框即开 -->
+<aside id="dg-detail-drawer" data-drawer
+  class="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-[var(--surface)] border-l border-[var(--line)] shadow-2xl p-6 flex flex-col translate-x-full transition-transform duration-300 ease-in-out">
+  <div class="flex items-start justify-between gap-4 pb-3 border-b border-[var(--line)]">
+    <div>
+      <h2 id="dg-detail-title" class="text-lg font-bold"></h2>
+      <p class="text-[11px] text-[var(--text-muted)] mt-0.5">这个数字凭什么可信 —— 口径、来源、修订与走势</p>
+    </div>
+    <button onclick="toggleDrawer('dg-detail-drawer', false)" class="text-xl leading-none text-[var(--text-muted)] hover:text-[var(--text)]">&times;</button>
+  </div>
+  <div id="dg-detail-body" class="mt-2 flex-1 overflow-y-auto"></div>
+</aside>
+
+<!-- 分组详情：看图模式点分组框即开。分组是实体，不是背景纸 -->
+<aside id="dg-group-drawer" data-drawer
+  class="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-[var(--surface)] border-l border-[var(--line)] shadow-2xl p-6 flex flex-col translate-x-full transition-transform duration-300 ease-in-out">
+  <div class="flex items-start justify-between gap-4 pb-3 border-b border-[var(--line)]">
+    <div class="min-w-0">
+      <p id="dg-group-trail" class="text-[10px] text-[var(--text-muted)]"></p>
+      <h2 id="dg-group-title" class="text-lg font-bold truncate"></h2>
+      <button type="button" onclick="dgRenameGroup()"
+        class="text-[11px] text-[var(--primary)] hover:underline">改名</button>
+    </div>
+    <button onclick="toggleDrawer('dg-group-drawer', false)" class="text-xl leading-none text-[var(--text-muted)] hover:text-[var(--text)]">&times;</button>
+  </div>
+  <div id="dg-group-body" class="mt-3 flex-1 overflow-y-auto"></div>
+</aside>
+
+<!-- 跨来源交叉校验 -->
+<aside id="dg-check-drawer" data-drawer
+  class="fixed right-0 top-0 bottom-0 z-50 w-full max-w-lg bg-[var(--surface)] border-l border-[var(--line)] shadow-2xl p-6 flex flex-col translate-x-full transition-transform duration-300 ease-in-out">
+  <div class="flex items-start justify-between gap-4 pb-3 border-b border-[var(--line)]">
+    <div>
+      <h2 class="text-lg font-bold">跨来源交叉校验</h2>
+      <p class="text-[11px] text-[var(--text-muted)] mt-0.5">
+        同一个事实由两家分别给出时，对不对得上</p>
+    </div>
+    <button onclick="toggleDrawer('dg-check-drawer', false)" class="text-xl leading-none text-[var(--text-muted)] hover:text-[var(--text)]">&times;</button>
+  </div>
+  <div id="dg-check-body" class="mt-2 flex-1 overflow-y-auto"></div>
+</aside>
+
+<!-- 多序列对比 -->
+<aside id="dg-compare-drawer" data-drawer
+  class="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-[var(--surface)] border-l border-[var(--line)] shadow-2xl p-6 flex flex-col translate-x-full transition-transform duration-300 ease-in-out">
+  <div class="flex items-start justify-between gap-4 pb-3 border-b border-[var(--line)]">
+    <div>
+      <h2 class="text-lg font-bold">趋势对比</h2>
+      <p class="text-[11px] text-[var(--text-muted)] mt-0.5">
+        最多 4 条 ｜ 归一化后只比趋势，不比大小 ｜ 两条同单位可看差值</p>
+    </div>
+    <button onclick="toggleDrawer('dg-compare-drawer', false)" class="text-xl leading-none text-[var(--text-muted)] hover:text-[var(--text)]">&times;</button>
+  </div>
+  <div id="dg-compare-body" class="mt-3 flex-1 overflow-y-auto"></div>
+</aside>
+
+<!-- Markdown 双向通道 -->
+<aside id="dg-md-drawer" data-drawer
+  class="fixed right-0 top-0 bottom-0 z-50 w-full max-w-2xl bg-[var(--surface)] border-l border-[var(--line)] shadow-2xl p-6 flex flex-col translate-x-full transition-transform duration-300 ease-in-out">
+  <div class="flex items-start justify-between gap-4 pb-3 border-b border-[var(--line)]">
+    <div>
+      <h2 class="text-lg font-bold">Markdown 结构</h2>
+      <p class="text-[11px] text-[var(--text-muted)] mt-0.5">导出再导入无损 ——
+        结构、层级、绑定、静态标注、流向、分组公式都写得回去。</p>
+    </div>
+    <button onclick="toggleDrawer('dg-md-drawer', false)" class="text-xl leading-none text-[var(--text-muted)] hover:text-[var(--text)]">&times;</button>
+  </div>
+  <details class="mt-2 rounded-md border border-[var(--line)] bg-[var(--surface-soft)] text-[11px]">
+    <summary class="px-3 py-2 cursor-pointer font-semibold select-none">语法速查（点开看范例）</summary>
+    <div class="px-3 pb-3 space-y-2">
+      <table class="w-full text-left">
+        <thead class="text-[10px] text-[var(--text-muted)]">
+          <tr><th class="py-1 w-44">写法</th><th class="py-1">含义</th></tr></thead>
+        <tbody class="divide-y divide-[var(--line)]">
+          <tr><td class="py-1"><code># 标题</code></td><td class="py-1">整张图的名称（只认第一个）</td></tr>
+          <tr><td class="py-1"><code>## 供给端</code></td><td class="py-1">一级分组框</td></tr>
+          <tr><td class="py-1"><code>### 矿端</code></td><td class="py-1">子分组，井号越多层级越深</td></tr>
+          <tr><td class="py-1"><code>- 国产锡精矿</code></td><td class="py-1">节点</td></tr>
+          <tr><td class="py-1 pl-4"><code>&nbsp;&nbsp;- 缅甸矿</code></td><td class="py-1">缩进＝包含关系，自动连线</td></tr>
+          <tr><td class="py-1"><code>[占比 32%]</code></td><td class="py-1">静态标注（调研系数，<b>不入事实层</b>）</td></tr>
+          <tr><td class="py-1"><code>&lt;!-- bind: MYSTEEL.X --&gt;</code></td><td class="py-1">绑定指标；派生指标写公式 ID</td></tr>
+          <tr><td class="py-1"><code>矿端 -&gt; 冶炼 -&gt; 平衡</code></td><td class="py-1"><b>流向连线</b>，独占一行，可连分组也可连节点</td></tr>
+          <tr><td class="py-1"><code>&lt;!-- agg: sum --&gt;</code></td><td class="py-1">写在分组标题后：对直接子节点求和（<code>share</code>＝占比）</td></tr>
+        </tbody>
+      </table>
+      <pre class="p-2.5 rounded bg-[var(--surface)] border border-[var(--line)] font-mono text-[10.5px] leading-relaxed overflow-x-auto"># 锡产业结构
+
+## 供给端
+### 矿端 &lt;!-- agg: sum --&gt;
+- 国产锡精矿 [占比 32%] &lt;!-- bind: MYSTEEL.ID01590150 --&gt;
+- 进口锡精矿 [占比 68%] &lt;!-- bind: MYSTEEL.CM0000138665 --&gt;
+  - 缅甸矿进口 &lt;!-- bind: SMM.a10005168 --&gt;
+
+### 冶炼与锭
+- 冶炼产量 · 中国 &lt;!-- bind: MYSTEEL.ID01517452 --&gt;
+
+## 流向
+
+矿端 -&gt; 冶炼与锭</pre>
+      <p class="text-[10px] text-[var(--text-muted)] leading-relaxed">
+        <b>分组之间的连线只能显式写。</b>缩进只表达"包含"，表达不了"矿端的货流向冶炼"——
+        那是两个平级分组之间的关系。<br>
+        <b>导入给不了绑定。</b>没写 <code>bind</code> 的节点一律未绑定，打开时用「建议参考」逐个补。<br>
+        <b>流向里的名称必须写全</b>，对不上会报错并指出是哪一个，不会静默丢掉。</p>
+    </div>
+  </details>
+  <textarea id="dg-md-text" spellcheck="false"
+    class="mt-2 flex-1 w-full px-3 py-2 rounded-md font-mono text-[11px] leading-relaxed resize-none"></textarea>
+  <div class="mt-2 flex items-center gap-2 text-xs">
+    <input id="dg-md-name" type="text" placeholder="新建时的布局名称（留空用文件里的一级标题）"
+           class="flex-1 px-2 py-1.5 rounded-md">
+    <button type="button" onclick="dgCopyMarkdown()"
+      class="px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)]">复制</button>
+    <button type="button" onclick="dgImportMarkdown(false)"
+      class="px-3 py-1.5 rounded-md border border-[var(--line)] hover:bg-[var(--surface-soft)]">导入为新布局</button>
+    <button type="button" onclick="dgImportMarkdown(true)"
+      class="px-3 py-1.5 rounded-md bg-[var(--primary)] text-white font-semibold hover:bg-[var(--primary-hover)]">应用到当前布局</button>
+  </div>
+  <div id="dg-md-msg" class="mt-1.5 text-[11px] text-[var(--amber)] min-h-[16px]"></div>
+</aside>
+
+<script>
+  window.DG_TEMPLATE = {{ template | tojson }};
+  window.DG_DATE = {{ (d or '') | tojson }};
+</script>
+<script src="/static/diagram.js?v={{ static_version() }}"></script>
+{% endif %}
+{% endblock %}
