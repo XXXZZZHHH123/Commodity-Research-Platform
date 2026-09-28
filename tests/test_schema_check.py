@@ -28,6 +28,22 @@ def _fresh_engine():
     return engine
 
 
+def _real_db_at(path, revision: str):
+    """真的把一个库升到某一版——不是只盖个章。
+
+    只写 alembic_version 而不建表，造出来的是现实中不存在的状态：后续迁移
+    `alter table judgments` 会找不到表。要验自动升级，库就得是真的。
+    """
+    from alembic import command
+    from alembic.config import Config
+
+    cfg = Config()
+    cfg.set_main_option("script_location", str(schema_check.ROOT / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{path}")
+    command.upgrade(cfg, revision)
+    return make_engine(f"sqlite:///{path}")
+
+
 def _stamp(engine, revision: str):
     """把库标成某个迁移版本，模拟"跑过迁移"的真实库。"""
     with engine.begin() as conn:
@@ -98,3 +114,84 @@ def test_the_guard_steps_aside_once_the_database_catches_up(monkeypatch):
                         sessionmaker(engine, expire_on_commit=False))
     r = TestClient(app, raise_server_exceptions=False).get("/sn/indicators")
     assert r.status_code != 503, "追上之后不该再拦"
+
+
+# ---------- 自动迁移 ----------
+
+def test_auto_upgrade_brings_a_stale_database_to_head(tmp_path):
+    """部署脚本和容器启动都没有迁移步骤，不自动跑就得有人手动上服务器执行。"""
+    db = tmp_path / "stale.db"
+    engine = _real_db_at(db, "6c0c0443dc71")
+
+    result = schema_check.auto_upgrade(engine, keep_backups=3)
+
+    assert result["ran"] and result["ok"], result.get("error")
+    assert schema_check.migration_gap(make_engine(f"sqlite:///{db}")) is None
+
+
+def test_auto_upgrade_backs_up_before_touching_anything(tmp_path):
+    """自动改生产库之所以敢开，前提就是这一步：出问题有东西可退。"""
+    db = tmp_path / "stale.db"
+    engine = _real_db_at(db, "6c0c0443dc71")
+
+    saved = schema_check.auto_upgrade(engine, keep_backups=3)["backup"]
+
+    assert saved is not None and saved.exists()
+    assert "before-migrate" in saved.name
+    assert schema_check.db_revisions(make_engine(f"sqlite:///{saved}")) == {"6c0c0443dc71"}, \
+        "备份必须是迁移**之前**的样子，否则退不回去"
+
+
+def test_backups_are_pruned_so_they_do_not_pile_up(tmp_path):
+    db = tmp_path / "x.db"
+    engine = make_engine(f"sqlite:///{db}")
+    _stamp(engine, "6c0c0443dc71")
+    for _ in range(4):
+        schema_check.backup(engine, keep=2)
+    assert len(list(tmp_path.glob("x.before-migrate-*.db"))) <= 2
+
+
+def test_a_database_at_head_is_not_backed_up_or_touched(tmp_path):
+    """已经是最新就什么都不做——每次重启都复制一份库文件是纯浪费。"""
+    db = tmp_path / "ok.db"
+    engine = make_engine(f"sqlite:///{db}")
+    Base.metadata.create_all(engine)
+    _stamp(engine, sorted(schema_check.script_heads())[0])
+
+    assert schema_check.auto_upgrade(engine) == {"ran": False, "ok": True}
+    assert not list(tmp_path.glob("*before-migrate*"))
+
+
+def test_a_failed_upgrade_reports_instead_of_raising(tmp_path, monkeypatch):
+    """启动时迁移失败如果直接让进程退出，得到的是起不来的服务和一段终端里的堆栈。
+
+    返回失败让应用照常起来，由 503 页面把错误和手动命令一起显示出来——人看得见才修得了。
+    """
+    db = tmp_path / "boom.db"
+    engine = make_engine(f"sqlite:///{db}")
+    _stamp(engine, "6c0c0443dc71")
+
+    def explode(*a, **k):
+        raise RuntimeError("磁盘满了")
+
+    monkeypatch.setattr("alembic.command.upgrade", explode)
+    result = schema_check.auto_upgrade(engine)
+
+    assert result["ran"] and not result["ok"]
+    assert "磁盘满了" in result["error"]
+    assert result["backup"] is not None, "失败时更需要那份备份"
+
+
+def test_upgrading_does_not_wipe_out_the_application_logging(tmp_path):
+    """alembic 的 env.py 一见到 ini 就会 fileConfig()，那会禁用已有的 logger——
+    uvicorn 的访问日志会从此一条不出。所以不能把 alembic.ini 传进去。"""
+    import logging
+
+    db = tmp_path / "log.db"
+    engine = make_engine(f"sqlite:///{db}")
+    _stamp(engine, "6c0c0443dc71")
+    probe = logging.getLogger("tin.probe.logging")
+
+    schema_check.auto_upgrade(engine)
+
+    assert not probe.disabled, "升级过程不该把应用的 logger 关掉"

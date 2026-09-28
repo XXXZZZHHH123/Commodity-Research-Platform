@@ -59,7 +59,13 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    connectable = make_engine()
+    # 调用方显式给了 url 就用它，否则回落到 settings。
+    #
+    # 原来无条件 `make_engine()`，等于把传进来的 sqlalchemy.url 丢掉、永远升级
+    # settings.database_url 指向的那个库——程序化调用（tin.schema_check.auto_upgrade）
+    # 想升别的库时会**静默升错对象**。命令行走 alembic.ini 时这一项是空的，行为不变。
+    url = config.get_main_option("sqlalchemy.url", None)
+    connectable = make_engine(url) if url else make_engine()
 
     with connectable.connect() as connection:
         context.configure(

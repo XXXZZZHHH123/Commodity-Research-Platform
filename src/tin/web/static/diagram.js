@@ -661,10 +661,12 @@ function dgBindCanvas() {
       const now = dgGroupAt(wasDrag.node);
       if (before !== now) {
         wasDrag.node.parent = now;
+        // 停在手松开的地方多半和别的框叠着，顺手排整齐；旧分组也要重排，把空位收掉
+        dgAutoArrange(now, before);
         dgRender();
         // 归属变化是看不见的结构改动，必须说出来，并且当场给一条退路
         showToast((now
-          ? `「${wasDrag.node.label}」已归入「${dg.layout.nodes.find((n) => n.id === now).label}」`
+          ? `「${wasDrag.node.label}」已归入「${dg.layout.nodes.find((n) => n.id === now).label}」并排好位置`
           : `「${wasDrag.node.label}」已移出分组`) + " —— 不对就按 Ctrl+Z 撤销");
       }
     }
@@ -959,6 +961,10 @@ function dgAdd(kind) {
     ? { id: dgNextId("g"), kind: "group", label: "新分组", x, y, w: 420, h: 260, binding: { kind: "none" }, statics: [] }
     : { id: dgNextId("n"), label: "新节点", x, y, w: 140, h: 66, binding: { kind: "none" }, statics: [] };
   dg.layout.nodes.push(node);
+  // 新节点落在视口角上，多半正压在别的框上。落点在某个分组内就归进去并排好队，
+  // 免得每加一个都要手动挪开。
+  const into = dgGroupAt(node);
+  if (into) { node.parent = into; dgAutoArrange(into); }
   dg.dirty = true;
   dgSyncSave();
   dgRender();
@@ -1035,30 +1041,17 @@ function dgCopyMarkdown() {
 
 function dgTidyGroups() {
   dgPushUndo();
-  // 把每个分组框收拢到刚好包住自己的成员。拖动之后框和内容常常对不齐，
-  // 手动一个个调太笨；但也不做成自动的——自动变形会让人失去对布局的掌控。
-  const byParent = {};
-  for (const n of dg.layout.nodes) {
-    if (n.parent) (byParent[n.parent] = byParent[n.parent] || []).push(n);
-  }
-  const groups = dg.layout.nodes.filter(dgIsGroup)
-    .sort((a, b) => dgDepth(b.id) - dgDepth(a.id));  // 由深到浅，内层先定形
-  let changed = 0;
-  for (const g of groups) {
-    const kids = byParent[g.id] || [];
-    if (!kids.length) continue;
-    const pad = 16, top = 34;
-    const x = Math.min(...kids.map((k) => k.x)) - pad;
-    const y = Math.min(...kids.map((k) => k.y)) - top;
-    const w = Math.max(...kids.map((k) => k.x + k.w)) + pad - x;
-    const h = Math.max(...kids.map((k) => k.y + k.h)) + pad - y;
-    if (g.x !== x || g.y !== y || g.w !== w || g.h !== h) changed += 1;
-    Object.assign(g, { x, y, w, h });
-  }
-  dg.dirty = changed > 0;
-  dgSyncSave();
-  dgRender();
-  showToast(changed ? `已整理 ${changed} 个分组` : "分组已经是贴合的");
+  // 整张图重排：每个顶层分组递归排好内容，再收拢边框。
+  //
+  // 单个分组的重排是自动的（加节点、拖进分组时就地排好），但**整张图的重排只在点
+  // 这个按钮时发生**——自动重排整张图会让人失去对布局的掌控：刚摆好的位置被系统
+  // 改掉，比对不齐更难受。
+  const ids = new Set(dg.layout.nodes.filter(dgIsGroup).map((n) => n.id));
+  const roots = dg.layout.nodes.filter((n) => dgIsGroup(n) && !ids.has(n.parent));
+  let arranged = 0;
+  for (const r of roots) arranged += dgArrange(r.id);
+  if (arranged) { dg.dirty = true; dgSyncSave(); dgRender(); }
+  showToast(arranged ? `已排布 ${arranged} 个元素` : "没有需要排布的分组");
 }
 
 /* ---------- 节点详情（看图模式点击） ---------- */
@@ -1783,4 +1776,108 @@ function dgRenameGroup() {
   dgSyncSave();
   dgRender();
   dgOpenGroup(g.id);
+}
+
+/* ---------- 自动排布 ----------
+ *
+ * 新加的节点落在视口角上、拖进分组的节点停在手松开的地方——两者都会和已有的框
+ * 叠在一起。叠了就得手动一个个挪开，而挪的过程中又可能把别的挤重叠。
+ *
+ * 排布只做一件事：把一个分组的**直接子元素**摆成不重叠的网格，顺序沿用它们原来的
+ * 上下左右关系——研究员摆的次序是他的表达，自动排布可以对齐，但不该重排。
+ */
+
+const DG_PAD = 12, DG_HEAD = 26, DG_GAPX = 20, DG_GAPY = 14, DG_INDENT = 18;
+
+function dgMoveTree(node, dx, dy) {
+  for (const n of dgSubtree(node.id)) { n.x += dx; n.y += dy; }
+}
+
+function dgContainedIn(gid) {
+  // 同组内一条 A→B 的连线表示"B 是 A 的一部分"，排布时 B 紧跟 A 并缩进
+  const ids = new Set(dg.layout.nodes.filter((n) => n.parent === gid).map((n) => n.id));
+  const of = {};
+  for (const e of dg.layout.edges || []) {
+    if (ids.has(e.from) && ids.has(e.to)) of[e.to] = e.from;
+  }
+  return of;
+}
+
+function dgArrange(gid) {
+  const g = dg.layout.nodes.find((n) => n.id === gid);
+  if (!g) return 0;
+  const kids = dg.layout.nodes.filter((n) => n.parent === gid);
+  if (!kids.length) return 0;
+
+  const byXY = (a, b) => (a.y - b.y) || (a.x - b.x);
+  const subs = kids.filter(dgIsGroup).sort(byXY);
+  const leaves = kids.filter((n) => !dgIsGroup(n)).sort(byXY);
+
+  for (const s of subs) dgArrange(s.id);       // 内层先各自排好，外层才知道它多大
+
+  let x = g.x + DG_PAD;
+  const top = g.y + DG_HEAD;
+  for (const s of subs) {                       // 子分组横向并排
+    dgMoveTree(s, x - s.x, top - s.y);
+    x += s.w + DG_GAPX;
+  }
+
+  if (leaves.length) {
+    // 把"被包含的"排到它所属那一项后面，其余保持原有上下顺序
+    const owner = dgContainedIn(gid);
+    const order = [];
+    const seen = new Set();
+    const push = (n) => {
+      if (seen.has(n.id)) return;
+      seen.add(n.id);
+      order.push(n);
+      for (const k of leaves) if (owner[k.id] === n.id) push(k);
+    };
+    for (const n of leaves) if (!owner[n.id]) push(n);
+    for (const n of leaves) push(n);            // owner 已被删掉的孤儿也要排进去
+
+    const cellW = Math.max(...leaves.map((n) => n.w));
+    const cellH = Math.max(...leaves.map((n) => n.h));
+    // 列数按分组当前宽度算：框宽就多排几列，而不是一味拉长
+    const cols = Math.max(1, Math.floor((g.w - DG_PAD * 2 + DG_GAPX) / (cellW + DG_GAPX)));
+    const rows = Math.ceil(order.length / cols);
+    order.forEach((n, i) => {
+      const col = Math.floor(i / rows), row = i % rows;   // 先竖后横，和种子布局一致
+      const indent = owner[n.id] ? DG_INDENT : 0;
+      n.x = x + col * (cellW + DG_GAPX) + indent;
+      n.y = top + row * (cellH + DG_GAPY);
+      if (indent && n.w > cellW - indent) n.w = cellW - indent;
+    });
+    x += cols * (cellW + DG_GAPX) - DG_GAPX;
+  }
+
+  dgFitGroup(g);
+  return kids.length;
+}
+
+function dgFitGroup(g) {
+  const kids = dg.layout.nodes.filter((n) => n.parent === g.id);
+  if (!kids.length) return;
+  const x = Math.min(...kids.map((k) => k.x)) - DG_PAD;
+  const y = Math.min(...kids.map((k) => k.y)) - DG_HEAD;
+  Object.assign(g, {
+    x, y,
+    w: Math.max(...kids.map((k) => k.x + k.w)) + DG_PAD - x,
+    h: Math.max(...kids.map((k) => k.y + k.h)) + DG_PAD - y,
+  });
+  // 父框要跟着重新贴合，否则子分组长大之后会顶出去
+  const parent = dg.layout.nodes.find((n) => n.id === g.parent);
+  if (parent) dgFitGroup(parent);
+}
+
+function dgAutoArrange(...gids) {
+  const done = new Set();
+  let n = 0;
+  for (const gid of gids) {
+    if (!gid || done.has(gid)) continue;
+    done.add(gid);
+    n += dgArrange(gid);
+  }
+  if (n) { dg.dirty = true; dgSyncSave(); dgRender(); }
+  return n;
 }
