@@ -30,7 +30,8 @@
 import re
 
 BIND = re.compile(r"<!--\s*bind:\s*([A-Za-z0-9_.一-鿿-]+)\s*-->")
-AGG = re.compile(r"<!--\s*agg:\s*(sum|share)\s*-->")
+# `agg: sum` 对全体直接子节点；`agg: sum(甲, 乙)` 只算括号里点名的那几个。
+AGG = re.compile(r"<!--\s*agg:\s*(sum|share)\s*(?:\(([^)]*)\))?\s*-->")
 STATIC = re.compile(r"\[([^\[\]]+?)\s+([^\[\]]+?)\]")
 ITEM = re.compile(r"^(\s*)[-*+]\s+(.*)$")
 HEAD = re.compile(r"^(#{1,4})\s+(.+?)\s*$")
@@ -56,6 +57,13 @@ def _slug(text: str, used: set[str], prefix: str) -> str:
     return slug
 
 
+def _agg_binding(g: dict) -> dict:
+    b = {"kind": "agg", "op": g["agg"]}
+    if g.get("agg_members"):
+        b["members"] = list(g["agg_members"])   # 先记标签，解析完再换成 id
+    return b
+
+
 def parse(text: str) -> dict:
     """Markdown 大纲 → 布局。认不出结构就明确报错，不猜。
 
@@ -79,7 +87,9 @@ def parse(text: str) -> dict:
                 title = label
                 continue
             current = {"label": label, "level": level, "items": [],
-                       "agg": agg.group(1) if agg else None}
+                       "agg": agg.group(1) if agg else None,
+                       "agg_members": ([m.strip() for m in (agg.group(2) or "").split("、" if "、" in (agg.group(2) or "") else ",") if m.strip()]
+                                       if agg and agg.group(2) else None)}
             groups.append(current)
             continue
         if not ITEM.match(raw) and FLOW_SEP.search(raw):
@@ -156,7 +166,7 @@ def parse(text: str) -> dict:
         nodes.insert(len(nodes) - len(group_nodes),
                      {"id": gid, "kind": "group", "label": g["label"], "parent": g["parent"],
                       "x": x - 14, "y": PAD, "w": width, "h": height,
-                      "binding": ({"kind": "agg", "op": g["agg"]} if g.get("agg")
+                      "binding": (_agg_binding(g) if g.get("agg")
                                   else {"kind": "none"}), "statics": []})
         x += width + PAD
 
@@ -171,10 +181,26 @@ def parse(text: str) -> dict:
                "y": min(k["y"] for k in kids) - 34,
                "w": max(k["x"] + k["w"] for k in kids) - min(k["x"] for k in kids) + 28,
                "h": max(k["y"] + k["h"] for k in kids) - min(k["y"] for k in kids) + 48,
-               "binding": ({"kind": "agg", "op": g["agg"]} if g.get("agg")
+               "binding": (_agg_binding(g) if g.get("agg")
                            else {"kind": "none"}), "statics": []}
         nodes.insert(0, box)
         boxes[g["gid"]] = box
+
+    # agg 的参与项在大纲里写的是名字，落到布局里要换成 id
+    label_to_id: dict[str, str] = {}
+    for n in nodes:
+        label_to_id.setdefault(n["label"], n["id"])
+    for n in nodes:
+        b = n.get("binding") or {}
+        if b.get("kind") == "agg" and b.get("members"):
+            resolved, missing = [], []
+            for nm in b["members"]:
+                (resolved.append(label_to_id[nm]) if nm in label_to_id else missing.append(nm))
+            if missing:
+                raise MarkdownError(
+                    f"「{n['label']}」的合计里有找不到的节点：{'、'.join(missing)}\n"
+                    "（括号里只能写这个分组下已经出现过的节点名）")
+            b["members"] = resolved
 
     # 流向按名称解析。分组之间的连线缩进表达不了——缩进只说"包含"，
     # 说不了"矿端的货流向冶炼"，那是两个平级分组之间的关系。
@@ -217,6 +243,7 @@ def dump(layout: dict, name: str = "产业结构") -> str:
     by_id = {n["id"]: n for n in plain}
     placed: set[str] = set()
 
+    labels = {n["id"]: n["label"] for n in nodes}
     written: set[tuple[str, str]] = set()   # 已经用缩进表达掉的连线
     children: dict[str, list[str]] = {}
     for child, father in parent.items():
@@ -261,7 +288,7 @@ def dump(layout: dict, name: str = "产业结构") -> str:
         inside = inside_of(g)
         if not inside and not kids:
             return
-        lines.append(f"{'#' * (2 + depth)} {g['label']}{_agg_tag(g)}")
+        lines.append(f"{'#' * (2 + depth)} {g['label']}{_agg_tag(g, labels)}")
         if inside:
             ids = {n["id"] for n in inside}
             roots = [n for n in inside if parent.get(n["id"]) not in ids]
@@ -297,9 +324,12 @@ def dump(layout: dict, name: str = "产业结构") -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _agg_tag(g: dict) -> str:
+def _agg_tag(g: dict, label_of: dict[str, str] | None = None) -> str:
     b = g.get("binding") or {}
-    return f" <!-- agg: {b['op']} -->" if b.get("kind") == "agg" and b.get("op") else ""
+    if b.get("kind") != "agg" or not b.get("op"):
+        return ""
+    names = [label_of.get(i, i) for i in (b.get("members") or [])] if label_of else []
+    return f" <!-- agg: {b['op']}({', '.join(names)}) -->" if names else f" <!-- agg: {b['op']} -->"
 
 
 def _chains(edges: list[dict]) -> list[list[str]]:

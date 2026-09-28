@@ -731,3 +731,45 @@ def test_sum_excludes_parts_of_other_items(session):
     out = {n["node_id"]: n for n in diagram.resolve(session, layout, TODAY)}
     assert out["g1"]["value"] == 150, "不能算成 180 —— 那 30 吨被数了两遍"
     assert "重复计" in out["g1"]["note"]
+
+
+def test_group_sum_can_pick_which_children_count(session):
+    """一个分组里常混着量和价（矿端既有产量也有加工费 TC）。
+
+    「全体子节点」这个默认只在同质分组里成立；混着就永远算不出来，
+    而那个分组恰恰是最想看合计的。
+    """
+    add_series(session, "P.A", unit="吨", frequency="月")
+    add_series(session, "P.B", unit="吨", frequency="月")
+    add_series(session, "P.PRICE", unit="元/吨", frequency="周")
+    add_points(session, "P.A", [100], step_days=30)
+    add_points(session, "P.B", [40], step_days=30)
+    add_points(session, "P.PRICE", [17500], step_days=7)
+
+    nodes = [group("g1", "sum"),
+             {**node("a", series="P.A"), "parent": "g1"},
+             {**node("b", series="P.B"), "parent": "g1"},
+             {**node("price", series="P.PRICE"), "parent": "g1"}]
+
+    # 默认全体 → 单位不一致，阻断
+    out = {n["node_id"]: n for n in diagram.resolve(session, {"nodes": nodes}, TODAY)}
+    assert out["g1"]["state"] == diagram.BLOCKED
+
+    # 手选两项 → 算得出来，并标明是手选的
+    nodes[0]["binding"]["members"] = ["a", "b"]
+    out = {n["node_id"]: n for n in diagram.resolve(session, {"nodes": nodes}, TODAY)}
+    assert out["g1"]["state"] == diagram.OK
+    assert out["g1"]["value"] == 140
+    assert "手选" in out["g1"]["note"], "手选的合计不是全量，必须说出来"
+
+
+def test_picked_members_that_left_the_group_are_reported(session):
+    """节点被拖走或删掉后，手选名单会指向不存在的成员——要说清楚，不能静默算成 0。"""
+    add_series(session, "P.A", unit="吨", frequency="月")
+    add_points(session, "P.A", [100], step_days=30)
+    g = group("g1", "sum")
+    g["binding"]["members"] = ["已经不在了"]
+    out = {n["node_id"]: n for n in diagram.resolve(session, {"nodes": [
+        g, {**node("a", series="P.A"), "parent": "g1"}]}, TODAY)}
+    assert out["g1"]["state"] == diagram.UNBOUND
+    assert "手选的参与项都不在" in out["g1"]["note"]

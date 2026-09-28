@@ -333,3 +333,6 @@ body.drawer-open #toast { right: auto; left: 1.5rem; }
 }
 #dg-canvas .dg-node rect { transition: stroke-width 0.12s ease; }
 #dg-canvas .dg-node:hover rect:first-of-type { stroke-width: 2.4; }
+
+/* 拖线时的候选目标：松手就会连到它。没有这个提示只能靠试。 */
+.dg-link-target { stroke: var(--primary) !important; stroke-width: 3 !important; }

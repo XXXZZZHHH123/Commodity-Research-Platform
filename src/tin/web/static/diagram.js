@@ -208,8 +208,25 @@ function dgToCanvas(svg, e) {
            y: (e.clientY - r.top - dg.pan.y) / dg.zoom };
 }
 
+function dgNodeAt(pt, wantGroup) {
+  // 按坐标找框，不靠 DOM 命中测试。
+  //
+  // 拖线时调了 setPointerCapture，于是 pointerup 的 e.target **永远是 SVG 本身**，
+  // 不是光标底下那个框——`e.target.closest(".dg-node")` 恒为 null，连线因此必然
+  // 报「松手时不在任何方框上」。这是 pointer capture 的固有行为，不是偶发。
+  //
+  // 顺带解决一件事：从分组往分组连时，松手位置往往落在目标分组里的某个节点上。
+  // 按来源类型优先匹配同类，就不必要求使用者精确地松在分组的空白处。
+  const hit = (n) => n.x <= pt.x && pt.x <= n.x + n.w && n.y <= pt.y && pt.y <= n.y + n.h;
+  const all = dg.layout.nodes.filter(hit);
+  const same = all.filter((n) => dgIsGroup(n) === !!wantGroup);
+  const pool = same.length ? same : all;
+  // 同类里取最深的那个：嵌套分组要命中最里层，节点画在分组之上
+  return pool.sort((x, y) => dgDepth(y.id) - dgDepth(x.id))[0] || null;
+}
+
 function dgConnect(a, b) {
-  if (!b) { showToast("连线取消：松手时不在任何方框上"); return; }
+  if (!b) { showToast("连线取消：松手的位置不在任何方框上"); return; }
   if (a.id === b.id) { showToast("不能连到自己"); return; }
   if (dgIsGroup(a) !== dgIsGroup(b)) {
     // 分组连节点表达不了任何东西：分组已经"包含"了它的节点，再画一条箭头只会误导
@@ -329,23 +346,39 @@ function dgHealCycles() {
   return broken.length;
 }
 
-/* 八个方向的拖拽把手。原来只有右下角一个，想把框往左边扩就得先挪位置再改大小，
- * 两步做一件事。四角 + 四边是绘图工具的通用做法，不用教。 */
+/* 缩放：拖边框本身，不画把手。
+ *
+ * 八个小方点把每个框都点缀得像个选中态控件，二十多个框一起显示就是一地的点。
+ * 改成沿边框铺一圈**透明命中区**——看不见，但鼠标移上去光标会变成缩放箭头，
+ * 这是绘图工具的通用做法，不用画出来也不用教。
+ *
+ * 命中区要盖住边框内外各几像素，否则得像素级对准才拖得到。 */
+const GRIP = 7;   // 命中区厚度（画布坐标）
 const DG_GRIPS = [
-  ["nw", 0, 0, "nwse-resize"], ["n", 0.5, 0, "ns-resize"], ["ne", 1, 0, "nesw-resize"],
-  ["w", 0, 0.5, "ew-resize"],                              ["e", 1, 0.5, "ew-resize"],
-  ["sw", 0, 1, "nesw-resize"], ["s", 0.5, 1, "ns-resize"], ["se", 1, 1, "nwse-resize"],
+  ["nw", "nwse-resize"], ["n", "ns-resize"], ["ne", "nesw-resize"],
+  ["w", "ew-resize"], ["e", "ew-resize"],
+  ["sw", "nesw-resize"], ["s", "ns-resize"], ["se", "nwse-resize"],
 ];
 
 function dgHandles(n) {
-  return DG_GRIPS.map(([dir, fx, fy, cursor]) => {
-    const x = n.w * fx - 5, y = n.h * fy - 5;
-    const corner = dir.length === 2;
-    return `<rect class="dg-resize" data-resize="${dgEsc(n.id)}" data-dir="${dir}"
-      x="${x}" y="${y}" width="10" height="10" rx="${corner ? 2 : 5}"
-      fill="var(--primary)" fill-opacity="${corner ? 0.8 : 0.45}"
-      style="cursor:${cursor}"/>`;
-  }).join("");
+  const G = GRIP, C = GRIP * 2;
+  const box = (dir, x, y, w, h, cursor) =>
+    `<rect class="dg-resize" data-resize="${dgEsc(n.id)}" data-dir="${dir}"
+      x="${x}" y="${y}" width="${Math.max(1, w)}" height="${Math.max(1, h)}"
+      fill="transparent" style="cursor:${cursor}"/>`;
+  const geo = {
+    n:  [C - G, -G, n.w - C * 2 + G * 2, G * 2],
+    s:  [C - G, n.h - G, n.w - C * 2 + G * 2, G * 2],
+    w:  [-G, C - G, G * 2, n.h - C * 2 + G * 2],
+    e:  [n.w - G, C - G, G * 2, n.h - C * 2 + G * 2],
+    nw: [-G, -G, C, C],
+    ne: [n.w - G, -G, C, C],
+    sw: [-G, n.h - G, C, C],
+    se: [n.w - G, n.h - G, C, C],
+  };
+  // 角在后面画，压住边——角上同时属于两条边时应当走对角缩放
+  return DG_GRIPS.sort((a, b) => a[0].length - b[0].length)
+    .map(([dir, cursor]) => box(dir, ...geo[dir], cursor)).join("");
 }
 
 function dgGroupAgg(g, c) {
@@ -568,6 +601,16 @@ function dgBindCanvas() {
       }
       rope.setAttribute("d",
         `M ${a.x + a.w / 2} ${a.y + a.h / 2} L ${pt.x} ${pt.y}`);
+      // 高亮此刻会连到谁。看不见候选目标，就只能靠试。
+      const cand = dgNodeAt(pt, dgIsGroup(a));
+      document.querySelectorAll(".dg-link-target").forEach((el) =>
+        el.classList.remove("dg-link-target"));
+      if (cand && cand.id !== a.id) {
+        document.querySelector(`[data-node="${cand.id}"] > rect`)
+          ?.classList.add("dg-link-target");
+      }
+      rope.setAttribute("stroke", cand && cand.id !== a.id
+        ? "var(--primary)" : "var(--text-muted)");
       return;
     }
     if (drag.pan) {
@@ -606,9 +649,10 @@ function dgBindCanvas() {
     svg.releasePointerCapture?.(e.pointerId);
     document.getElementById("dg-rope")?.remove();
     if (wasDrag && wasDrag.link) {
-      const target = e.target.closest?.(".dg-node");
-      const b = target && dg.layout.nodes.find((n) => n.id === target.dataset.node);
-      dgConnect(wasDrag.link, b);
+      document.querySelectorAll(".dg-link-target").forEach((el) =>
+        el.classList.remove("dg-link-target"));
+      dgConnect(wasDrag.link,
+                dgNodeAt(dgToCanvas(svg, e), dgIsGroup(wasDrag.link)));
       return;
     }
     if (dg.edit && wasDrag && wasDrag.node && !wasDrag.resize && wasDrag.moved) {
@@ -1578,6 +1622,7 @@ function dgOpenGroup(gid) {
 
   // 合计/占比
   const aggOp = (g.binding || {}).kind === "agg" ? g.binding.op : "";
+  const picked = (g.binding || {}).members || null;
   let aggBox = "";
   if (aggOp) {
     const bad = v.state === "blocked" || v.state === "no_data" || v.state === "unbound";
@@ -1664,11 +1709,57 @@ function dgOpenGroup(gid) {
               ? "bg-[var(--primary)] text-white"
               : "border border-[var(--line)] hover:bg-[var(--surface-soft)]"}">${label}</button>`).join("")}
       </div>
+      ${aggOp ? `
+      <div class="mt-2">
+        <div class="flex items-baseline gap-2 text-[10px] text-[var(--text-muted)] mb-1">
+          <span class="font-semibold">参与项</span>
+          <span>${picked ? `手选 ${picked.length} 项` : "全部直接子节点"}</span>
+          <button type="button" onclick="dgAggMembers('${dgEsc(gid)}', null)"
+            class="ml-auto hover:text-[var(--primary)] ${picked ? "" : "opacity-40"}">恢复全选</button>
+        </div>
+        ${leaves.map((n) => {
+          const on = !picked || picked.includes(n.id);
+          const x = dg.values[n.id] || {};
+          return `<label class="flex items-center gap-2 py-1 px-1 rounded text-[11px]
+            hover:bg-[var(--surface-soft)] cursor-pointer">
+            <input type="checkbox" ${on ? "checked" : ""}
+              onchange="dgToggleMember('${dgEsc(gid)}','${dgEsc(n.id)}')">
+            <span class="flex-1 truncate ${on ? "" : "text-[var(--text-muted)] line-through"}">${dgEsc(n.label)}</span>
+            <span class="text-[10px] text-[var(--text-muted)] tabular">${dgEsc(x.unit || "—")}</span>
+          </label>`;
+        }).join("")}
+      </div>` : ""}
       <p class="text-[10px] text-[var(--text-muted)] mt-1.5 leading-relaxed">
-        只对<b>直接子节点</b>生效。单位或频率不一致时<b>不出数</b>并说明原因 ——
+        只对<b>直接子节点</b>生效，默认全部；一个分组里常混着量和价（矿端既有产量也有
+        加工费），这时手选参与项。单位或频率不一致时<b>不出数</b>并说明原因 ——
         实物吨和金属吨差 2–3 倍，加出来的数看着完全正常，那比留空危险得多。
-        在 Markdown 里写成 <code>## 分组名 &lt;!-- agg: sum --&gt;</code>。</p>
+        Markdown 写成 <code>## 分组名 &lt;!-- agg: sum(甲, 乙) --&gt;</code>，
+        不写括号即全部。</p>
     </div>`;
+}
+
+function dgToggleMember(gid, nid) {
+  const g = dg.layout.nodes.find((n) => n.id === gid);
+  if (!g || (g.binding || {}).kind !== "agg") return;
+  const leaves = dg.layout.nodes
+    .filter((n) => n.parent === gid && !dgIsGroup(n)).map((n) => n.id);
+  // members 缺省＝全部。第一次取消勾选时先落成显式全集，再把这一项去掉。
+  const cur = g.binding.members ? g.binding.members.slice() : leaves.slice();
+  const at = cur.indexOf(nid);
+  if (at >= 0) cur.splice(at, 1);
+  else cur.push(nid);
+  dgAggMembers(gid, cur.length === leaves.length ? null : cur);
+}
+
+function dgAggMembers(gid, members) {
+  const g = dg.layout.nodes.find((n) => n.id === gid);
+  if (!g || (g.binding || {}).kind !== "agg") return;
+  dgPushUndo();
+  if (members && members.length) g.binding.members = members;
+  else delete g.binding.members;    // 缺省即全部，不存一个等价的全集
+  dg.dirty = true;
+  dgSyncSave();
+  dgLoad().then(() => dgOpenGroup(gid));
 }
 
 function dgSetAgg(gid, op) {

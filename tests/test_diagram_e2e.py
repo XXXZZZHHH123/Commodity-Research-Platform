@@ -494,3 +494,21 @@ def test_crosscheck_moved_to_the_indicators_page(client, session):
     assert "跨来源交叉校验" in body
     assert "dgOpenCrosscheck()" not in client.get("/sn/diagram").text, \
         "产业图页不该再挂这个按钮"
+
+
+def test_agg_members_survive_a_markdown_round_trip():
+    """参与项写在括号里：`<!-- agg: sum(甲, 乙) -->`，不写括号即全部。"""
+    md = "# x\n\n## 矿端 <!-- agg: sum(国产矿, 进口矿) -->\n- 国产矿\n- 进口矿\n- 加工费\n"
+    layout = diagram_md.parse(md)
+    g = next(n for n in layout["nodes"] if n.get("kind") == "group")
+    ids = {n["label"]: n["id"] for n in layout["nodes"]}
+    assert g["binding"]["members"] == [ids["国产矿"], ids["进口矿"]]
+
+    out = diagram_md.dump(layout, "x")
+    assert "<!-- agg: sum(国产矿, 进口矿) -->" in out
+    assert diagram_md.dump(diagram_md.parse(out), "x") == out
+
+
+def test_agg_members_naming_a_missing_node_is_rejected():
+    with pytest.raises(diagram_md.MarkdownError, match="没有这一项"):
+        diagram_md.parse("# x\n\n## 矿端 <!-- agg: sum(国产矿, 没有这一项) -->\n- 国产矿\n")

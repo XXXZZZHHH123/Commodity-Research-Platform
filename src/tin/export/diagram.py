@@ -240,6 +240,14 @@ def _aggregate(group: dict, op: str, layout: dict, values: dict[str, dict]) -> d
     kids = [n for n in layout.get("nodes", [])
             if n.get("parent") == group["id"] and n.get("kind") != "group"]
 
+    # 参与项可以手选。一个分组里常常混着量和价（矿端有产量也有加工费 TC），
+    # 「全体子节点」这个默认只在同质分组里成立。members 缺省时仍是全体——
+    # 大多数分组不需要挑，不该为此多一步操作。
+    chosen = members if (members := (group.get("binding") or {}).get("members")) else None
+    if chosen is not None:
+        picked_ids = set(chosen)
+        kids = [k for k in kids if k["id"] in picked_ids]
+
     # **排除被同组别的节点包含的那些。** 缅甸矿进口 ⊂ 进口锡精矿，单位、频率完全一样，
     # 守卫拦不住，求和就把它重复算了一遍——而多出来的那部分看不出来。
     # 包含关系在数据里是显式的：同组内一条 A→B 的连线就是"B 是 A 的一部分"。
@@ -255,7 +263,8 @@ def _aggregate(group: dict, op: str, layout: dict, values: dict[str, dict]) -> d
 
     if not picked:
         return {"state": UNBOUND, "agg": op,
-                "note": f"这个分组里没有直接子节点，无法{label}"}
+                "note": (f"手选的参与项都不在这个分组里了，无法{label}" if chosen
+                         else f"这个分组里没有直接子节点，无法{label}")}
     if not usable:
         return {"state": NO_DATA, "agg": op,
                 "note": f"{len(picked)} 个子节点都还没有数据"}
@@ -285,7 +294,8 @@ def _aggregate(group: dict, op: str, layout: dict, values: dict[str, dict]) -> d
                        key=lambda p: -p["pct"])
         return {"state": OK, "agg": op, "value": total, "unit": unit,
                 "parts": parts, "as_of": max(v.get("as_of") or "" for v in usable),
-                "note": (f"{len(usable)} 项占比"
+                "picked": bool(chosen),
+                "note": (f"{len(usable)} 项占比" + ("（手选）" if chosen else "")
                          + (f"；{nested} 项是其他项的一部分，已排除" if nested else "")
                          + (f"；{skipped} 项无数据未计入" if skipped else ""))}
 
@@ -294,7 +304,8 @@ def _aggregate(group: dict, op: str, layout: dict, values: dict[str, dict]) -> d
     return {"state": OK if not skipped else STALE, "agg": op, "value": total, "unit": unit,
             "frequency": usable[0].get("frequency"),
             "as_of": stalest, "count": len(usable),
-            "note": (f"{len(usable)} 项合计"
+            "picked": bool(chosen),
+            "note": (f"{len(usable)} 项合计" + ("（手选）" if chosen else "")
                      + (f"；{nested} 项是其他项的一部分，已排除以免重复计" if nested else "")
                      + (f"；{skipped} 项无数据**未计入**，这不是完整的合计" if skipped else ""))}
 
