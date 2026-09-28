@@ -17,6 +17,7 @@ from tin.caliber.dictionary import DIMENSIONS
 from tin.compute.engine import compute_day, latest_trade_date
 from tin.config import SHANGHAI, settings
 from tin.db import SessionLocal
+from tin import schema_check
 from tin.export.board import (
     PER_CONTRACT,
     archive_days,
@@ -80,6 +81,29 @@ def static_version() -> str:
     那样按钮在、函数不在，点了没反应且毫无提示。"""
     newest = max((f.stat().st_mtime for f in (HERE / "static").glob("*")), default=0)
     return str(int(newest))
+
+
+@app.middleware("http")
+async def _guard_schema(request: Request, call_next):
+    """库落后于代码时，在页面炸开之前先把话说清楚。
+
+    同一个坑绊了三次（`diagram_templates`、`researchers`…）：按表逐个 try/except
+    补不完，每加一张表就多一个坑。这里只检查一次迁移版本，对不上就**所有页面**
+    统一给出该敲的命令。
+
+    检查很便宜（一张单行表），而且只在库真的落后时才反复执行——追上之后
+    `migration_gap` 直接返回 None，与普通请求没有差别。
+    """
+    if not request.url.path.startswith("/static"):
+        gap = schema_check.migration_gap(schema_check.engine_of(SessionLocal))
+        if gap:
+            if request.url.path.startswith("/api/"):
+                return JSONResponse({"detail": gap}, status_code=503)
+            return templates.TemplateResponse(
+                request, "needs_migration.html",
+                {"setup_error": gap, "project_root": str(schema_check.ROOT)},
+                status_code=503)
+    return await call_next(request)
 
 
 templates.env.globals["static_version"] = static_version
@@ -419,28 +443,14 @@ def diagram_page(request: Request, template: int | None = None):
     with SessionLocal() as s:
         # 这里原来无条件返回默认布局，`?template=` 被整个忽略——下拉框选哪张都回到同一张，
         # 新建的布局也永远打不开。切换布局是这个页面最基本的操作之一。
-        try:
-            default = diagram_api.ensure_default(s, V)
-            rows = diagram_api.list_templates(s, V)
-        except diagram_api.NeedsMigration as e:
-            # 缺表是"少跑了一次迁移"，不是故障。页面照常出，把该敲的命令写清楚，
-            # 而不是丢一个 SQL 堆栈让人自己猜。
-            return templates.TemplateResponse(request, "diagram.html", _shell(
-                s, "diagram", latest_trade_date(s), template=None,
-                templates_all=[], setup_error=str(e),
-                project_root=str(Path(__file__).resolve().parents[3])))
+        default = diagram_api.ensure_default(s, V)
+        rows = diagram_api.list_templates(s, V)
         tpl = next((t for t in rows if t["id"] == template), None) if template else None
         if template is not None and tpl is None:
             raise HTTPException(404, f"没有这张布局：{template}")
         return templates.TemplateResponse(request, "diagram.html", _shell(
             s, "diagram", latest_trade_date(s), template=tpl or default,
             templates_all=rows))
-
-
-@app.exception_handler(diagram_api.NeedsMigration)
-def _needs_migration(request: Request, exc: diagram_api.NeedsMigration):
-    """产业图接口遇到缺表时，回一个说得清的 503，而不是 500 加一段 SQL。"""
-    return JSONResponse({"detail": str(exc)}, status_code=503)
 
 
 @app.get("/api/sn/diagram/values")
