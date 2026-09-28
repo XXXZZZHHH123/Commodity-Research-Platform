@@ -148,26 +148,25 @@ function dgRender() {
     // 二十来条线互相穿插，谁流向谁反而看不出来。现在分组也能连——
     // 物料流向本来就是环节之间的事，不是某个具体指标之间的事。
     const group = dgIsGroup(a) && dgIsGroup(b);
-    // 锚点按相对位置选：同一列上下堆叠的两个框，用左右锚点会画出一条倒着绕回去的线。
-    const stacked = a.x < b.x + b.w && b.x < a.x + a.w;
-    let d;
-    if (stacked) {
-      // 上下堆叠的两个框之间只有十几像素，一小段竖线等于看不见。画成**肘形**：
-      // 从父框左下角下来，拐进子框左边——树状图的通用画法，表达的是「包含」，
-      // 而不是物料从上流到下。（这是画出来的图形，不是标签里的 └ 符号。）
-      const x = a.x + 12;
-      d = `M ${x} ${a.y + a.h} L ${x} ${b.y + b.h / 2} L ${b.x} ${b.y + b.h / 2}`;
-    } else {
-      const back = b.x + b.w < a.x;                 // 反向（右往左）时从左边出
-      const x1 = back ? a.x : a.x + a.w, x2 = back ? b.x + b.w : b.x;
-      const y1 = a.y + a.h / 2, y2 = b.y + b.h / 2, m = (x1 + x2) / 2;
-      d = `M ${x1} ${y1} C ${m} ${y1}, ${m} ${y2}, ${x2} ${y2}`;
+    const geo = dgEdgeGeom(a, b);
+    const d = geo.d;
+    // 编辑态在箭头附近放一个 ×：要删一条线，Shift 再连一次这种"知道了才会用"的
+    // 办法不该是唯一入口。看得见的按钮和快捷操作两条路都留着。
+    let kill = "";
+    if (dg.edit) {
+      const kx = geo.kx, ky = geo.ky;
+      kill = `<g class="dg-edge-del" data-from="${dgEsc(e.from)}" data-to="${dgEsc(e.to)}"
+        transform="translate(${kx},${ky})" style="cursor:pointer">
+        <circle r="7.5" fill="var(--surface)" stroke="var(--line-strong)" stroke-width="1"/>
+        <path d="M-3,-3 L3,3 M3,-3 L-3,3" stroke="var(--alert)" stroke-width="1.6"
+              stroke-linecap="round"/>
+        <title>删除「${dgEsc(a.label)} → ${dgEsc(b.label)}」</title></g>`;
     }
     return `<path d="${d}"
       fill="none" stroke="var(--text-muted)" stroke-width="${group ? 3 : 1.6}"
       opacity="${group ? 0.9 : 0.5}" stroke-linecap="round"
       ${group ? "" : 'stroke-dasharray="5 4"'}
-      marker-end="url(#dg-arrow${group ? "" : "-thin"})"/>`;
+      marker-end="url(#dg-arrow${group ? "" : "-thin"})"/>${kill}`;
   }).join("");
 
   nodes.innerHTML = dg.layout.nodes.filter((n) => !dgIsGroup(n)).map((n) => dgNode(n)).join("");
@@ -200,6 +199,53 @@ function dgTrail(id) {
     if (cur) trail.unshift(cur.label);
   }
   return trail.join(" › ");
+}
+
+/* 连线走哪两条边。
+ *
+ * 原来只在"左右"和"上下堆叠"两种之间选，其余一律右出左入——B 在 A 正下方时线要先
+ * 往右绕出去、再折回左边扎进来，绕一个大圈。四条边都能接才画得直。
+ *
+ * 选法：看两个框中心的相对位置，横向差得多就走左右，纵向差得多就走上下。
+ * 贝塞尔的控制点顺着出入方向拉，线才不会在端点处打折。 */
+function dgEdgeGeom(a, b) {
+  const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
+  const bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+  const dx = bc.x - ac.x, dy = bc.y - ac.y;
+
+  // 同一列上下堆叠、且同属一个分组 —— 这是「包含」，仍然画肘形。
+  // 两框之间常常只有十几像素，一小段竖线等于看不见；肘形是树状图的通用画法。
+  const sameCol = a.x < b.x + b.w && b.x < a.x + a.w;
+  if (sameCol && dy > 0 && a.parent && a.parent === b.parent && !dgIsGroup(a) && !dgIsGroup(b)) {
+    const x = a.x + 12, my = b.y + b.h / 2;
+    return { d: `M ${x} ${a.y + a.h} L ${x} ${my} L ${b.x} ${my}`,
+             kx: b.x - 11, ky: my };
+  }
+
+  const horizontal = Math.abs(dx) >= Math.abs(dy);
+  let p1, p2, c1, c2;
+  if (horizontal) {
+    const right = dx >= 0;
+    p1 = { x: right ? a.x + a.w : a.x, y: ac.y };
+    p2 = { x: right ? b.x : b.x + b.w, y: bc.y };
+    const pull = Math.max(30, Math.abs(p2.x - p1.x) / 2);
+    c1 = { x: p1.x + (right ? pull : -pull), y: p1.y };
+    c2 = { x: p2.x - (right ? pull : -pull), y: p2.y };
+  } else {
+    const down = dy >= 0;
+    p1 = { x: ac.x, y: down ? a.y + a.h : a.y };
+    p2 = { x: bc.x, y: down ? b.y : b.y + b.h };
+    const pull = Math.max(30, Math.abs(p2.y - p1.y) / 2);
+    c1 = { x: p1.x, y: p1.y + (down ? pull : -pull) };
+    c2 = { x: p2.x, y: p2.y - (down ? pull : -pull) };
+  }
+  // 删除按钮贴在箭头外侧一点，别压住端点
+  const off = 12;
+  return {
+    d: `M ${p1.x} ${p1.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${p2.x} ${p2.y}`,
+    kx: p2.x + (horizontal ? (dx >= 0 ? -off : off) : 0),
+    ky: p2.y + (horizontal ? 0 : (dy >= 0 ? -off : off)),
+  };
 }
 
 function dgToCanvas(svg, e) {
@@ -309,6 +355,27 @@ function dgIsAncestor(maybeAncestor, id) {
     cur = dg.layout.nodes.find((n) => n.id === cur.parent);
   }
   return false;
+}
+
+function dgDropTarget(node) {
+  // 松手时归哪个组。
+  //
+  // 分组框是**紧贴内容**的，框内下方没有空处——于是"放到最后一项下面"必然落在框外，
+  // dgGroupAt 判它不在任何组里，节点就被移出了分组。纵向意图因此永远表达不出来：
+  // 往下放 = 被踢出去，只剩往右这一条路。
+  //
+  // 所以当前父框有粘性：落点不在别的组里（或只落在它的祖先里），但还贴着当前父框
+  // （相距 STICK 以内），就当作仍在框内。想真的拖出去，拉远一点即可。
+  // 显式落进**另一个**分组的，照常换组——那是明确的意图。
+  const STICK = 48;
+  const hit = dgGroupAt(node);
+  const cur = node.parent && dg.layout.nodes.find((n) => n.id === node.parent);
+  if (!cur || hit === cur.id) return hit;
+  const intoOther = hit && !dgIsAncestor(hit, cur.id);
+  if (intoOther) return hit;
+  const near = node.x < cur.x + cur.w + STICK && node.x + node.w > cur.x - STICK
+            && node.y < cur.y + cur.h + STICK && node.y + node.h > cur.y - STICK;
+  return near ? cur.id : hit;
 }
 
 function dgGroupAt(node) {
@@ -532,15 +599,43 @@ function dgFit() {
 /* ---------- 编辑：拖动与绑定 ---------- */
 
 function dgToggleEdit() {
-  dg.edit = !dg.edit;
-  const btn = document.getElementById("dg-edit-btn");
-  btn.textContent = dg.edit ? "退出编辑" : "编辑布局";
-  btn.classList.toggle("bg-[var(--amber-soft)]", dg.edit);
-  btn.classList.toggle("text-[var(--amber)]", dg.edit);
-  document.getElementById("dg-hint").classList.toggle("hidden", !dg.edit);
-  document.getElementById("dg-tools").classList.toggle("hidden", !dg.edit);
-  if (!dg.edit) toggleDrawer("dg-drawer", false);
+  // 「编辑布局」只负责进；出走 dgExitEdit（它要先问未保存的改动怎么办）
+  if (dg.edit) { dgExitEdit(); return; }
+  dg.edit = true;
+  dgSyncEditUI();
   dgRender();
+}
+
+function dgExitEdit() {
+  // 未保存就退出等于白改一场，而改动是看不见的（位置、归属、绑定都不在页面上标着）
+  if (dg.dirty && !confirm(
+      "有改动还没保存，退出编辑就会丢失。\n\n" +
+      "点「取消」回去保存，点「确定」放弃这些改动。")) return;
+  if (dg.dirty) {
+    // 放弃改动就真的放回原样，而不是留在内存里等下一次误存
+    dg.layout.nodes = JSON.parse(dg.__clean).nodes;
+    dg.layout.edges = JSON.parse(dg.__clean).edges;
+    dg.dirty = false;
+    dgLoad();
+  }
+  dg.edit = false;
+  dg.place = null;
+  dgSyncEditUI();
+  toggleDrawer("dg-drawer", false);
+  dgRender();
+}
+
+function dgSyncEditUI() {
+  const on = dg.edit;
+  const btn = document.getElementById("dg-edit-btn");
+  btn.classList.toggle("hidden", on);
+  for (const [id, hidden] of [["dg-exit", !on], ["dg-save", !on],
+                              ["dg-tools", !on], ["dg-hint", !on]]) {
+    document.getElementById(id)?.classList.toggle("hidden", hidden);
+  }
+  if (on && !dg.__clean) dg.__clean = dgSnapshot();   // 进编辑时记下干净版本，供放弃改动时还原
+  if (!on) dg.__clean = null;
+  dgSyncSave();
 }
 
 function dgBindCanvas() {
@@ -548,6 +643,32 @@ function dgBindCanvas() {
   let drag = null;
 
   svg.addEventListener("pointerdown", (e) => {
+    // 连线上的 × 先行：它压在画布上，不拦住就会被当成平移起点
+    const del = e.target.closest?.(".dg-edge-del");
+    if (dg.edit && del) {
+      dgPushUndo();
+      const { from, to } = del.dataset;
+      dg.layout.edges = dg.layout.edges.filter((x) => !(x.from === from && x.to === to));
+      dg.dirty = true;
+      dgSyncSave();
+      dgRender();
+      showToast("已删除这条连线 —— 不对就按 Ctrl+Z");
+      return;
+    }
+    // 放置模式先行：此刻按下去是在"放一个新元素"，不是拖画布也不是拖某个框
+    if (dg.edit && dg.place) {
+      const at = dgToCanvas(svg, e);
+      if (dg.place === "node") {
+        const snap = (v) => Math.round(v / 10) * 10;
+        dgAdd("node", { x: snap(at.x - 70), y: snap(at.y - 33) });
+        dg.place = null;
+        dgSyncPlaceUI();
+      } else {
+        drag = { draw: true, x0: at.x, y0: at.y };
+        svg.setPointerCapture(e.pointerId);
+      }
+      return;
+    }
     const handle = e.target.closest?.(".dg-resize");
     const g = e.target.closest?.(".dg-node");
     if (dg.edit && handle) {
@@ -585,6 +706,26 @@ function dgBindCanvas() {
 
   svg.addEventListener("pointermove", (e) => {
     if (!drag) return;
+    if (drag.draw) {
+      const at = dgToCanvas(svg, e);
+      let ghost = document.getElementById("dg-ghost");
+      if (!ghost) {
+        ghost = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        ghost.id = "dg-ghost";
+        ghost.setAttribute("fill", "var(--primary)");
+        ghost.setAttribute("fill-opacity", "0.08");
+        ghost.setAttribute("stroke", "var(--primary)");
+        ghost.setAttribute("stroke-width", "2");
+        ghost.setAttribute("stroke-dasharray", "6 4");
+        ghost.setAttribute("rx", "10");
+        document.getElementById("dg-groups").appendChild(ghost);
+      }
+      ghost.setAttribute("x", Math.min(drag.x0, at.x));
+      ghost.setAttribute("y", Math.min(drag.y0, at.y));
+      ghost.setAttribute("width", Math.abs(at.x - drag.x0));
+      ghost.setAttribute("height", Math.abs(at.y - drag.y0));
+      return;
+    }
     const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
     if (drag.link) {
       const a = drag.link;
@@ -648,6 +789,19 @@ function dgBindCanvas() {
     drag = null;
     svg.releasePointerCapture?.(e.pointerId);
     document.getElementById("dg-rope")?.remove();
+    document.getElementById("dg-ghost")?.remove();
+    if (wasDrag && wasDrag.draw) {
+      const at = dgToCanvas(svg, e);
+      const snap = (v) => Math.round(v / 10) * 10;
+      const w = Math.abs(at.x - wasDrag.x0), h = Math.abs(at.y - wasDrag.y0);
+      dg.place = null;
+      dgSyncPlaceUI();
+      // 拖得太小多半是手滑点了一下，别留一个看不见的框在图上
+      if (w < 60 || h < 50) { showToast("框太小，已取消 —— 拖出一个装得下节点的范围"); return; }
+      dgAdd("group", { x: snap(Math.min(wasDrag.x0, at.x)), y: snap(Math.min(wasDrag.y0, at.y)),
+                       w: snap(w), h: snap(h) });
+      return;
+    }
     if (wasDrag && wasDrag.link) {
       document.querySelectorAll(".dg-link-target").forEach((el) =>
         el.classList.remove("dg-link-target"));
@@ -658,13 +812,20 @@ function dgBindCanvas() {
     if (dg.edit && wasDrag && wasDrag.node && !wasDrag.resize && wasDrag.moved) {
       // 拖到哪个分组里就归哪个组。归属是显式字段，不靠画完之后再猜几何包含。
       const before = wasDrag.node.parent || null;
-      const now = dgGroupAt(wasDrag.node);
+      const now = dgDropTarget(wasDrag.node);
+      if (before === now && now) {
+        // 归属没变，但位置变了（比如在组内拖到了别人下方）——照样按新位置重排
+        dgAutoArrange(now);
+        dgRender();
+      }
       if (before !== now) {
         wasDrag.node.parent = now;
+        // 停在手松开的地方多半和别的框叠着，顺手排整齐；旧分组也要重排，把空位收掉
+        dgAutoArrange(now, before);
         dgRender();
         // 归属变化是看不见的结构改动，必须说出来，并且当场给一条退路
         showToast((now
-          ? `「${wasDrag.node.label}」已归入「${dg.layout.nodes.find((n) => n.id === now).label}」`
+          ? `「${wasDrag.node.label}」已归入「${dg.layout.nodes.find((n) => n.id === now).label}」并排好位置`
           : `「${wasDrag.node.label}」已移出分组`) + " —— 不对就按 Ctrl+Z 撤销");
       }
     }
@@ -680,6 +841,7 @@ function dgBindCanvas() {
   });
 
   document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && dg.place) { dg.place = null; dgSyncPlaceUI(); showToast("已取消放置"); return; }
     if (!(e.ctrlKey || e.metaKey)) return;
     const k = e.key.toLowerCase();
     if (k !== "z" && k !== "y") return;
@@ -874,6 +1036,7 @@ async function dgSave() {
   const data = await res.json();
   if (!res.ok) { showToast(data.detail || "保存失败"); return; }
   dg.dirty = false;
+  dg.__clean = dgSnapshot();       // 保存成功后，这就是新的"干净版本"
   dgSyncSave();
   showToast("布局已保存");
 }
@@ -935,6 +1098,7 @@ function dgInit() {
   if (new URLSearchParams(location.search).get("edit") === "1" || !dg.layout.nodes.length) {
     if (!dg.edit) dgToggleEdit();
   }
+  dgSyncEditUI();
 }
 
 if (document.getElementById("dg-canvas")) {
@@ -950,19 +1114,55 @@ function dgNextId(prefix) {
   return `${prefix}${i}`;
 }
 
-function dgAdd(kind) {
+/* ---------- 放置新元素 ----------
+ *
+ * 原来点一下「+ 节点」就直接落在视口左上角，那里多半正压着别的框；有了自动排布之后
+ * 更糟——它会被判进那个框的分组、连带把人家排好的队重新洗一遍。
+ *
+ * 改成两步：点按钮只是**拿起工具**，落在哪由下一次操作决定。
+ *   节点：在空白处点一下 → 就放在那里
+ *   分组：在空白处拖一个框 → 框多大就是多大
+ * 这是绘图工具的通用做法，也顺便解决了"想在空白处新建"这件事。 */
+
+function dgPlace(kind) {
+  if (!dg.edit) return;
+  dg.place = dg.place === kind ? null : kind;
+  dgSyncPlaceUI();
+  showToast(!dg.place ? "已取消放置"
+    : kind === "group" ? "在空白处拖一个框，决定新分组的位置和大小"
+                       : "在空白处点一下，决定新节点放在哪（Esc 取消）");
+}
+
+function dgSyncPlaceUI() {
+  for (const [id, kind] of [["dg-place-node", "node"], ["dg-place-group", "group"]]) {
+    const b = document.getElementById(id);
+    if (!b) continue;
+    const on = dg.place === kind;
+    b.classList.toggle("bg-[var(--primary)]", on);
+    b.classList.toggle("text-white", on);
+  }
+  const svg = document.getElementById("dg-canvas");
+  if (svg) svg.style.cursor = dg.place ? "crosshair" : "";
+}
+
+function dgAdd(kind, box) {
   dgPushUndo();
-  // 新节点落在当前视口左上角附近，而不是画布原点——否则在远处看不见
-  const x = Math.round((-dg.pan.x / dg.zoom + 40) / 10) * 10;
-  const y = Math.round((-dg.pan.y / dg.zoom + 40) / 10) * 10;
+  const at = box || { x: Math.round((-dg.pan.x / dg.zoom + 40) / 10) * 10,
+                      y: Math.round((-dg.pan.y / dg.zoom + 40) / 10) * 10 };
   const node = kind === "group"
-    ? { id: dgNextId("g"), kind: "group", label: "新分组", x, y, w: 420, h: 260, binding: { kind: "none" }, statics: [] }
-    : { id: dgNextId("n"), label: "新节点", x, y, w: 140, h: 66, binding: { kind: "none" }, statics: [] };
+    ? { id: dgNextId("g"), kind: "group", label: "新分组", x: at.x, y: at.y,
+        w: at.w || 420, h: at.h || 260, binding: { kind: "none" }, statics: [] }
+    : { id: dgNextId("n"), label: "新节点", x: at.x, y: at.y,
+        w: 140, h: 66, binding: { kind: "none" }, statics: [] };
   dg.layout.nodes.push(node);
+  // 放进某个分组里就归进去并排好队；放在空白处就老老实实待在放下的地方，不动它
+  const into = dgGroupAt(node);
+  if (into) { node.parent = into; dgAutoArrange(into); }
   dg.dirty = true;
   dgSyncSave();
   dgRender();
   if (kind !== "group") dgOpenPool(node.id);
+  return node;
 }
 
 function dgDeleteActive() {
@@ -995,11 +1195,20 @@ function dgRenameActive() {
 /* ---------- Markdown 导入导出 ---------- */
 
 async function dgOpenMarkdown() {
-  const res = await fetch(`/api/sn/diagram/markdown?template_id=${dg.layout.__id}`);
+  // 导的是**画布此刻的样子**，不是库里存的那一份。
+  // 按 template_id 从库里导，画布上刚改的结构不在里面——在图上加了个节点，
+  // 打开 Markdown 却看不到它，两条编辑通道就接不上了。
+  const res = await fetch("/api/sn/diagram/markdown/dump", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: dg.layout.__name,
+                           layout: { nodes: dg.layout.nodes, edges: dg.layout.edges } }),
+  });
   const data = res.ok ? await res.json() : { markdown: "" };
   document.getElementById("dg-md-text").value = data.markdown || "";
   document.getElementById("dg-md-name").value = "";
-  document.getElementById("dg-md-msg").textContent = "";
+  document.getElementById("dg-md-msg").textContent = dg.dirty
+    ? "下面是画布当前的结构（含尚未保存的改动）。"
+    : "";
   toggleDrawer("dg-md-drawer", true);
 }
 
@@ -1019,11 +1228,25 @@ async function dgImportMarkdown(into) {
   const data = await res.json();
   if (!res.ok) { msg.textContent = data.detail || "失败"; return; }
   // 导入只给框和标签，绑定要靠「建议参考」逐个补——把这件事说清楚，别让人以为导完就完了
-  msg.textContent = data.replaced
-    ? `已改写「${data.saved.name}」，其中 ${data.unbound} 个节点尚未绑定指标，正在刷新…`
-    : `已建「${data.saved.name}」，其中 ${data.unbound} 个节点尚未绑定指标，正在跳转…`;
-  dg.dirty = false;   // 服务端已是最新，别再弹"未保存"
-  setTimeout(() => { window.location.href = `/sn/diagram?template=${data.saved.id}`; }, 900);
+  if (!data.replaced) {
+    msg.textContent = `已建「${data.saved.name}」，其中 ${data.unbound} 个节点尚未绑定指标，正在跳转…`;
+    dg.dirty = false;
+    setTimeout(() => { window.location.href = `/sn/diagram?template=${data.saved.id}`; }, 900);
+    return;
+  }
+  // 改写当前布局就**就地换掉画布**，不整页跳转：跳转会把编辑状态、缩放、撤销栈全丢掉，
+  // 而文本与画布本来就该是同一张图的两种编辑方式
+  dgPushUndo();
+  dg.layout.nodes = data.saved.layout.nodes;
+  dg.layout.edges = data.saved.layout.edges || [];
+  dg.dirty = false;                 // 服务端已是最新
+  dg.__clean = dgSnapshot();
+  dgSyncSave();
+  dgRender();
+  dgFit();
+  await dgLoad();
+  msg.textContent = `已改写「${data.saved.name}」，其中 ${data.unbound} 个节点尚未绑定指标。`;
+  showToast("画布已按 Markdown 更新");
 }
 
 function dgCopyMarkdown() {
@@ -1035,30 +1258,31 @@ function dgCopyMarkdown() {
 
 function dgTidyGroups() {
   dgPushUndo();
-  // 把每个分组框收拢到刚好包住自己的成员。拖动之后框和内容常常对不齐，
-  // 手动一个个调太笨；但也不做成自动的——自动变形会让人失去对布局的掌控。
-  const byParent = {};
-  for (const n of dg.layout.nodes) {
-    if (n.parent) (byParent[n.parent] = byParent[n.parent] || []).push(n);
-  }
-  const groups = dg.layout.nodes.filter(dgIsGroup)
-    .sort((a, b) => dgDepth(b.id) - dgDepth(a.id));  // 由深到浅，内层先定形
-  let changed = 0;
-  for (const g of groups) {
-    const kids = byParent[g.id] || [];
-    if (!kids.length) continue;
-    const pad = 16, top = 34;
-    const x = Math.min(...kids.map((k) => k.x)) - pad;
-    const y = Math.min(...kids.map((k) => k.y)) - top;
-    const w = Math.max(...kids.map((k) => k.x + k.w)) + pad - x;
-    const h = Math.max(...kids.map((k) => k.y + k.h)) + pad - y;
-    if (g.x !== x || g.y !== y || g.w !== w || g.h !== h) changed += 1;
-    Object.assign(g, { x, y, w, h });
-  }
-  dg.dirty = changed > 0;
+  // 整张图重排：每个顶层分组递归排好内容，再收拢边框。
+  //
+  // 单个分组的重排是自动的（加节点、拖进分组时就地排好），但**整张图的重排只在点
+  // 这个按钮时发生**——自动重排整张图会让人失去对布局的掌控：刚摆好的位置被系统
+  // 改掉，比对不齐更难受。
+  const ids = new Set(dg.layout.nodes.filter(dgIsGroup).map((n) => n.id));
+  // 顶层 = 没有父分组的一切（包括散落在分组外的节点）
+  const tops = dg.layout.nodes.filter((n) => !n.parent || !ids.has(n.parent));
+  if (!tops.length) { showToast("图是空的"); return; }
+
+  let arranged = 0;
+  for (const r of tops.filter(dgIsGroup)) arranged += dgArrange(r.id);
+
+  // 顶层也按列归位、统一间距。上一版这里只推开重叠——压上的拉开了，但隔得老远的
+  // 照样隔得老远，挨得太近的也照样挨着。「整理」就是要把远近不一的间距拉回同一个值。
+  // 起点锚在原图左上角，整张图不会被挪到别处去。
+  const x0 = Math.min(...tops.map((n) => n.x));
+  const y0 = Math.min(...tops.map((n) => n.y));
+  dgPlaceColumns(tops, x0, y0, DG_TOP_GAPX, DG_TOP_GAPY, dgContainedIn(null));
+
+  dg.dirty = true;
   dgSyncSave();
   dgRender();
-  showToast(changed ? `已整理 ${changed} 个分组` : "分组已经是贴合的");
+  dgFit();
+  showToast(`已整理 ${arranged + tops.length} 个元素，间距统一`);
 }
 
 /* ---------- 节点详情（看图模式点击） ---------- */
@@ -1783,4 +2007,200 @@ function dgRenameGroup() {
   dgSyncSave();
   dgRender();
   dgOpenGroup(g.id);
+}
+
+/* ---------- 自动排布 ----------
+ *
+ * 新加的节点落在视口角上、拖进分组的节点停在手松开的地方——两者都会和已有的框
+ * 叠在一起。叠了就得手动一个个挪开，而挪的过程中又可能把别的挤重叠。
+ *
+ * 排布只做一件事：把一个分组的**直接子元素**摆成不重叠的网格，顺序沿用它们原来的
+ * 上下左右关系——研究员摆的次序是他的表达，自动排布可以对齐，但不该重排。
+ */
+
+const DG_PAD = 12, DG_HEAD = 26, DG_GAPX = 20, DG_GAPY = 14, DG_INDENT = 18;
+// 顶层分组之间要比组内留得开一些：那是环节与环节的边界，挤在一起就分不出段落
+const DG_TOP_GAPX = 40, DG_TOP_GAPY = 32;
+
+function dgMoveTree(node, dx, dy) {
+  for (const n of dgSubtree(node.id)) { n.x += dx; n.y += dy; }
+}
+
+function dgContainedIn(gid) {
+  // 同组内一条 A→B 的连线表示"B 是 A 的一部分"，排布时 B 紧跟 A 并缩进。
+  //
+  // **只认节点之间的线。** 分组之间的线是流向（矿端 → 冶炼与锭），不是包含——
+  // 当成包含的话，冶炼与锭会被缩进挂到矿端底下，整条主链路被折成一根竖条。
+  const ids = new Set(dg.layout.nodes
+    .filter((n) => (n.parent || null) === (gid || null) && !dgIsGroup(n)).map((n) => n.id));
+  const of = {};
+  for (const e of dg.layout.edges || []) {
+    if (ids.has(e.from) && ids.has(e.to)) of[e.to] = e.from;
+  }
+  return of;
+}
+
+/* 把一组元素按"列"摆好。节点和子分组走同一套规则，分组内部和顶层也走同一套。
+ *
+ * **列的归属看它现在横向落在哪**：与某一列横向重叠得够多，就归进那一列、按上下顺序
+ * 往下接；跟哪一列都不怎么重叠，就自成一列。于是放在下方就是向下长，放在右边
+ * 就是向右长——意图由位置表达，而不是被一个"列数"公式摊平。
+ *
+ * 上一版只对节点这样做，子分组仍然写死了横向并排：把一个分组拖进另一个分组的
+ * 下方，照样被排到右边去。宽度不一的子分组用"中心距离"判列也不准，所以改用
+ * 横向重叠比例。
+ *
+ * 间距在这里一次定死——这正是「整理」要做的事：远近不一的间距拉回同一个值。 */
+function dgPlaceColumns(items, x0, y0, gapX, gapY, owner = {}) {
+  if (!items.length) return;
+  const byXY = (a, b) => (a.y - b.y) || (a.x - b.x);
+  const sorted = items.slice().sort(byXY);
+
+  // 被包含的紧跟它的主项，其余保持原有上下顺序
+  const order = [];
+  const seen = new Set();
+  const push = (n) => {
+    if (seen.has(n.id)) return;
+    seen.add(n.id);
+    order.push(n);
+    for (const k of sorted) if (owner[k.id] === n.id) push(k);
+  };
+  for (const n of sorted) if (!owner[n.id]) push(n);
+  for (const n of sorted) push(n);            // 主项已被删掉的孤儿也要排进去
+
+  const cols = [];
+  for (const n of order) {
+    let col = owner[n.id] ? cols.find((c) => c.items.some((m) => m.id === owner[n.id])) : null;
+    if (!col) {
+      let best = 0;
+      for (const c of cols) {
+        const ov = Math.min(n.x + n.w, c.x1) - Math.max(n.x, c.x0);
+        // 重叠超过较窄那一方的四成才算"放在这一列上"，擦个边不算
+        if (ov > 0.4 * Math.min(n.w, c.x1 - c.x0) && ov > best) { best = ov; col = c; }
+      }
+    }
+    if (col) {
+      col.items.push(n);
+      col.x0 = Math.min(col.x0, n.x);
+      col.x1 = Math.max(col.x1, n.x + n.w);
+    } else {
+      cols.push({ x0: n.x, x1: n.x + n.w, items: [n] });
+    }
+  }
+  cols.sort((p, q) => p.x0 - q.x0);
+
+  const byId = Object.fromEntries(items.map((n) => [n.id, n]));
+  let x = x0;
+  for (const c of cols) {
+    let y = y0, colW = 0;
+    for (const n of c.items) {
+      const indent = owner[n.id] ? DG_INDENT : 0;
+      // 被包含的子项缩进后不该比主项还宽，否则缩进出去的那截会顶出列外
+      const host = byId[owner[n.id]];
+      if (indent && host && n.w > host.w - indent) n.w = host.w - indent;
+      dgMoveTree(n, x + indent - n.x, y - n.y);
+      colW = Math.max(colW, n.w + indent);
+      y += n.h + gapY;
+    }
+    x += colW + gapX;
+  }
+}
+
+function dgArrange(gid) {
+  const g = dg.layout.nodes.find((n) => n.id === gid);
+  if (!g) return 0;
+  const kids = dg.layout.nodes.filter((n) => n.parent === gid);
+  if (!kids.length) return 0;
+  // 内层先各自排好——外层要知道每个子分组排完有多大，才摆得开
+  for (const s of kids.filter(dgIsGroup)) dgArrange(s.id);
+  dgPlaceColumns(kids, g.x + DG_PAD, g.y + DG_HEAD, DG_GAPX, DG_GAPY, dgContainedIn(gid));
+  dgFitGroup(g);
+  return kids.length;
+}
+
+function dgFitGroup(g) {
+  const kids = dg.layout.nodes.filter((n) => n.parent === g.id);
+  if (!kids.length) return;
+  const x = Math.min(...kids.map((k) => k.x)) - DG_PAD;
+  const y = Math.min(...kids.map((k) => k.y)) - DG_HEAD;
+  Object.assign(g, {
+    x, y,
+    w: Math.max(...kids.map((k) => k.x + k.w)) + DG_PAD - x,
+    h: Math.max(...kids.map((k) => k.y + k.h)) + DG_PAD - y,
+  });
+  // 父框要跟着重新贴合，否则子分组长大之后会顶出去
+  const parent = dg.layout.nodes.find((n) => n.id === g.parent);
+  if (parent) dgFitGroup(parent);
+}
+
+function dgAutoArrange(...gids) {
+  const done = new Set();
+  let n = 0;
+  for (const gid of gids) {
+    if (!gid || done.has(gid)) continue;
+    done.add(gid);
+    n += dgArrange(gid);
+    // 排完这个分组可能变大，顶到同层的邻居——逐层往上把重叠推开
+    dgSeparateFrom(gid);
+  }
+  if (n) { dg.dirty = true; dgSyncSave(); dgRender(); }
+  return n;
+}
+
+/* ---------- 同层分离 ----------
+ *
+ * 分组内部排布不会重叠，但一个分组排完可能变大，于是压到**同层的邻居**上。
+ * 整图重排一遍最省事，却会把研究员手工摆的位置全改掉。
+ *
+ * 所以只做最小干预：找出真正重叠的一对，沿**重叠较小的那个轴**推开，
+ * 被推的总是位置靠后的那个（左上优先），没重叠的一个都不动。
+ */
+function dgSeparateScope(parentId) {
+  const scope = (parentId || null);
+  const sibs = dg.layout.nodes.filter((n) => (n.parent || null) === scope);
+  if (sibs.length < 2) return 0;
+  const GAP = 18;
+  let moves = 0;
+
+  for (let pass = 0; pass < 24; pass += 1) {
+    let hit = false;
+    for (let i = 0; i < sibs.length; i += 1) {
+      for (let j = i + 1; j < sibs.length; j += 1) {
+        const a = sibs[i], b = sibs[j];
+        const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+        const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+        if (ox <= 0 || oy <= 0) continue;                 // 没压上
+        // 沿重叠较小的那个轴推开——推得最少，形变也最小
+        if (ox <= oy) {
+          // 左边那个留在原地，右边那个往右让
+          const later = a.x <= b.x ? b : a;
+          dgMoveTree(later, ox + GAP, 0);
+        } else {
+          const later = a.y <= b.y ? b : a;
+          dgMoveTree(later, 0, oy + GAP);
+        }
+        hit = true;
+        moves += 1;
+      }
+    }
+    if (!hit) break;
+  }
+  return moves;
+}
+
+function dgSeparateFrom(gid) {
+  // 从这个分组所在的那一层开始，逐层往上推——子框长大会顶大父框，父框又可能压到它的邻居
+  let node = dg.layout.nodes.find((n) => n.id === gid);
+  const seen = new Set();
+  let moves = 0;
+  while (true) {
+    const scope = node ? (node.parent || null) : null;
+    moves += dgSeparateScope(scope);
+    if (scope === null || seen.has(scope)) break;
+    seen.add(scope);
+    const parent = dg.layout.nodes.find((n) => n.id === scope);
+    if (parent) dgFitGroup(parent);
+    node = parent;
+  }
+  return moves;
 }

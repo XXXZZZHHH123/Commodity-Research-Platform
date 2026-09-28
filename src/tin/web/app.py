@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import logging
 from datetime import date, datetime, time
 from pathlib import Path
 from urllib.parse import quote, urlencode
@@ -52,6 +53,7 @@ from tin.web import home
 from tin.web.strategy import build_router as build_strategy_router
 
 HERE = Path(__file__).parent
+log = logging.getLogger("uvicorn.error")   # 借 uvicorn 的 logger：自建的默认没有 handler，写了也看不见
 app = FastAPI(title="大宗商品研究工作台")
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 templates = Jinja2Templates(directory=HERE / "templates")
@@ -83,25 +85,61 @@ def static_version() -> str:
     return str(int(newest))
 
 
+_migrate_error: str | None = None
+
+
+@app.on_event("startup")
+def _migrate_on_startup() -> None:
+    """启动时自动把库升到最新。
+
+    部署脚本和容器启动都没有迁移步骤，不自动跑就意味着每次带迁移的发布都得有人
+    手动上服务器执行——漏跑的代价是整站 503，而漏跑几乎必然发生（本地已经连着
+    绊了三次）。
+
+    **前提是迁移前自动备份**，否则"自动改生产库"不该开（见 schema_check.backup）。
+    **失败也不让进程退出**：起不来的服务只会留下一段终端里的堆栈；起得来、由 503
+    页面把错误和手动命令一起显示出来，人才看得见。
+    """
+    global _migrate_error
+    engine = schema_check.engine_of(SessionLocal)
+    if engine is None or not settings.auto_migrate:
+        return
+    result = schema_check.auto_upgrade(engine, keep_backups=settings.migrate_backups)
+    if not result.get("ran"):
+        return
+    if result["ok"]:
+        # alembic 自己会逐条打出跑了哪些迁移，这里再给一句汇总，
+        # 重点是**备份在哪**——真要回退的时候，得能一眼找到那个文件
+        log.warning("数据库已自动升级到 %s%s", result.get("to"),
+                    f"，迁移前备份：{result['backup']}" if result.get("backup")
+                    else "（非 SQLite，未自动备份，请确认运维侧有备份策略）")
+    else:
+        _migrate_error = result["error"]
+        log.error("数据库自动升级失败：%s", _migrate_error)
+
+
 @app.middleware("http")
 async def _guard_schema(request: Request, call_next):
-    """库落后于代码时，在页面炸开之前先把话说清楚。
+    """库仍然落后时，在页面炸开之前先把话说清楚。
+
+    正常情况下启动时已经自动升级过，这里不会触发。留着它是因为自动升级可能被关掉
+    （`TIN_AUTO_MIGRATE=false`）、可能失败、也可能库是在进程起来之后才被换掉的。
 
     同一个坑绊了三次（`diagram_templates`、`researchers`…）：按表逐个 try/except
     补不完，每加一张表就多一个坑。这里只检查一次迁移版本，对不上就**所有页面**
     统一给出该敲的命令。
-
-    检查很便宜（一张单行表），而且只在库真的落后时才反复执行——追上之后
-    `migration_gap` 直接返回 None，与普通请求没有差别。
     """
     if not request.url.path.startswith("/static"):
         gap = schema_check.migration_gap(schema_check.engine_of(SessionLocal))
         if gap:
+            if _migrate_error:
+                gap = f"自动升级失败了：{_migrate_error}\n\n{gap}"
             if request.url.path.startswith("/api/"):
                 return JSONResponse({"detail": gap}, status_code=503)
             return templates.TemplateResponse(
                 request, "needs_migration.html",
-                {"setup_error": gap, "project_root": str(schema_check.ROOT)},
+                {"setup_error": gap, "project_root": str(schema_check.ROOT),
+                 "auto_failed": bool(_migrate_error)},
                 status_code=503)
     return await call_next(request)
 
@@ -159,10 +197,18 @@ def _manual_indicators(s) -> list[dict]:
 
 
 def _shell(s, nav: str, d: date | None = None, **extra) -> dict:
-    """所有页面共用的外壳数据：行情条、日期切换、快速录入抽屉。"""
+    """所有页面共用的外壳数据：行情条、日期切换、快速录入抽屉。
+
+    **行情条与日期选择器是两件事。** 行情条是"此刻的市场状态"，每一页都该有；
+    日期选择器是页面自己的翻页，只有按日期取数的页面才需要。早先两者都挂在 `d` 上，
+    于是不按日期取数的页面（策略页传 d=None）连行情条一起没了——那一条是研究员
+    扫一眼就知道盘面的地方，缺了很显眼。
+    """
     ctx = {"nav": nav, "d": d.isoformat() if d else None, "manual_indicators": _manual_indicators(s)}
+    shown = d or latest_trade_date(s)
+    if shown is not None:
+        ctx["ticker"] = ticker(s, V, shown)
     if d is not None:
-        ctx["ticker"] = ticker(s, V, d)
         ctx["prev_date"], ctx["next_date"] = _neighbour_dates(s, d)
         ctx["min_date"] = s.scalar(select(TradingDay.trade_date)
                                    .order_by(TradingDay.trade_date).limit(1))
@@ -500,6 +546,19 @@ def diagram_to_markdown(template_id: int | None = None):
         if tpl is None:
             raise HTTPException(404, "还没有任何布局")
         return {"name": tpl["name"], "markdown": diagram_md.dump(tpl["layout"], tpl["name"])}
+
+
+@app.post("/api/sn/diagram/markdown/dump")
+def diagram_dump_markdown(body: dict = Body(...)):
+    """把**前端此刻的布局**导成 Markdown。
+
+    按 template_id 从库里导，拿到的是已保存版本——画布上刚改的结构不在里面，
+    于是"画布改 / 文本改"这两条通道对不上：在图上加了个节点，打开 Markdown 看不到它。
+    两边要能互相接着改，导出就得按内存里的布局来。
+    """
+    layout = body.get("layout") or {}
+    name = str(body.get("name") or "产业结构").strip()
+    return {"name": name, "markdown": diagram_md.dump(layout, name)}
 
 
 @app.post("/api/sn/diagram/markdown")

@@ -19,6 +19,14 @@ class Settings(BaseSettings):
     liquidity_min_volume: int = 500
     http_timeout: float = 40.0
 
+    # 启动时自动把库升到最新。默认开：部署脚本和容器启动都没有迁移步骤，
+    # 不自动跑就意味着每次带迁移的发布都得有人手动上服务器执行——而漏跑的代价
+    # 是整站 503。迁移前会自动备份（见 tin.schema_check.auto_upgrade）。
+    # 需要人工把关的环境（比如多实例共享一个库）置 false，退回 503 提示页。
+    auto_migrate: bool = True
+    # 自动迁移前的备份保留份数。SQLite 就是复制一个文件，很便宜。
+    migrate_backups: int = 5
+
     # ---- LLM 接入层（SPEC §4.1 / F2）----
     # 换 provider 的唯一开关。anthropic（现阶段）/ openai_compatible（内网 30B）/ fake（测试）。
     # 业务代码不读这一项，只调 tin.llm.build_provider()。
