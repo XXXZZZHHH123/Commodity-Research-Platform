@@ -2,18 +2,7 @@
 {% block title %}动态产业图 · 锡 SN{% endblock %}
 {% block main %}
 
-{% if setup_error %}
-<div class="max-w-2xl mx-auto mt-16">
-  <div class="rounded-lg border border-[var(--amber)]/40 bg-[var(--amber-soft)] p-6">
-    <h1 class="text-lg font-black">还差一步：这个库需要迁移</h1>
-    <p class="text-xs text-[var(--text-muted)] mt-2 leading-relaxed whitespace-pre-line">{{ setup_error }}</p>
-    <pre class="mt-3 p-3 rounded bg-[var(--surface)] border border-[var(--line)] text-[11px] tabular overflow-x-auto">conda activate tin
-cd {{ project_root }}
-alembic upgrade head</pre>
-    <p class="text-[11px] text-[var(--text-muted)] mt-2">跑完刷新本页即可。其余页面不受影响。</p>
-  </div>
-</div>
-{% else %}
+
 
 <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[var(--line-strong)]">
   <div>
@@ -282,5 +271,4 @@ alembic upgrade head</pre>
   window.DG_DATE = {{ (d or '') | tojson }};
 </script>
 <script src="/static/diagram.js?v={{ static_version() }}"></script>
-{% endif %}
 {% endblock %}

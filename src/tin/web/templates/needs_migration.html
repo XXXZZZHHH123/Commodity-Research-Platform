@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>还差一步：这个库需要迁移</title>
+<link rel="stylesheet" href="/static/app.css?v={{ static_version() }}">
+</head>
+<body class="min-h-screen">
+{# 这一页刻意不继承 base.html：外壳自己要查库（行情条、快速录入的指标列表），
+   而库正落后——继承就会在渲染提示的过程中再炸一次。 #}
+<div style="max-width:44rem;margin:12vh auto;padding:0 1.5rem">
+  <div class="rounded-lg p-6" style="border:1px solid var(--amber);background:var(--amber-soft)">
+    <h1 class="text-xl font-black">还差一步：这个库需要迁移</h1>
+    <p class="text-xs mt-3 leading-relaxed" style="color:var(--text-muted);white-space:pre-line">{{ setup_error }}</p>
+    <pre class="mt-4 p-3 rounded text-xs tabular"
+         style="background:var(--surface);border:1px solid var(--line);overflow-x:auto">conda activate tin
+cd {{ project_root }}
+alembic upgrade head</pre>
+    <p class="text-xs mt-3" style="color:var(--text-muted)">
+      跑完刷新本页即可。<b>拉了新代码就先跑一次</b> —— 别人新增的表在你的库里还不存在，
+      页面用到哪张就会在哪里报错。</p>
+  </div>
+</div>
+</body>
+</html>
