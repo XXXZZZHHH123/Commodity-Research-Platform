@@ -24,6 +24,10 @@
 .indicator-sticky-stack { position: sticky; top: 3.5rem; z-index: 25; background: var(--bg); padding-bottom: 8px; }
 .indicator-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; background: var(--bg); }
 .indicator-sticky-stack .indicator-jump.macro-filter-bar { position: static; top: auto; height: auto; margin-top: 2px; }
+.indicator-workspace .indicator-jump .macro-filter-link { color: var(--text-muted); text-decoration: none; }
+.indicator-workspace .indicator-jump .macro-filter-link:hover { color: var(--text); text-decoration: none; }
+.indicator-workspace .indicator-jump .macro-filter-link.active,
+.indicator-workspace .indicator-jump .macro-filter-link.active:hover { color: #fff; text-decoration: none; }
 .indicator-sticky-stack .indicator-compare-bar { position: static; top: auto; margin: 8px 0 0; }
 .indicator-anchor { scroll-margin-top: var(--indicator-sticky-offset, 10.5rem); }
 #indicator-top { scroll-margin-top: 4.25rem; }
