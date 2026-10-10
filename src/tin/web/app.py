@@ -20,7 +20,6 @@ from tin.config import SHANGHAI, settings
 from tin.db import SessionLocal
 from tin import schema_check
 from tin.export.board import (
-    PER_CONTRACT,
     archive_days,
     audit_entries,
     contract_curve,
@@ -28,8 +27,6 @@ from tin.export.board import (
     gaps,
     judgment_block,
     macro_featured,
-    macro_groups,
-    macro_history,
     snapshot,
     source_catalog,
     threshold_radar,
@@ -39,6 +36,7 @@ from tin.export import templates as export_templates
 from tin.export.excel import Column, build_export, build_import_template, field_catalog
 from tin.export import diagram as diagram_api
 from tin.export import diagram_md
+from tin.export import indicators as indicator_data
 from tin.ingest import excel_importer, import_jobs, vendor_terminal
 from tin.ingest.record import RecordError, record
 from tin.jobs.seed import seed_researcher
@@ -367,10 +365,10 @@ def variety_page(request: Request, date: str | None = None, err: str | None = No
 
 @app.get("/sn/macro")
 def macro_page(request: Request, date: str | None = None):
-    with SessionLocal() as s:
-        d = _board_date(s, date)
-        return templates.TemplateResponse(request, "macro.html", _shell(
-            s, "macro", d, groups=macro_groups(s, d), sources=source_catalog()))
+    params = {"scope": "macro"}
+    if date:
+        params["date"] = date
+    return RedirectResponse("/sn/indicators?" + urlencode(params), status_code=307)
 
 
 @app.get("/sn/judgment")
@@ -447,17 +445,16 @@ def entry_submit(series_id: str = Form(...), value: float = Form(...), as_of: st
 
 
 @app.get("/sn/indicators")
-def indicators_page(request: Request):
+def indicators_page(request: Request, date: str | None = None):
     with SessionLocal() as s:
-        rows = [i for i in s.scalars(select(Indicator).order_by(Indicator.fetch_mode, Indicator.category,
-                                                                Indicator.series_id))
-                if not PER_CONTRACT.match(i.series_id)]
-        # 跨来源校验原来挂在产业图页上，但它问的是"这条数据可不可信"，
-        # 跟产业结构没关系——属于指标治理，放这里才找得到。
-        day = latest_trade_date(s)
+        rows = indicator_data.catalog(s)
+        day = _home_date(s, date)
+        groups = [{"name": name, "rows": [r for r in rows if r["category"] == name]}
+                  for name in dict.fromkeys(r["category"] for r in rows)]
         checks = diagram_api.crosscheck(s, V, day) if day else []
         return templates.TemplateResponse(request, "indicators.html", _shell(
-            s, "indicators", day, rows=rows, dimensions=DIMENSIONS, checks=checks))
+            s, "indicators", day, rows=rows, groups=groups, dimensions=DIMENSIONS, checks=checks,
+            sources=source_catalog()))
 
 
 @app.get("/sn/indicators/{series_id}")
@@ -825,7 +822,34 @@ def api_snapshot(date: str | None = None):
 def api_series_history(series_id: str, date: str | None = None,
                        limit: int = Query(900, ge=2, le=2000)):
     with SessionLocal() as s:
-        payload = macro_history(s, series_id, _board_date(s, date), limit)
+        day = _home_date(s, date) or datetime.now(SHANGHAI).date()
+        payload = indicator_data.history(s, series_id, day, limit)
         if payload is None:
             raise HTTPException(404, "该指标不支持历史图表")
         return JSONResponse(payload)
+
+
+@app.get("/api/sn/indicators/previews")
+def api_indicator_previews(series_id: list[str] = Query(..., min_length=1, max_length=40),
+                           date: str | None = None):
+    with SessionLocal() as s:
+        day = _home_date(s, date)
+        try:
+            cards = indicator_data.previews(s, series_id, day or datetime.now(SHANGHAI).date())
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from e
+        html = templates.get_template("_indicator_cards.html").render(cards=cards, d=day.isoformat() if day else "")
+        return {"cards": cards, "html": html}
+
+
+@app.get("/api/sn/indicators/compare")
+def api_indicator_compare(series_id: list[str] = Query(..., min_length=2, max_length=4),
+                          date: str | None = None):
+    if len(set(series_id)) != len(series_id):
+        raise HTTPException(422, "请选择不同的指标")
+    with SessionLocal() as s:
+        day = _home_date(s, date) or datetime.now(SHANGHAI).date()
+        try:
+            return indicator_data.compare(s, series_id, day)
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from e

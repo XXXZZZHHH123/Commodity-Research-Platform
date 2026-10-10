@@ -1,126 +1,90 @@
 {% extends "base.html" %}
-{% block title %}指标登记与口径字典 · 锡 SN{% endblock %}
+{% block title %}指标 · 锡 SN{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="/static/indicators.css?v={{ static_version() }}">
+<script defer src="/static/indicators.js?v={{ static_version() }}"></script>
+{% endblock %}
 {% block main %}
-
-<div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[var(--line-strong)]">
-  <div>
-    <div class="text-[10px] font-bold tracking-widest text-[var(--primary)] uppercase mb-1">DATA GOVERNANCE &amp; DICTIONARY</div>
-    <h1 class="text-2xl font-black tracking-tight">指标登记与口径字典</h1>
-    <p class="text-xs text-[var(--text-muted)] mt-1">{{ rows | length }} 条登记指标 ｜ {{ dimensions | length }} 个口径维度 ｜ 判断只能引用已登记指标</p>
-  </div>
-  <button onclick="toggleDrawer('quick-drawer', true)" class="px-3 py-1.5 text-xs font-semibold rounded bg-[var(--primary)] text-white hover:bg-[var(--primary-hover)] shrink-0">+ 人工录入</button>
-</div>
-
-{% if checks %}
-<section class="space-y-3">
-  <div class="flex items-center justify-between gap-3 flex-wrap">
-    <h2 class="text-sm font-bold flex items-center gap-2">
-      <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">00</span>
-      跨来源交叉校验<span class="text-xs font-normal text-[var(--text-muted)]">（同一个事实由两家分别给出时，对不对得上）</span>
-    </h2>
-    <span class="text-xs text-[var(--text-muted)]">
-      {{ checks | selectattr('state', 'ne', 'ok') | list | length }} / {{ checks | length }} 项存疑</span>
-  </div>
-  <div class="grid gap-3 md:grid-cols-3">
-    {% for c in checks %}
-    {% set bad = c.state != 'ok' %}
-    <div class="rounded-lg border {{ 'border-[var(--amber)]/40 bg-[var(--amber-soft)]' if bad else 'border-[var(--line)] bg-[var(--surface)]' }} p-3">
-      <div class="flex items-baseline gap-2">
-        <b class="text-xs">{{ c.label }}</b>
-        <span class="text-[10px] px-1.5 py-0.5 rounded {{ 'bg-[var(--surface)] text-[var(--amber)]' if bad else 'bg-[var(--primary-soft)] text-[var(--primary)]' }}">
-          {{ '超出容差' if bad else '一致' }}</span>
-      </div>
-      <p class="text-[11px] mt-1 {{ 'text-[var(--amber)]' if bad else 'text-[var(--text-muted)]' }}">{{ c.summary }}</p>
-      {% if c.note %}<p class="text-[10px] text-[var(--text-muted)] mt-1">{{ c.note }}</p>{% endif %}
-      {% if c.points %}
-      <table class="mt-2 w-full text-[10px] tabular">
-        <tr class="text-[var(--text-muted)]"><td>时点</td><td class="text-right">{{ c.a_name }}</td>
-          <td class="text-right">{{ c.b_name }}</td><td class="text-right">相对差</td></tr>
-        {% for p in c.points[:4] %}
-        <tr><td>{{ p.as_of }}</td><td class="text-right">{{ p.a | num }}</td>
-          <td class="text-right">{{ p.b | num }}</td>
-          <td class="text-right {{ 'text-[var(--amber)] font-semibold' if p.rel is not none and (p.rel | abs) > (c.tolerance_pct or 5) }}">
-            {{ '%.1f%%' % p.rel if p.rel is not none else '—' }}</td></tr>
-        {% endfor %}
-      </table>
-      {% endif %}
-      <div class="mt-2 flex gap-2 text-[10px]">
-        <a href="/sn/indicators/{{ c.a }}" class="text-[var(--primary)] hover:underline">{{ c.a }}</a>
-        <a href="/sn/indicators/{{ c.b }}" class="text-[var(--primary)] hover:underline">{{ c.b }}</a>
-      </div>
+<div id="indicator-workspace" data-date="{{ d or '' }}" class="indicator-workspace">
+  <header class="indicator-page-heading">
+    <div><div class="indicator-eyebrow">INDICATORS &amp; WATCHLIST</div><h1>指标</h1>
+      <p class="indicator-muted">宏观与产业指标，一处查找。将关心的指标加入自选，先看走势，再查口径。</p></div>
+    <a href="#indicator-catalog" class="indicator-button">浏览 {{ rows | length }} 项指标 ↓</a>
+  </header>
+  <section aria-labelledby="indicator-favorites-title">
+    <div class="indicator-section-heading"><h2 id="indicator-favorites-title">我的自选 <span id="indicator-favorite-count" class="indicator-muted">0</span></h2>
+      <span class="indicator-muted">保存在当前浏览器 · 最多 40 项</span></div>
+    <p id="indicator-storage-note" class="indicator-warning" role="status" hidden></p>
+    <div id="indicator-favorites" class="indicator-favorites" aria-live="polite"></div>
+    <div id="indicator-favorites-empty" class="indicator-empty">还没有自选指标。点击下方清单中的 ☆，这里就会显示最新值和走势小图。</div>
+    <div id="indicator-favorites-error" class="indicator-warning" role="alert" hidden><span></span> <button type="button" id="indicator-favorites-retry" class="indicator-button">重试</button></div>
+  </section>
+  <section id="indicator-catalog" aria-labelledby="indicator-catalog-title">
+    <div class="indicator-section-heading"><h2 id="indicator-catalog-title">指标清单</h2><span class="indicator-muted">勾选 2–4 项可比较走势 · 逐合约行情未列入</span></div>
+    <div class="indicator-toolbar">
+      <div class="indicator-search-wrap"><label class="sr-only" for="indicator-search">查找指标</label>
+        <input id="indicator-search" type="search" placeholder="搜索名称、代码、来源或类别" autocomplete="off"></div>
+      <label class="sr-only" for="indicator-scope">指标范围</label>
+      <select id="indicator-scope"><option value="all">全部指标</option><option value="macro">宏观指标</option><option value="industry">产业指标</option><option value="favorites">我的自选</option></select>
+      <button id="indicator-expand" type="button" class="indicator-button">全部展开</button>
+      <button id="indicator-collapse" type="button" class="indicator-button">全部收起</button>
+      <span id="indicator-result-count" class="indicator-muted" role="status">{{ rows | length }} 项</span>
     </div>
+    <div id="indicator-compare-bar" class="indicator-compare-bar" hidden>
+      <span id="indicator-selection" aria-live="polite"></span>
+      <button id="indicator-compare-open" type="button" class="indicator-button indicator-primary" disabled>比较走势</button>
+      <button id="indicator-selection-clear" type="button" class="indicator-button">清空选择</button>
+    </div>
+    <div id="indicator-no-results" class="indicator-empty" hidden>没有匹配的指标。<button id="indicator-search-clear" type="button" class="indicator-button">清除筛选</button></div>
+    {% for group in groups %}
+    <details class="indicator-group" data-indicator-group open>
+      <summary>{{ group.name }} <span data-group-count class="indicator-muted">{{ group.rows | length }}</span></summary>
+      <div class="indicator-table-scroll"><table class="indicator-table">
+        <thead><tr><th class="indicator-action-cell">对比</th><th class="indicator-action-cell">自选</th><th>指标 / 代码</th><th>单位</th><th>来源</th><th>频率 / 采集</th><th>查看</th></tr></thead>
+        <tbody>{% for r in group.rows %}
+          <tr data-indicator-row data-series-id="{{ r.series_id }}" data-name="{{ r.name }}" data-macro="{{ 'true' if r.macro else 'false' }}"
+              data-search="{{ r.name }} {{ r.series_id }} {{ r.vendor_code or '' }} {{ r.category }} {{ r.source }} {{ r.caliber.values() | map('string') | join(' ') }}">
+            <td class="indicator-action-cell"><input type="checkbox" data-compare="{{ r.series_id }}" aria-label="对比 {{ r.name }}"></td>
+            <td class="indicator-action-cell"><button type="button" data-favorite="{{ r.series_id }}" aria-pressed="false" aria-label="自选 {{ r.name }}">☆</button></td>
+            <td><b>{% if r.registered %}<a href="/sn/indicators/{{ r.series_id }}">{{ r.name }}</a>{% else %}{{ r.name }}{% endif %}</b>{% if r.is_proxy %} <span class="indicator-warning">代理</span>{% endif %}{% if r.status == '停用' %} <span class="indicator-warning">已停用</span>{% endif %}
+              <div class="indicator-code">{{ r.series_id }} <button type="button" data-copy-series="{{ r.series_id }}" aria-label="复制 {{ r.series_id }}" title="复制代码">⧉</button>{% if r.vendor_code %} · {{ r.vendor_code }}{% endif %}</div></td>
+            <td>{{ r.unit }}</td><td>{{ r.source }}</td><td>{{ r.frequency }} · {{ '自动' if r.fetch_mode == 'auto' else '人工' }}</td>
+            <td class="indicator-row-links"><button type="button" data-series-chart="{{ r.series_id }}" data-chart-date="{{ d or '' }}" aria-haspopup="dialog">走势</button>
+              {% if r.registered %}<a href="/sn/indicators/{{ r.series_id }}">详情</a>{% else %}<span class="indicator-muted">待采集</span>{% endif %}</td>
+          </tr>
+        {% endfor %}</tbody>
+      </table></div>
+    </details>
     {% endfor %}
-  </div>
-  <p class="text-[11px] text-[var(--text-muted)]">
-    差异本身不是错误 —— 两家口径不同很正常。要盯的是<b>差异突然变化</b>，那说明有一方改过数或换了口径。
-    差异<b>恰好为 0</b> 也值得注意：多半是两家转载同一来源，双边维护没有冗余价值。</p>
-</section>
-{% endif %}
-
-<section class="space-y-3">
-  <div class="flex items-center justify-between gap-3 flex-wrap">
-    <h2 class="text-sm font-bold flex items-center gap-2">
-      <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">01</span>
-      指标登记清单<span class="text-xs font-normal text-[var(--text-muted)]">（点进单指标页：口径、凭证、谁在用它）</span>
-    </h2>
-    <span class="text-xs text-[var(--text-muted)]">
-      自动 {{ rows | selectattr('fetch_mode', 'equalto', 'auto') | list | length }} ·
-      人工 {{ rows | selectattr('fetch_mode', 'equalto', 'manual') | list | length }}
-      <span class="text-[10px]">（逐合约行情序列未列入）</span></span>
-  </div>
-  <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] overflow-hidden shadow-sm overflow-x-auto">
-    <table class="w-full text-left text-xs">
-      <thead class="bg-[var(--surface-soft)] text-[11px] font-semibold text-[var(--text-muted)] border-b border-[var(--line)]">
-        <tr><th class="py-2 px-3">series_id</th><th class="py-2 px-3">指标名称</th><th class="py-2 px-3">类别</th>
-          <th class="py-2 px-3">口径约束</th><th class="py-2 px-3">单位</th><th class="py-2 px-3">数据源</th>
-          <th class="py-2 px-3">频率</th><th class="py-2 px-3 text-center">采集方式</th></tr>
-      </thead>
-      <tbody class="divide-y divide-[var(--line)]">
-        {% for r in rows %}
-        <tr class="hover:bg-[var(--surface-soft)]">
-          <td class="py-2 px-3 tabular font-semibold whitespace-nowrap">
-            <a href="/sn/indicators/{{ r.series_id }}" class="text-[var(--primary)] hover:underline">{{ r.series_id }}</a>
-            <button type="button" onclick="copyText('{{ r.series_id }}')" title="复制代码"
-              class="ml-1 text-[10px] text-[var(--text-muted)] hover:text-[var(--primary)]">⧉</button></td>
-          <td class="py-2 px-3 font-bold">
-            <a href="/sn/indicators/{{ r.series_id }}" class="hover:underline">{{ r.name }}</a>
-            {% if r.is_proxy %}<span class="ml-1 px-1.5 py-0.5 text-[10px] rounded bg-[var(--amber-soft)] text-[var(--amber)]">代理</span>{% endif %}
-            {% if r.note %}<div class="text-[10px] font-normal text-[var(--text-muted)]">{{ r.note }}</div>{% endif %}</td>
-          <td class="py-2 px-3"><span class="px-1.5 py-0.5 rounded bg-[var(--surface-soft)] text-[var(--text-muted)] whitespace-nowrap">{{ r.category }}</span></td>
-          <td class="py-2 px-3 text-[var(--text-muted)]">{% for k, v in r.caliber.items() %}{{ v }}{{ ' · ' if not loop.last }}{% endfor %}</td>
-          <td class="py-2 px-3 whitespace-nowrap">{{ r.unit }}</td>
-          <td class="py-2 px-3">{{ r.source }}{% if r.vendor_code %}<div class="text-[10px] tabular text-[var(--text-muted)]">{{ r.vendor_code }}</div>{% endif %}</td>
-          <td class="py-2 px-3">{{ r.frequency }}</td>
-          <td class="py-2 px-3 text-center"><span class="px-1.5 py-0.5 text-[10px] rounded font-semibold whitespace-nowrap
-            {{ 'bg-[var(--primary-soft)] text-[var(--primary)]' if r.fetch_mode == 'auto' else 'bg-[var(--amber-soft)] text-[var(--amber)]' }}">
-            {{ '自动' if r.fetch_mode == 'auto' else '人工' }}</span></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-
-<section class="space-y-3">
-  <h2 class="text-sm font-bold flex items-center gap-2">
-    <span class="text-[10px] font-bold tabular text-[var(--primary)] bg-[var(--primary-soft)] px-1.5 py-0.5 rounded">02</span>
-    口径字典
-  </h2>
-  <div class="rounded-lg border border-[var(--line)] bg-[var(--surface)] overflow-hidden shadow-sm overflow-x-auto">
-    <table class="w-full text-left text-xs">
-      <thead class="bg-[var(--surface-soft)] text-[11px] font-semibold text-[var(--text-muted)] border-b border-[var(--line)]">
-        <tr><th class="py-2 px-3">维度</th><th class="py-2 px-3">枚举值</th><th class="py-2 px-3">为什么必须区分</th></tr>
-      </thead>
-      <tbody class="divide-y divide-[var(--line)]">
-        {% for dim in dimensions %}
-        <tr class="hover:bg-[var(--surface-soft)]">
-          <td class="py-2 px-3 font-bold whitespace-nowrap">{{ dim.label }}<div class="text-[10px] font-normal tabular text-[var(--text-muted)]">{{ dim.key }}</div></td>
-          <td class="py-2 px-3">{% for e in dim.enum %}<span class="inline-block mr-1 mb-1 px-1.5 py-0.5 rounded bg-[var(--surface-soft)] text-[var(--text-muted)]">{{ e.value }}</span>{% endfor %}</td>
-          <td class="py-2 px-3 text-[var(--text-muted)]">{{ dim.note }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
+  </section>
+  <section class="indicator-explanations" aria-label="数据说明">
+    <div class="indicator-section-heading"><h2>数据说明</h2><span class="indicator-muted">需要核对时展开</span></div>
+    <details id="indicator-checks" class="indicator-group">
+      <summary>跨来源校验 <span class="indicator-muted">{{ checks | selectattr('state', 'equalto', 'ok') | list | length }} 项一致 · {{ checks | selectattr('state', 'equalto', 'stale') | list | length }} 项差异 · {{ checks | selectattr('state', 'equalto', 'no_data') | list | length }} 项无法比较</span></summary>
+      <div class="indicator-panel-body">
+        <p class="indicator-muted">用于核对同一事实的不同来源；差异需结合口径判断，不等同于数据错误。</p>
+        {% for c in checks %}<article class="indicator-check"><b>{{ c.label }}</b> <span class="{{ 'indicator-warning' if c.state == 'stale' else 'indicator-muted' }}">{{ '一致' if c.state == 'ok' else '超出容差' if c.state == 'stale' else '无法比较' }}</span>
+          <p>{{ c.summary }}</p>{% if c.note %}<p class="indicator-muted">{{ c.note }}</p>{% endif %}
+          {% if c.points %}<div class="indicator-table-scroll"><table class="indicator-table"><thead><tr><th>时点</th><th>{{ c.a_name }}</th><th>{{ c.b_name }}</th><th>相对差</th></tr></thead><tbody>{% for p in c.points %}<tr><td>{{ p.as_of }}</td><td>{{ p.a | num }}</td><td>{{ p.b | num }}</td><td>{{ '%.1f%%' % p.rel if p.rel is not none else '—' }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+          <a href="/sn/indicators/{{ c.a }}">{{ c.a }}</a> · <a href="/sn/indicators/{{ c.b }}">{{ c.b }}</a>
+        </article>{% else %}<p>暂无可校验数据。</p>{% endfor %}
+      </div>
+    </details>
+    <details id="indicator-sources" class="indicator-group"><summary>数据源台账 <span class="indicator-muted">接入方式与覆盖范围</span></summary>
+      <div class="indicator-table-scroll"><table class="indicator-table"><thead><tr><th>数据源</th><th>层级</th><th>覆盖范围</th><th>访问方式</th><th>状态</th></tr></thead><tbody>
+        {% for s in sources.rows %}<tr><td>{{ s.name }}</td><td>{{ s.level }}</td><td>{{ s.scope }}</td><td>{{ s.access }}</td><td>{{ s.status }}</td></tr>{% endfor %}
+      </tbody></table></div>
+    </details>
+    <details id="indicator-dictionary" class="indicator-group"><summary>口径字典 <span class="indicator-muted">{{ dimensions | length }} 个维度</span></summary>
+      <div class="indicator-table-scroll"><table class="indicator-table"><thead><tr><th>维度</th><th>可选口径</th><th>为什么区分</th></tr></thead><tbody>
+        {% for dim in dimensions %}<tr><td>{{ dim.label }}</td><td>{{ dim.enum | map(attribute='value') | join(' · ') }}</td><td>{{ dim.note }}</td></tr>{% endfor %}
+      </tbody></table></div>
+    </details>
+  </section>
+</div>
+<dialog id="indicator-compare-dialog" class="indicator-compare-dialog" aria-labelledby="indicator-compare-title">
+  <header class="indicator-section-heading"><h2 id="indicator-compare-title">走势对比</h2><button id="indicator-compare-close" class="indicator-button" type="button">关闭</button></header>
+  <p class="indicator-muted">共同起点 = 100，观察相对变化，不比较绝对值。仅对齐共同观测日，不填补空缺；最多读取各指标最近 2000 个观测。</p>
+  <div id="indicator-compare-result" aria-live="polite"></div>
+</dialog>
 {% endblock %}
