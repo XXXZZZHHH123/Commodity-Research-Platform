@@ -6,7 +6,7 @@
 {% endblock %}
 {% block main %}
 <div id="indicator-workspace" data-date="{{ d or '' }}" class="indicator-workspace">
-  <header class="indicator-page-heading">
+  <header id="indicator-top" class="indicator-page-heading">
     <div><div class="indicator-eyebrow">INDICATORS &amp; WATCHLIST</div><h1>指标</h1>
       <p class="indicator-muted">宏观与产业指标，一处查找。将关心的指标加入自选，先看走势，再查口径。</p></div>
     <a href="#indicator-catalog" class="indicator-button">浏览 {{ rows | length }} 项指标 ↓</a>
@@ -21,31 +21,43 @@
   </section>
   <section id="indicator-catalog" aria-labelledby="indicator-catalog-title">
     <div class="indicator-section-heading"><h2 id="indicator-catalog-title">指标清单</h2><span class="indicator-muted">勾选 2–4 项可比较走势 · 逐合约行情未列入</span></div>
-    <div class="indicator-toolbar">
-      <label class="indicator-search">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16.5 20 20.5"/></svg>
-        <span class="sr-only">查找指标</span>
-        <input id="indicator-search" type="search" placeholder="搜索名称、代码、来源或口径" autocomplete="off">
-        <button id="indicator-search-clear-input" type="button" class="indicator-search-clear" hidden aria-label="清除搜索">×</button>
-      </label>
-      <div class="indicator-scope" role="tablist" aria-label="指标范围">
-        <button type="button" data-scope="all" aria-pressed="true">全部</button>
-        <button type="button" data-scope="macro" aria-pressed="false">宏观</button>
-        <button type="button" data-scope="industry" aria-pressed="false">产业</button>
-        <button type="button" data-scope="favorites" aria-pressed="false">自选 <span id="indicator-scope-favorite-count">0</span></button>
+    <div class="indicator-sticky-stack">
+      <div class="indicator-toolbar">
+        <label class="indicator-search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16.5 20 20.5"/></svg>
+          <span class="sr-only">查找指标</span>
+          <input id="indicator-search" type="search" placeholder="搜索名称、代码、来源或口径" autocomplete="off">
+          <button id="indicator-search-clear-input" type="button" class="indicator-search-clear" hidden aria-label="清除搜索">×</button>
+        </label>
+        <div class="indicator-scope" role="tablist" aria-label="指标范围">
+          <button type="button" data-scope="all" aria-pressed="true">全部</button>
+          <button type="button" data-scope="macro" aria-pressed="false">宏观</button>
+          <button type="button" data-scope="industry" aria-pressed="false">产业</button>
+          <button type="button" data-scope="favorites" aria-pressed="false">自选 <span id="indicator-scope-favorite-count">0</span></button>
+        </div>
+        <span id="indicator-result-count" class="indicator-muted" role="status">{{ rows | length }} 项</span>
+        <button id="indicator-expand" type="button" class="indicator-text-button">展开</button>
+        <button id="indicator-collapse" type="button" class="indicator-text-button">收起</button>
       </div>
-      <span id="indicator-result-count" class="indicator-muted" role="status">{{ rows | length }} 项</span>
-      <button id="indicator-expand" type="button" class="indicator-text-button">展开</button>
-      <button id="indicator-collapse" type="button" class="indicator-text-button">收起</button>
-    </div>
-    <div id="indicator-compare-bar" class="indicator-compare-bar" hidden>
-      <span id="indicator-selection" aria-live="polite"></span>
-      <button id="indicator-compare-open" type="button" class="indicator-button indicator-primary" disabled>比较走势</button>
-      <button id="indicator-selection-clear" type="button" class="indicator-button">清空选择</button>
+      <nav class="macro-filter-bar indicator-jump" aria-label="指标分类">
+        <div class="macro-filter-inner bg-[var(--surface)]/95 backdrop-blur-md">
+          <div class="macro-filter-scroll">
+            <a href="#indicator-top" data-indicator-jump data-target="indicator-top" class="macro-filter-link active" aria-current="true">全部 <span data-jump-total>{{ rows | length }}</span></a>
+            {% for group in groups %}
+            <a href="#indicator-group-{{ loop.index }}" data-indicator-jump data-target="indicator-group-{{ loop.index }}" class="macro-filter-link">{{ group.name }} <span data-jump-count>{{ group.rows | length }}</span></a>
+            {% endfor %}
+          </div>
+        </div>
+      </nav>
+      <div id="indicator-compare-bar" class="indicator-compare-bar" hidden>
+        <span id="indicator-selection" aria-live="polite"></span>
+        <button id="indicator-compare-open" type="button" class="indicator-button indicator-primary" disabled>比较走势</button>
+        <button id="indicator-selection-clear" type="button" class="indicator-button">清空选择</button>
+      </div>
     </div>
     <div id="indicator-no-results" class="indicator-empty" hidden>没有匹配的指标。<button id="indicator-search-clear" type="button" class="indicator-button">清除筛选</button></div>
     {% for group in groups %}
-    <details class="indicator-group" data-indicator-group data-category="{{ group.name }}" open>
+    <details id="indicator-group-{{ loop.index }}" class="indicator-group indicator-anchor" data-indicator-group data-category="{{ group.name }}" open>
       <summary>{{ group.name }} <span data-group-count class="indicator-muted">{{ group.rows | length }}</span></summary>
       <div class="indicator-table-scroll"><table class="indicator-table">
         <thead><tr><th class="indicator-action-cell">对比</th><th>指标 / 代码</th><th>单位</th><th>来源</th><th>频率 / 采集</th><th>查看</th></tr></thead>

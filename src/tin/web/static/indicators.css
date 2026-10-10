@@ -21,7 +21,12 @@
 .indicator-favorite { display: flex; flex-direction: column; min-width: 0; }
 .indicator-favorite .macro-trend-card { flex: 1; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 .indicator-card-actions { display: flex; align-items: center; gap: 9px; justify-content: space-between; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 8px 8px; padding: 8px 11px; background: var(--surface-soft); font-size: 10px; }
-.indicator-toolbar { position: sticky; top: 3.5rem; z-index: 25; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; padding: 8px 0; background: var(--bg); }
+.indicator-sticky-stack { position: sticky; top: 3.5rem; z-index: 25; background: var(--bg); padding-bottom: 8px; }
+.indicator-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; background: var(--bg); }
+.indicator-sticky-stack .indicator-jump.macro-filter-bar { position: static; top: auto; height: auto; margin-top: 2px; }
+.indicator-sticky-stack .indicator-compare-bar { position: static; top: auto; margin: 8px 0 0; }
+.indicator-anchor { scroll-margin-top: var(--indicator-sticky-offset, 10.5rem); }
+#indicator-top { scroll-margin-top: 4.25rem; }
 .indicator-search { flex: 1; min-width: 240px; height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
 .indicator-search:focus-within { outline: 2px solid var(--primary); outline-offset: 1px; }
 .indicator-search svg { width: 15px; height: 15px; flex: 0 0 auto; fill: none; stroke: var(--text-muted); stroke-width: 2; }
@@ -58,7 +63,7 @@ tbody tr:has(.indicator-bookmark[aria-pressed="true"]) { box-shadow: inset 3px 0
 .indicator-code { font-size: 10px; color: var(--text-muted); margin-top: 3px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .indicator-row-links { white-space: nowrap; }
 .indicator-row-links > * + * { margin-left: 10px; }
-.indicator-compare-bar { position: sticky; top: 6.75rem; z-index: 24; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--primary-soft); border: 1px solid var(--primary); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+.indicator-compare-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--primary-soft); border: 1px solid var(--primary); border-radius: 8px; padding: 10px 12px; }
 #indicator-selection { flex: 1; min-width: 180px; }
 .indicator-panel-body { padding: 15px; }
 .indicator-check { padding: 16px 0; border-bottom: 1px solid var(--line); }

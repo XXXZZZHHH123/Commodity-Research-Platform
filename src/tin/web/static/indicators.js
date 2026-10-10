@@ -61,6 +61,7 @@ document.addEventListener("DOMContentLoaded", () => {
     else url.searchParams.delete("scope");
     history.replaceState(null, "", url);
     syncScope();
+    syncJumpLinks();
     // 日期表单通过原生 submit 提交，同步隐藏字段以保留搜索范围。
     document.querySelectorAll(".date-switcher").forEach((form) => {
       ["q", "scope"].forEach((key) => {
@@ -114,6 +115,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (controller !== previewController) return;
       get("favorites").innerHTML = data.html;
       syncFavorites();
+      if (performance.now() - jumpAt < 2000) scrollToJumpTarget();
     } catch (error) {
       if (controller !== previewController || error.name === "AbortError") return;
       get("favorites").replaceChildren();
@@ -124,7 +126,114 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  let jumpCurrent = "indicator-top";
+  let jumpLock = null;
+  let revealJumpChip = false;
+  let jumpAt = 0;
+  function scrollToJumpTarget() {
+    const id = jumpLock || (location.hash || "").slice(1);
+    const target = document.getElementById(id);
+    if (!target) return;
+    const margin = id === "indicator-top" ? 68 : stickyOffset();
+    const top = Math.max(0, target.getBoundingClientRect().top + window.scrollY - margin);
+    const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+    window.scrollTo({ top, behavior });
+  }
+  function stickyOffset() {
+    const stack = root.querySelector(".indicator-sticky-stack");
+    if (!stack) return 120;
+    const top = parseFloat(getComputedStyle(stack).top) || 0;
+    const offset = top + stack.offsetHeight + 8;
+    root.style.setProperty("--indicator-sticky-offset", `${offset}px`);
+    return offset;
+  }
+  function setJumpActive(targetId) {
+    root.querySelectorAll("[data-indicator-jump]").forEach((link) => {
+      const active = link.dataset.target === targetId;
+      link.classList.toggle("active", active);
+      if (active) link.setAttribute("aria-current", "true");
+      else link.removeAttribute("aria-current");
+    });
+    const changed = targetId !== jumpCurrent;
+    jumpCurrent = targetId;
+    if (jumpLock || (!changed && !revealJumpChip)) return;
+    revealJumpChip = false;
+    const active = root.querySelector(`[data-indicator-jump][data-target="${CSS.escape(targetId)}"]`);
+    const scroller = active?.closest(".macro-filter-scroll");
+    if (!active || !scroller) return;
+    const delta = active.getBoundingClientRect().left - scroller.getBoundingClientRect().left;
+    if (delta < 8) scroller.scrollLeft += delta - 8;
+    else if (delta + active.offsetWidth > scroller.clientWidth - 8) {
+      scroller.scrollLeft += delta + active.offsetWidth - scroller.clientWidth + 8;
+    }
+  }
+  function updateJumpFromScroll() {
+    const line = stickyOffset();
+    const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2;
+    if (jumpLock) {
+      const target = document.getElementById(jumpLock);
+      const arrived = jumpLock === "indicator-top"
+        ? window.scrollY <= line
+        : !target || target.getBoundingClientRect().top <= line + 12 || (atBottom && target === groups.filter((group) => !group.hidden).at(-1));
+      if (!arrived) { setJumpActive(jumpLock); return; }
+      jumpLock = null;
+      revealJumpChip = true;
+    }
+    let current = "indicator-top";
+    const visible = groups.filter((group) => !group.hidden);
+    visible.forEach((group) => {
+      if (group.getBoundingClientRect().top <= line + 12) current = group.id;
+    });
+    if (atBottom && visible.length) current = visible[visible.length - 1].id;
+    setJumpActive(current);
+  }
+  function syncJumpLinks() {
+    let visible = 0;
+    root.querySelectorAll("[data-indicator-jump]").forEach((link) => {
+      if (link.dataset.target === "indicator-top") return;
+      const group = document.getElementById(link.dataset.target);
+      const count = group?.querySelector("[data-group-count]")?.textContent || "0";
+      const slot = link.querySelector("[data-jump-count]");
+      if (slot) slot.textContent = count;
+      link.hidden = !group || group.hidden;
+      if (!link.hidden) visible += Number(count) || 0;
+    });
+    const total = root.querySelector("[data-jump-total]");
+    if (total) total.textContent = String(visible);
+    updateJumpFromScroll();
+  }
+  let jumpScheduled = false;
+  window.addEventListener("scroll", () => {
+    if (jumpScheduled) return;
+    jumpScheduled = true;
+    requestAnimationFrame(() => { jumpScheduled = false; updateJumpFromScroll(); });
+  }, { passive: true });
+  window.addEventListener("resize", updateJumpFromScroll);
+  window.addEventListener("popstate", () => {
+    const id = (location.hash || "#indicator-top").slice(1);
+    if (!document.getElementById(id)) return;
+    const target = document.getElementById(id);
+    if (target.tagName === "DETAILS") target.open = true;
+    jumpLock = id;
+    jumpAt = performance.now();
+    setJumpActive(id);
+    scrollToJumpTarget();
+  });
+
   root.addEventListener("click", (event) => {
+    const jump = event.target.closest("[data-indicator-jump]");
+    if (jump) {
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+      event.preventDefault();
+      const target = document.getElementById(jump.dataset.target);
+      if (target?.tagName === "DETAILS") target.open = true;
+      jumpLock = jump.dataset.target;
+      jumpAt = performance.now();
+      setJumpActive(jump.dataset.target);
+      history.pushState(null, "", `#${jump.dataset.target}`);
+      scrollToJumpTarget();
+      return;
+    }
     const scopeButton = event.target.closest("[data-scope]");
     if (scopeButton) { scope = scopeButton.dataset.scope; filterRows(); return; }
     const copy = event.target.closest("[data-copy-series]");
@@ -148,6 +257,7 @@ document.addEventListener("DOMContentLoaded", () => {
     get("selection").textContent = `已选 ${selected.size}/4：${[...selected].map((sid) => names.get(sid)).join("、")}`;
     get("compare-open").disabled = selected.size < 2;
     root.querySelectorAll("[data-compare]").forEach((box) => { box.checked = selected.has(box.dataset.compare); });
+    updateJumpFromScroll();
   }
   root.addEventListener("change", (event) => {
     const box = event.target.closest("[data-compare]");
@@ -210,4 +320,12 @@ document.addEventListener("DOMContentLoaded", () => {
   get("search-clear-input").addEventListener("click", () => { get("search").value = ""; filterRows(); get("search").focus(); });
   filterRows();
   loadFavorites();
+  const initialJump = (location.hash || "").slice(1);
+  if (initialJump && root.querySelector(`[data-indicator-jump][data-target="${CSS.escape(initialJump)}"]`)) {
+    const target = document.getElementById(initialJump);
+    if (target?.tagName === "DETAILS") target.open = true;
+    jumpLock = initialJump;
+    jumpAt = performance.now();
+    scrollToJumpTarget();
+  }
 });

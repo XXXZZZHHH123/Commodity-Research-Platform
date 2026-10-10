@@ -191,6 +191,17 @@ def test_catalog_keeps_a_registered_category_and_shares_order_with_the_diagram(c
     assert {g["name"] for g in groups if g.get("bind_only")} == {"交易日历", "派生指标", "研判"}
 
 
+def test_category_jump_bar_lists_groups_in_page_order(client):
+    html = fromstring(client.get("/sn/indicators").text)
+    links = html.xpath('//nav[@aria-label="指标分类"]//a[@data-indicator-jump]')
+    groups = html.xpath("//details[@data-indicator-group]")
+    assert links[0].get("href") == "#indicator-top"
+    assert links[0].get("data-target") == "indicator-top"
+    assert "全部" in links[0].text_content()
+    assert [link.get("href") for link in links[1:]] == [f"#{group.get('id')}" for group in groups]
+    assert [link.text_content().split()[0] for link in links[1:]] == [group.get("data-category") for group in groups]
+
+
 def test_watchlist_and_search_use_the_revised_controls(client):
     html = fromstring(client.get("/sn/indicators").text)
     assert not html.xpath('//th[contains(., "自选")]')
