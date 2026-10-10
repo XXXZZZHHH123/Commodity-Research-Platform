@@ -21,11 +21,27 @@
 .indicator-favorite { display: flex; flex-direction: column; min-width: 0; }
 .indicator-favorite .macro-trend-card { flex: 1; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 .indicator-card-actions { display: flex; align-items: center; gap: 9px; justify-content: space-between; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 8px 8px; padding: 8px 11px; background: var(--surface-soft); font-size: 10px; }
-.indicator-card-actions button, [data-favorite][aria-pressed="true"] { color: var(--primary); }
-.indicator-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); margin-bottom: 12px; }
-.indicator-search-wrap { flex: 1; min-width: 240px; }
-#indicator-search { width: 100%; padding: 9px 12px; border-radius: 6px; }
-#indicator-scope { padding: 9px; border-radius: 6px; }
+.indicator-toolbar { position: sticky; top: 3.5rem; z-index: 25; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; padding: 8px 0; background: var(--bg); }
+.indicator-search { flex: 1; min-width: 240px; height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.indicator-search:focus-within { outline: 2px solid var(--primary); outline-offset: 1px; }
+.indicator-search svg { width: 15px; height: 15px; flex: 0 0 auto; fill: none; stroke: var(--text-muted); stroke-width: 2; }
+.indicator-search input { flex: 1; min-width: 0; border: 0 !important; outline: 0 !important; background: transparent !important; padding: 0; box-shadow: none; }
+.indicator-search input::-webkit-search-cancel-button { appearance: none; }
+.indicator-search-clear { width: 22px; height: 22px; border: 0; border-radius: 6px; background: var(--surface-soft); color: var(--text-muted); cursor: pointer; line-height: 1; }
+.indicator-scope { display: flex; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
+.indicator-scope button { border: 0; background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 650; padding: 6px 12px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+.indicator-scope button[aria-pressed="true"] { background: var(--primary); color: #fff; }
+.indicator-text-button { border: 0; background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 650; padding: 6px 4px; cursor: pointer; }
+.indicator-text-button:hover { color: var(--text); }
+.indicator-name-line { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
+.indicator-bookmark { width: 28px; height: 28px; flex: 0 0 auto; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--text-muted); opacity: .45; cursor: pointer; }
+.indicator-bookmark svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+tbody tr:hover .indicator-bookmark:not([aria-pressed="true"]),
+.indicator-bookmark:focus-visible:not([aria-pressed="true"]) { opacity: 1; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.indicator-bookmark[aria-pressed="true"] { opacity: 1; color: var(--primary); }
+.indicator-bookmark[aria-pressed="true"] svg { fill: currentColor; stroke: none; }
+tbody tr:has(.indicator-bookmark[aria-pressed="true"]) { box-shadow: inset 3px 0 0 var(--primary); }
+.indicator-card-actions .indicator-bookmark { display: inline-flex; align-items: center; width: auto; height: auto; gap: 4px; opacity: 1; padding: 0; background: transparent; box-shadow: none; font-size: 12px; font-weight: 700; }
 #indicator-catalog { scroll-margin-top: 75px; }
 .indicator-group { margin: 10px 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); overflow: hidden; }
 .indicator-group > summary { padding: 13px 15px; font-weight: 700; font-size: 13px; cursor: pointer; background: var(--surface-soft); }
@@ -36,14 +52,13 @@
 .indicator-table th, .indicator-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .indicator-table tr:last-child td { border-bottom: 0; }
 .indicator-table tbody tr:hover { background: var(--surface-soft); }
-.indicator-table td:nth-child(3) { min-width: 210px; }
+.indicator-table td:nth-child(2) { min-width: 210px; }
 .indicator-action-cell { width: 48px; text-align: center; }
-.indicator-action-cell button { font-size: 22px; min-width: 30px; min-height: 30px; }
 .indicator-action-cell input { accent-color: var(--primary); width: 16px; height: 16px; cursor: pointer; }
 .indicator-code { font-size: 10px; color: var(--text-muted); margin-top: 3px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .indicator-row-links { white-space: nowrap; }
 .indicator-row-links > * + * { margin-left: 10px; }
-.indicator-compare-bar { position: sticky; top: 64px; z-index: 20; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--primary-soft); border: 1px solid var(--primary); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+.indicator-compare-bar { position: sticky; top: 6.75rem; z-index: 24; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--primary-soft); border: 1px solid var(--primary); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
 #indicator-selection { flex: 1; min-width: 180px; }
 .indicator-panel-body { padding: 15px; }
 .indicator-check { padding: 16px 0; border-bottom: 1px solid var(--line); }
@@ -59,7 +74,7 @@
 @media (max-width: 1000px) { .indicator-favorites { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 600px) {
   .indicator-favorites { grid-template-columns: 1fr; }
-  .indicator-search-wrap { min-width: 100%; }
+  .indicator-search { min-width: 100%; }
   .indicator-table { min-width: 660px; }
   .indicator-compare-dialog { padding: 15px; }
 }

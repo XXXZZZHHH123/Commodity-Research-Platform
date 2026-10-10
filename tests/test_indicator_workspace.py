@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 from lxml.html import fromstring
 
 from tin.config import SHANGHAI
+from tin.export.excel import field_catalog
+from tin.export.indicators import CATEGORY_ORDER, catalog
 from tin.ingest.fred import SERIES_BY_ID, parse_series
 from tin.ingest.record import record
 from tin.ingest.runner import store
@@ -156,6 +158,47 @@ def test_generic_percentage_uses_percentage_points_not_interest_rate_basis_point
     assert "精锡产量 &lt;测试&gt;" in preview["html"]
     data = client.get("/api/sn/series/TEST.OUTPUT/history").json()
     assert data["change_unit"] == "百分点"
+
+
+def test_catalog_keeps_a_registered_category_and_shares_order_with_the_diagram(client, loaded):
+    loaded.get(Indicator, "MACRO.VIX").category = "其他"
+    loaded.commit()
+    rows = {r["series_id"]: r for r in catalog(loaded)}
+    assert rows["MACRO.VIX"]["category"] == "其他"
+    assert rows["MACRO.VIX"]["macro"] is False
+    loaded.get(Indicator, "MACRO.VIX").category = "风险偏好"
+    loaded.commit()
+    html = fromstring(client.get("/sn/indicators").text)
+    names = html.xpath("//details[@data-indicator-group]/@data-category")
+    ranked = [name for name in CATEGORY_ORDER if name in names]
+    assert names[:len(ranked)] == ranked
+    assert "宏观" not in names
+    placed = {
+        row.get("data-series-id"): row.getparent().getparent().getparent().getparent().get("data-category")
+        for row in html.xpath("//tr[@data-indicator-row]")
+    }
+    assert placed["FX.USDCNY.mid"] == "美元与流动性"
+    assert placed["MACRO.VIX"] == "风险偏好"
+    assert placed["MACRO.SOX"] == "风险偏好"
+    assert placed["MACRO.SPX"] == "风险偏好"
+    assert placed["MACRO.FEDPROB"] == "利率与通胀"
+    assert html.xpath('//tr[@data-series-id="MACRO.FEDPROB"]/@data-macro') == ["true"]
+    groups = field_catalog(loaded, "SN")
+    pool = [g["name"] for g in groups]
+    assert pool[0] == "交易日历" and pool[-2:] == ["派生指标", "研判"]
+    indicator_names = pool[1:-2]
+    assert indicator_names == [name for name in names if name in indicator_names]
+    assert {g["name"] for g in groups if g.get("bind_only")} == {"交易日历", "派生指标", "研判"}
+
+
+def test_watchlist_and_search_use_the_revised_controls(client):
+    html = fromstring(client.get("/sn/indicators").text)
+    assert not html.xpath('//th[contains(., "自选")]')
+    button = html.xpath('//tr[@data-series-id="MACRO.VIX"]//button[@data-favorite]')[0]
+    assert button.xpath(".//svg") and "☆" not in button.text_content() and "★" not in button.text_content()
+    assert html.xpath('//*[@data-scope="macro"]') and not html.xpath('//select[@id="indicator-scope"]')
+    assert html.xpath('//*[@id="indicator-search-clear-input"]')
+    assert html.xpath('//label[contains(@class, "indicator-search")]')
 
 
 def test_browsing_missing_macro_series_does_not_register_it(client, loaded):

@@ -16,19 +16,27 @@
       <span class="indicator-muted">保存在当前浏览器 · 最多 40 项</span></div>
     <p id="indicator-storage-note" class="indicator-warning" role="status" hidden></p>
     <div id="indicator-favorites" class="indicator-favorites" aria-live="polite"></div>
-    <div id="indicator-favorites-empty" class="indicator-empty">还没有自选指标。点击下方清单中的 ☆，这里就会显示最新值和走势小图。</div>
+    <div id="indicator-favorites-empty" class="indicator-empty">还没有自选指标。点击指标名旁边的书签，这里就会显示最新值和走势小图。</div>
     <div id="indicator-favorites-error" class="indicator-warning" role="alert" hidden><span></span> <button type="button" id="indicator-favorites-retry" class="indicator-button">重试</button></div>
   </section>
   <section id="indicator-catalog" aria-labelledby="indicator-catalog-title">
     <div class="indicator-section-heading"><h2 id="indicator-catalog-title">指标清单</h2><span class="indicator-muted">勾选 2–4 项可比较走势 · 逐合约行情未列入</span></div>
     <div class="indicator-toolbar">
-      <div class="indicator-search-wrap"><label class="sr-only" for="indicator-search">查找指标</label>
-        <input id="indicator-search" type="search" placeholder="搜索名称、代码、来源或类别" autocomplete="off"></div>
-      <label class="sr-only" for="indicator-scope">指标范围</label>
-      <select id="indicator-scope"><option value="all">全部指标</option><option value="macro">宏观指标</option><option value="industry">产业指标</option><option value="favorites">我的自选</option></select>
-      <button id="indicator-expand" type="button" class="indicator-button">全部展开</button>
-      <button id="indicator-collapse" type="button" class="indicator-button">全部收起</button>
+      <label class="indicator-search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16.5 20 20.5"/></svg>
+        <span class="sr-only">查找指标</span>
+        <input id="indicator-search" type="search" placeholder="搜索名称、代码、来源或口径" autocomplete="off">
+        <button id="indicator-search-clear-input" type="button" class="indicator-search-clear" hidden aria-label="清除搜索">×</button>
+      </label>
+      <div class="indicator-scope" role="tablist" aria-label="指标范围">
+        <button type="button" data-scope="all" aria-pressed="true">全部</button>
+        <button type="button" data-scope="macro" aria-pressed="false">宏观</button>
+        <button type="button" data-scope="industry" aria-pressed="false">产业</button>
+        <button type="button" data-scope="favorites" aria-pressed="false">自选 <span id="indicator-scope-favorite-count">0</span></button>
+      </div>
       <span id="indicator-result-count" class="indicator-muted" role="status">{{ rows | length }} 项</span>
+      <button id="indicator-expand" type="button" class="indicator-text-button">展开</button>
+      <button id="indicator-collapse" type="button" class="indicator-text-button">收起</button>
     </div>
     <div id="indicator-compare-bar" class="indicator-compare-bar" hidden>
       <span id="indicator-selection" aria-live="polite"></span>
@@ -37,16 +45,16 @@
     </div>
     <div id="indicator-no-results" class="indicator-empty" hidden>没有匹配的指标。<button id="indicator-search-clear" type="button" class="indicator-button">清除筛选</button></div>
     {% for group in groups %}
-    <details class="indicator-group" data-indicator-group open>
+    <details class="indicator-group" data-indicator-group data-category="{{ group.name }}" open>
       <summary>{{ group.name }} <span data-group-count class="indicator-muted">{{ group.rows | length }}</span></summary>
       <div class="indicator-table-scroll"><table class="indicator-table">
-        <thead><tr><th class="indicator-action-cell">对比</th><th class="indicator-action-cell">自选</th><th>指标 / 代码</th><th>单位</th><th>来源</th><th>频率 / 采集</th><th>查看</th></tr></thead>
+        <thead><tr><th class="indicator-action-cell">对比</th><th>指标 / 代码</th><th>单位</th><th>来源</th><th>频率 / 采集</th><th>查看</th></tr></thead>
         <tbody>{% for r in group.rows %}
           <tr data-indicator-row data-series-id="{{ r.series_id }}" data-name="{{ r.name }}" data-macro="{{ 'true' if r.macro else 'false' }}"
               data-search="{{ r.name }} {{ r.series_id }} {{ r.vendor_code or '' }} {{ r.category }} {{ r.source }} {{ r.caliber.values() | map('string') | join(' ') }}">
             <td class="indicator-action-cell"><input type="checkbox" data-compare="{{ r.series_id }}" aria-label="对比 {{ r.name }}"></td>
-            <td class="indicator-action-cell"><button type="button" data-favorite="{{ r.series_id }}" aria-pressed="false" aria-label="自选 {{ r.name }}">☆</button></td>
-            <td><b>{% if r.registered %}<a href="/sn/indicators/{{ r.series_id }}">{{ r.name }}</a>{% else %}{{ r.name }}{% endif %}</b>{% if r.is_proxy %} <span class="indicator-warning">代理</span>{% endif %}{% if r.status == '停用' %} <span class="indicator-warning">已停用</span>{% endif %}
+            <td><div class="indicator-name-line"><b>{% if r.registered %}<a href="/sn/indicators/{{ r.series_id }}">{{ r.name }}</a>{% else %}{{ r.name }}{% endif %}</b>{% if r.is_proxy %} <span class="indicator-warning">代理</span>{% endif %}{% if r.status == '停用' %} <span class="indicator-warning">已停用</span>{% endif %}
+              <button type="button" class="indicator-bookmark" data-favorite="{{ r.series_id }}" aria-pressed="false" aria-label="加入自选 {{ r.name }}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5h10a1 1 0 0 1 1 1V20l-6-3.2L6 20V5.5a1 1 0 0 1 1-1z"/></svg></button></div>
               <div class="indicator-code">{{ r.series_id }} <button type="button" data-copy-series="{{ r.series_id }}" aria-label="复制 {{ r.series_id }}" title="复制代码">⧉</button>{% if r.vendor_code %} · {{ r.vendor_code }}{% endif %}</div></td>
             <td>{{ r.unit }}</td><td>{{ r.source }}</td><td>{{ r.frequency }} · {{ '自动' if r.fetch_mode == 'auto' else '人工' }}</td>
             <td class="indicator-row-links"><button type="button" data-series-chart="{{ r.series_id }}" data-chart-date="{{ d or '' }}" aria-haspopup="dialog">走势</button>

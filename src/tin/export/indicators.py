@@ -10,6 +10,22 @@ from tin.export.board import PER_CONTRACT, _chart_points, _series_history, expec
 from tin.ingest.fred import FRED_SERIES, SERIES_BY_ID
 from tin.models import Indicator
 
+# 指标页和产业图绑定抽屉共用这一份顺序。前半按产业链从矿到需求阅读，
+# 后半是宏观。画布上的供给端、冶炼与锭、四大板块是布局，不在这里。
+CATEGORY_ORDER = (
+    "矿端", "价格", "库存与流通", "供需平衡", "需求", "情绪", "其他",
+    "利率与通胀", "美元与流动性", "风险偏好", "商品与周期", "增长与就业",
+)
+MACRO_GROUPS = frozenset(CATEGORY_ORDER[CATEGORY_ORDER.index("利率与通胀"):])
+
+
+def category_rank(name: str) -> tuple[int, str]:
+    """已知分类按约定顺序，名单外的排在后面并按名称稳定排序。"""
+    try:
+        return (CATEGORY_ORDER.index(name), "")
+    except ValueError:
+        return (len(CATEGORY_ORDER), name)
+
 
 def catalog(session: Session) -> list[dict]:
     rows = {}
@@ -20,7 +36,6 @@ def catalog(session: Session) -> list[dict]:
             "series_id", "name", "category", "caliber", "unit", "source", "frequency",
             "fetch_mode", "status", "vendor_code", "is_proxy", "note")}
         rows[ind.series_id]["registered"] = True
-        rows[ind.series_id]["macro"] = False
     # 尚未采集的宏观序列也能被找到和自选，读页面不隐式登记或采集数据。
     for spec in FRED_SERIES:
         row = rows.setdefault(spec.series_id, {
@@ -28,9 +43,14 @@ def catalog(session: Session) -> list[dict]:
             "vendor_code": spec.fred_id, "is_proxy": False, "note": "",
             "fetch_mode": "auto", "registered": False,
         })
-        row.update(name=spec.name, category=spec.group, unit=spec.display_unit or spec.unit,
-                   source=spec.provider, frequency=spec.frequency, macro=True)
-    return sorted(rows.values(), key=lambda r: (r["macro"], r["category"], r["series_id"]))
+        # 已登记的分类以库里的为准。未采集的宏观序列没有登记行，才用规格里的分组。
+        if not row["registered"]:
+            row["category"] = spec.group
+        row.update(name=spec.name, unit=spec.display_unit or spec.unit,
+                   source=spec.provider, frequency=spec.frequency)
+    for row in rows.values():
+        row["macro"] = row["category"] in MACRO_GROUPS
+    return sorted(rows.values(), key=lambda r: (*category_rank(r["category"]), r["series_id"]))
 
 
 def history(session: Session, series_id: str, through: date, limit: int = 900) -> dict | None:

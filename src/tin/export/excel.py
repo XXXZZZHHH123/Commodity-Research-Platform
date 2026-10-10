@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from tin.compute.formulas import REGISTRY
 from tin.config import SHANGHAI
+from tin.export.indicators import category_rank
 from tin.models import Derived, Indicator, Judgment, Observation, TradingDay
 
 HEADER_FILL = PatternFill("solid", fgColor="F4F6F5")
@@ -50,28 +51,33 @@ class Column:
 # ---------- 可选字段目录 ----------
 
 def field_catalog(session: Session, variety: str) -> list[dict]:
-    """按指标登记表动态生成，避免硬编码目录与指标表脱节。"""
-    groups: dict[str, list[dict]] = {"交易日历": [
-        {"field": "trade_date", "label": "交易日", "kind": "meta", "unit": "", "note": "每行一个交易日"}]}
+    """按指标登记表动态生成，避免硬编码目录与指标表脱节。
 
+    指标分类的顺序与指标页相同。交易日历、派生指标、研判只能绑到图上，不是指标分类。
+    """
+    buckets: dict[str, list[dict]] = {}
     per_contract = re.compile(r"^SHFE\.[A-Z]+\.\d{4}\.")
     for ind in session.scalars(select(Indicator)
                                .where(Indicator.status == "可用", Indicator.variety.in_([variety, "COMMON"]))
                                .order_by(Indicator.category, Indicator.series_id)):
         if per_contract.match(ind.series_id):
             continue  # 逐合约行情按月换约，不适合放进长时序宽表
-        groups.setdefault(ind.category, []).append({
+        buckets.setdefault(ind.category, []).append({
             "field": ind.series_id, "label": ind.name, "kind": "observation", "unit": ind.unit,
             "note": f"{ind.source} · {ind.frequency}频 · {'人工' if ind.fetch_mode == 'manual' else '自动'}"})
 
-    groups["派生指标"] = [{"field": spec.formula_id, "label": spec.name, "kind": "derived",
-                       "unit": spec.unit, "note": spec.expression} for spec in REGISTRY.values()]
-    groups["研判"] = [
+    groups = [{"name": "交易日历", "bind_only": True, "fields": [
+        {"field": "trade_date", "label": "交易日", "kind": "meta", "unit": "", "note": "每行一个交易日"}]}]
+    groups += [{"name": name, "fields": buckets[name]} for name in sorted(buckets, key=category_rank)]
+    groups.append({"name": "派生指标", "bind_only": True, "fields": [
+        {"field": spec.formula_id, "label": spec.name, "kind": "derived",
+         "unit": spec.unit, "note": spec.expression} for spec in REGISTRY.values()]})
+    groups.append({"name": "研判", "bind_only": True, "fields": [
         {"field": "judgment_tone", "label": "当日基调（含版本与过期）", "kind": "judgment", "unit": "",
          "note": "取该交易日当时生效的判断版本，并附过期天数"},
         {"field": "judgment_version", "label": "判断版本号", "kind": "judgment", "unit": "", "note": ""},
-    ]
-    return [{"name": name, "fields": fields} for name, fields in groups.items() if fields]
+    ]})
+    return [group for group in groups if group["fields"]]
 
 
 # ---------- 取数 ----------

@@ -24,13 +24,21 @@ document.addEventListener("DOMContentLoaded", () => {
   } catch (_) {
     storageNotice("无法读取已保存的自选，请重新选择；若浏览器禁止存储，自选仅在本页有效。");
   }
+  let scope = "all";
   const params = new URLSearchParams(location.search);
   get("search").value = params.get("q") || "";
-  if (["macro", "industry", "favorites"].includes(params.get("scope"))) get("scope").value = params.get("scope");
+  if (["macro", "industry", "favorites"].includes(params.get("scope"))) scope = params.get("scope");
+
+  function syncScope() {
+    root.querySelectorAll("[data-scope]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.scope === scope));
+    });
+    get("scope-favorite-count").textContent = favorites.length;
+    get("search-clear-input").hidden = !get("search").value.trim();
+  }
 
   function filterRows() {
     const terms = normalize(get("search").value).trim().split(/\s+/).filter(Boolean);
-    const scope = get("scope").value;
     let count = 0;
     rows.forEach((row) => {
       const inScope = scope === "all" || (scope === "macro" && row.dataset.macro === "true") ||
@@ -52,6 +60,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (scope !== "all") url.searchParams.set("scope", scope);
     else url.searchParams.delete("scope");
     history.replaceState(null, "", url);
+    syncScope();
     // 日期表单通过原生 submit 提交，同步隐藏字段以保留搜索范围。
     document.querySelectorAll(".date-switcher").forEach((form) => {
       ["q", "scope"].forEach((key) => {
@@ -75,9 +84,9 @@ document.addEventListener("DOMContentLoaded", () => {
       const sid = button.dataset.favorite;
       const active = favorites.includes(sid);
       button.setAttribute("aria-pressed", String(active));
-      button.setAttribute("aria-label", `${active ? "取消自选" : "自选"} ${names.get(sid)}`);
-      if (button.closest("[data-indicator-row]")) button.textContent = active ? "★" : "☆";
+      button.setAttribute("aria-label", `${active ? "移出" : "加入自选"} ${names.get(sid)}`);
     });
+    get("scope-favorite-count").textContent = favorites.length;
     get("favorite-count").textContent = favorites.length;
     get("favorites-empty").hidden = favorites.length > 0;
   }
@@ -116,6 +125,8 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   root.addEventListener("click", (event) => {
+    const scopeButton = event.target.closest("[data-scope]");
+    if (scopeButton) { scope = scopeButton.dataset.scope; filterRows(); return; }
     const copy = event.target.closest("[data-copy-series]");
     if (copy) { copyText(copy.dataset.copySeries); return; }
     const button = event.target.closest("[data-favorite]");
@@ -123,7 +134,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const sid = button.dataset.favorite;
     if (favorites.includes(sid)) favorites = favorites.filter((s) => s !== sid);
     else {
-      if (favorites.length >= 40) { showToast("最多自选 40 项，请先取消部分指标"); return; }
+      if (favorites.length >= 40) { showToast("最多自选 40 项，请先移出一项"); return; }
       favorites.push(sid);
     }
     try { localStorage.setItem(storageKey, JSON.stringify(favorites)); }
@@ -193,10 +204,10 @@ document.addEventListener("DOMContentLoaded", () => {
   get("selection-clear").addEventListener("click", () => { selected.clear(); syncSelection(); });
   get("favorites-retry").addEventListener("click", loadFavorites);
   get("search").addEventListener("input", filterRows);
-  get("scope").addEventListener("change", filterRows);
   get("expand").addEventListener("click", () => groups.forEach((g) => { g.open = true; }));
   get("collapse").addEventListener("click", () => groups.forEach((g) => { g.open = false; }));
-  get("search-clear").addEventListener("click", () => { get("search").value = ""; get("scope").value = "all"; filterRows(); get("search").focus(); });
+  get("search-clear").addEventListener("click", () => { get("search").value = ""; scope = "all"; filterRows(); get("search").focus(); });
+  get("search-clear-input").addEventListener("click", () => { get("search").value = ""; filterRows(); get("search").focus(); });
   filterRows();
   loadFavorites();
 });
