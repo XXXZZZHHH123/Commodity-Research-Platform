@@ -22,4 +22,5 @@ raw/
 PRD/
 docs/
 .claude/
+.codex/
 .DS_Store

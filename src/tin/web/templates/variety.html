@@ -191,7 +191,7 @@
       <h2 class="text-sm font-bold">宏观镜头</h2>
       <span class="text-xs text-[var(--text-muted)]">流动性、风险偏好与半导体景气</span>
     </div>
-    <a href="/sn/macro?date={{ d }}" class="text-xs font-semibold text-[var(--primary)] hover:underline">宏观专页全部序列 &rarr;</a>
+    <a href="/sn/indicators?scope=macro&date={{ d }}" class="text-xs font-semibold text-[var(--primary)] hover:underline">查看宏观指标 &rarr;</a>
   </div>
   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
     {% for m in macro[:4] %}{{ trend(m, d) }}{% endfor %}
