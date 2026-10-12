@@ -1,0 +1,11 @@
+{% from "_card.html" import trend %}
+{% for m in cards %}
+<div class="indicator-favorite" data-favorite-card="{{ m.series_id }}">
+  {{ trend(m, d) }}
+  <div class="indicator-card-actions">
+    <span class="indicator-muted">{% if m.retired %}<b class="indicator-warning">已停用</b> · {% endif %}{% if m.stale %}<b class="indicator-warning">更新滞后</b> · {% endif %}{{ m.frequency }}频</span>
+    {% if m.registered %}<a href="/sn/indicators/{{ m.series_id }}">口径与来源</a>{% endif %}
+    <button type="button" class="indicator-bookmark" data-favorite="{{ m.series_id }}" aria-pressed="true" aria-label="移出 {{ m.name }}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5h10a1 1 0 0 1 1 1V20l-6-3.2L6 20V5.5a1 1 0 0 1 1-1z"/></svg>移出</button>
+  </div>
+</div>
+{% endfor %}

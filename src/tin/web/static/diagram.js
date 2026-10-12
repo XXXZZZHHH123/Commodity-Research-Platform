@@ -872,7 +872,7 @@ async function dgOpenPool(nodeId) {
   if (!dg.pool.length) {
     const res = await fetch("/api/sn/export/fields");
     const data = await res.json();
-    dg.pool = data.groups.flatMap((g) => g.fields.map((f) => ({ ...f, group: g.name })));
+    dg.pool = data.groups.flatMap((g) => g.fields.map((f) => ({ ...f, group: g.name, bindOnly: !!g.bind_only })));
   }
   dgRenderPool();
   toggleDrawer("dg-drawer", true);
@@ -961,6 +961,7 @@ function dgRenderPool() {
         class="w-full flex items-center gap-1.5 px-1 py-2 text-left hover:bg-[var(--surface-soft)]">
         <span class="text-[var(--text-muted)] w-3">${open ? "▾" : "▸"}</span>
         <span class="font-semibold flex-1 truncate">${dgEsc(name)}</span>
+        ${fields.some((f) => f.bindOnly) ? `<span class="text-[10px] text-[var(--text-muted)]">图上可绑</span>` : ""}
         ${used ? `<span class="text-[10px] text-[var(--primary)]">已绑 ${used}</span>` : ""}
         <span class="text-[10px] text-[var(--text-muted)] tabular">${fields.length}</span>
       </button>

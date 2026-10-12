@@ -117,7 +117,7 @@
   </div>
   {% else %}
   <div class="my-2.5 text-sm font-semibold text-[var(--text-muted)]">尚未取数</div>
-  <div class="text-[10px] text-[var(--text-muted)] border-t border-[var(--line)] pt-1">运行宏观数据采集后显示</div>
+  <div class="text-[10px] text-[var(--text-muted)] border-t border-[var(--line)] pt-1">{{ m.note or '运行宏观数据采集后显示' }}</div>
   {% endif %}
 </article>
 {%- endmacro %}

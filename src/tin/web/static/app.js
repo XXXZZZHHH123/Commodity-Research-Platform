@@ -173,7 +173,9 @@ function chartChange(points, index) {
   const delta = value - previous;
   const sign = delta > 0 ? "+" : "";
   let text;
-  if (seriesChartState.data.raw_unit === "%") {
+  if (seriesChartState.data.change_unit === "百分点") {
+    text = `较前值 ${sign}${chartNumber(delta, 2)} 个百分点`;
+  } else if (seriesChartState.data.raw_unit === "%") {
     text = `较前值 ${sign}${chartNumber(delta * 100, 0)} bp`;
   } else {
     const pct = previous === 0 ? null : delta / Math.abs(previous) * 100;
@@ -414,8 +416,9 @@ function closeSeriesChart() {
 }
 
 function initSeriesCharts() {
-  document.querySelectorAll("[data-series-chart]").forEach((trigger) => {
-    trigger.addEventListener("click", () => openSeriesChart(trigger));
+  document.addEventListener("click", (event) => {
+    const trigger = event.target.closest("[data-series-chart]");
+    if (trigger) openSeriesChart(trigger);
   });
   document.querySelectorAll("[data-chart-close]").forEach((button) => {
     button.addEventListener("click", closeSeriesChart);
